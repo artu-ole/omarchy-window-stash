@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Widgets as Widgets
 import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
@@ -100,7 +101,7 @@ PanelWindow {
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,createdBubbles:createdBubbles,
       usableArea:usableArea,
-      shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,
+      shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
         icons:Array.from({length:dockIcons.count},function(_,i) { return itemRect(dockIcons.itemAt(i)) }),
@@ -108,6 +109,7 @@ PanelWindow {
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialog.visible},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
+      cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
       floatingDock:floatingDock.details(),
       actions:{here:itemRect(restoreHereButton),original:itemRect(restoreOriginalButton),settings:itemRect(settingsButton)},
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
@@ -145,7 +147,7 @@ PanelWindow {
   // Native dropdown popups may extend beyond the card. While a dialog is
   // open, its surface owns the screen, just like Omarchy's keyboard panels.
   Region { id: dialogRegion; width: surface.width; height: surface.height }
-  Region { id: shelfRegion; item: shelf }
+  Region { id: shelfRegion; item: shelf; radius:shelf.radius }
 
   Ui.BorderSurface {
     id: shelf
@@ -158,48 +160,57 @@ PanelWindow {
     height: geometry.height
     x: geometry.x
     y: geometry.y
-    radius: Style.cornerRadius
+    radius: Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
+    onRadiusChanged: surface.refreshInputMask()
     color: surface.popupColors.background
     borderSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
-    Flickable {
-      id: dockViewport
-      anchors.fill: parent
-      anchors.leftMargin: surface.metrics.xxs + shelf.borderLeft
-      anchors.rightMargin: surface.metrics.xxs + shelf.borderRight
-      anchors.topMargin: surface.metrics.xxs + shelf.borderTop
-      anchors.bottomMargin: surface.metrics.xxs + shelf.borderBottom
-      contentWidth: surface.verticalDock ? width : dockRow.implicitWidth
-      contentHeight: surface.verticalDock ? dockRow.implicitHeight : height
-      clip: true
-      flickableDirection: surface.verticalDock ? Flickable.VerticalFlick : Flickable.HorizontalFlick
-      boundsBehavior: Flickable.StopAtBounds
-      Connections {
-        target: surface
-        function onDockSideChanged() { dockViewport.cancelFlick(); dockViewport.contentX = 0; dockViewport.contentY = 0 }
-      }
-      Grid {
-        id: dockRow
-        columns: surface.verticalDock ? 1 : surface.groups.length + 1
-        rowSpacing: surface.metrics.sm
-        columnSpacing: surface.metrics.sm
-        Repeater {
-          id: dockIcons
-          model: surface.groups
-          delegate: StashIcon {
-            required property var modelData
-            group: modelData
-            iconShape: surface.config.iconShape || "auto"
-            onActivated: surface.stash.selectGroup(group, surface.screen.name)
-            onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
-          }
+    Widgets.ClippingRectangle {
+      anchors.fill:parent
+      radius:shelf.radius
+      color:"transparent"
+      contentInsideBorder:false
+      border.color:"transparent"
+      border.width:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom)
+      Flickable {
+        id: dockViewport
+        anchors.fill: parent
+        anchors.leftMargin: surface.metrics.xxs + shelf.borderLeft
+        anchors.rightMargin: surface.metrics.xxs + shelf.borderRight
+        anchors.topMargin: surface.metrics.xxs + shelf.borderTop
+        anchors.bottomMargin: surface.metrics.xxs + shelf.borderBottom
+        contentWidth: surface.verticalDock ? width : dockRow.implicitWidth
+        contentHeight: surface.verticalDock ? dockRow.implicitHeight : height
+        clip: true
+        flickableDirection: surface.verticalDock ? Flickable.VerticalFlick : Flickable.HorizontalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        Connections {
+          target: surface
+          function onDockSideChanged() { dockViewport.cancelFlick(); dockViewport.contentX = 0; dockViewport.contentY = 0 }
         }
-        Ui.Button {
-          id: dockMore
-          iconText: "󰇙"; width: surface.verticalDock ? 44 : 32; height: surface.verticalDock ? 32 : 44
-          focusable: true
-          foreground: surface.popupColors.text
-          tooltipText: "Window Stash settings and all windows"
-          onClicked: surface.stash.openDialog("menu", surface.screen.name, [], null)
+        Grid {
+          id: dockRow
+          columns: surface.verticalDock ? 1 : surface.groups.length + 1
+          rowSpacing: surface.metrics.sm
+          columnSpacing: surface.metrics.sm
+          Repeater {
+            id: dockIcons
+            model: surface.groups
+            delegate: StashIcon {
+              required property var modelData
+              group: modelData
+              iconShape: surface.config.iconShape || "auto"
+              onActivated: surface.stash.selectGroup(group, surface.screen.name)
+              onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
+            }
+          }
+          Ui.Button {
+            id: dockMore
+            iconText: "󰇙"; width: surface.verticalDock ? 44 : 32; height: surface.verticalDock ? 32 : 44
+            focusable: true
+            foreground: surface.popupColors.text
+            tooltipText: "Window Stash settings and all windows"
+            onClicked: surface.stash.openDialog("menu", surface.screen.name, [], null)
+          }
         }
       }
     }
@@ -425,6 +436,7 @@ PanelWindow {
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
               labels:["Static dock","Floating bubbles","Floating dock"]},
             {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
+            {key:"dockCorners", label:"Dock corners", values:["theme","custom"], labels:["Follow desktop","Custom"]},
             {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
             {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
@@ -440,6 +452,7 @@ PanelWindow {
             visible:(modelData.key !== "floatingDirection" || surface.floatingMode)
               && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
               && (modelData.key !== "floatingPlacement" || surface.bubbleMode || surface.floatingMode)
+              && (modelData.key !== "dockCorners" || !surface.bubbleMode)
             Layout.fillWidth: true
             Text {
               text: settingRow.modelData.label
@@ -462,6 +475,27 @@ PanelWindow {
               }
               onChanged: function(value) { surface.stash.setting(settingRow.modelData.key, value) }
             }
+          }
+        }
+        RowLayout {
+          id:radiusRow
+          visible:!surface.bubbleMode && surface.config.dockCorners === "custom"
+          Layout.fillWidth:true
+          Text {
+            text:"Corner radius (px)"
+            color:surface.popupColors.text
+            font.family:surface.fonts.family
+            font.pixelSize:surface.fonts.body
+            Layout.fillWidth:true
+          }
+          Ui.NumberField {
+            id:radiusField
+            Layout.preferredWidth:surface.metrics.dropdownWidth
+            fieldWidth:surface.metrics.dropdownWidth
+            from:0; to:64; stepSize:1
+            value:surface.config.dockCornerRadius === undefined ? 12 : surface.config.dockCornerRadius
+            foreground:surface.popupColors.text
+            onModified:function(value) { surface.stash.setting("dockCornerRadius",value) }
           }
         }
         Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }

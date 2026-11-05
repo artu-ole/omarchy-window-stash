@@ -202,3 +202,9 @@ function bubbleLayout(keys, saved, drafts, width, height, area, snap, compact) {
   if (crowded && !compact) return bubbleLayout(keys,saved,drafts,width,height,area,snap,true)
   return placed
 }
+
+function dockRadius(mode, custom, theme, width, height) {
+  var radius=mode === "custom" && typeof custom === "number" && isFinite(custom) && custom >= 0 && custom <= 64
+    ? custom : theme
+  return Math.max(0,Math.min(radius,width/2,height/2))
+}

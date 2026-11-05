@@ -11,8 +11,8 @@ Source: [artu-ole/omarchy-window-stash](https://github.com/artu-ole/omarchy-wind
 
 ## Requirements
 
-- Omarchy 4.0 with its Quickshell shell, Qt6, and shared `qs.Commons` / `qs.Ui`
-  components. Tested on Omarchy 4.0.6-1; older shells are not supported.
+- Omarchy 4.0 with its Quickshell shell, Qt6.7 or newer, shared `qs.Commons` /
+  `qs.Ui` components, and `Quickshell.Widgets`. Tested on Omarchy 4.0.6-1; older shells are not supported.
 - Hyprland 0.56.2 with the Lua `hl.dispatch` API and `hyprctl` on `PATH`.
 - Python 3.9 or newer, using only the standard library.
 - For setup: `omarchy`, `omarchy-shell`, and `hyprctl` on `PATH`, plus an
@@ -103,6 +103,15 @@ more of each tile while keeping clearance from rounded and circular borders.
 The UI follows the active Omarchy theme, including popup colors, typography,
 spacing, borders, and corner rounding. Settings, menus, search, and tooltips use
 Omarchy's shared UI components; window rows use its standard selection styling.
+
+**Dock corners** offers **Follow desktop** (the default) or **Custom** for the
+static dock and expanded floating dock. Follow desktop uses Omarchy's shared
+radius, which mirrors Hyprland's `decoration:rounding`. Custom reveals a native
+**Corner radius (px)** field accepting whole numbers from 0 to 64. Zero gives
+square corners; larger values are limited to half the dock's shorter dimension.
+The dock clips its contents to the rounded border. Your custom value is retained
+when you switch back to Follow desktop. App icon shapes and other Omarchy
+controls keep their own styling.
 
 **Icon shape** in settings offers Automatic, Circle, Square, Rounded square,
 and Squircle. It changes the frame around each app icon in all presentations.
@@ -244,7 +253,9 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "iconShape": "auto",
   "floatingDirection": "vertical",
   "dockSide": "bottom",
-  "floatingPlacement": "edges"
+  "floatingPlacement": "edges",
+  "dockCorners": "theme",
+  "dockCornerRadius": 12
 }
 ```
 
@@ -258,6 +269,8 @@ floating dock. Older configurations retain the vertical layout.
 dock. Older configurations retain the bottom position.
 `floatingPlacement` accepts `edges` (default) or `free`, shared by bubbles and the
 floating dock. The static dock keeps its separate side setting.
+`dockCorners` accepts `theme` (default) or `custom`; `dockCornerRadius` stores an
+integer from 0 to 64 (default 12), applied in custom mode.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
@@ -267,6 +280,8 @@ omarchy-shell window-stash configure presentation floating
 omarchy-shell window-stash configure floatingDirection horizontal
 omarchy-shell window-stash configure dockSide top
 omarchy-shell window-stash configure floatingPlacement free
+omarchy-shell window-stash configure dockCorners custom
+omarchy-shell window-stash configure dockCornerRadius 12
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -313,6 +328,7 @@ python3 tests/floating_dock.py
 python3 tests/floating_direction.py
 python3 tests/dock_sides.py
 python3 tests/floating_placement.py
+python3 tests/dock_corners.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -324,7 +340,7 @@ and XWayland windows, temporary virtual outputs, and restore the original focus
 and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width, floating-dock, static-dock-side, and floating-placement
+The scrolling-width, floating-dock, static-dock-side, floating-placement, and dock-corner
 regressions use isolated workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
 test also uses `qs` to create a temporary bar on its virtual output. The width test
 checks the source controller by default;

@@ -115,7 +115,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges"))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")
@@ -145,6 +145,19 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(self.stash.settings()["dockSide"], "left")
         self.settings(floatingPlacement="invalid")
         self.assertEqual(self.stash.settings()["floatingPlacement"], "edges")
+
+    def test_dock_corner_settings_and_numeric_validation(self):
+        self.assertEqual(self.stash.settings()["dockCorners"], "theme")
+        self.assertEqual(self.stash.settings()["dockCornerRadius"], 12)
+        for value in (0, 7, 12, 32, 64):
+            self.settings(dockCorners="custom", dockCornerRadius=value, iconShape="circle")
+            self.assertEqual(self.stash.settings()["dockCorners"], "custom")
+            self.assertEqual(self.stash.settings()["dockCornerRadius"], value)
+            self.assertEqual(self.stash.settings()["iconShape"], "circle")
+        for value in (-1, 65, 1.5, True, None, "12", [], {}):
+            self.settings(dockCorners="invalid", dockCornerRadius=value)
+            self.assertEqual(self.stash.settings()["dockCorners"], "theme")
+            self.assertEqual(self.stash.settings()["dockCornerRadius"], 12)
 
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]

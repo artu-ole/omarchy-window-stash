@@ -16,12 +16,13 @@ import uuid
 PLUGIN = "community.window-stash"
 SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
-DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", dockSide="bottom", floatingPlacement="edges")
+DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12)
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
                floatingDirection=("vertical", "horizontal"), dockSide=("bottom", "top", "left", "right"),
-               floatingPlacement=("edges", "free"))
+               floatingPlacement=("edges", "free"), dockCorners=("theme", "custom"),
+               dockCornerRadius=range(65))
 
 
 def lua(value):
@@ -139,7 +140,8 @@ class Stash:
     def settings(self):
         config = read_json(self.config, {})
         entry = next((p for p in config.get("plugins", []) if p.get("id") == PLUGIN), {})
-        return {k: entry.get(k) if entry.get(k) in CHOICES[k] else v for k, v in DEFAULTS.items()}
+        return {k: entry.get(k) if entry.get(k) in CHOICES[k]
+                and (k != "dockCornerRadius" or type(entry.get(k)) is int) else v for k, v in DEFAULTS.items()}
 
     def snapshot(self):
         return self.hypr.read("clients"), self.hypr.read("monitors"), self.hypr.read("workspaces")

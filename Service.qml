@@ -11,7 +11,7 @@ Item {
   property var shell: null
   readonly property string pluginId: "community.window-stash"
   readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", dockSide: "bottom", floatingPlacement: "edges"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -78,8 +78,12 @@ Item {
     if (!shell) { lastError = "Shell settings are not available"; return }
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
-      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"]}
-    if (!options[key] || options[key].indexOf(value) < 0) { lastError = "Invalid stash setting"; return }
+      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"]}
+    if (key === "dockCornerRadius") {
+      if (!/^(0|[1-9][0-9]?)$/.test(String(value)) || Number(value) > 64) { lastError = "Dock corner radius must be 0–64 pixels"; return }
+      value = Number(value)
+    } else if (!options[key] || options[key].indexOf(value) < 0) { lastError = "Invalid stash setting"; return }
+    lastError = ""
     // The host replaces the entry with the supplied settings; it does not
     // merge a patch. Keep the other choices intact on every edit.
     var patch = Object.assign({}, snapshot.settings)

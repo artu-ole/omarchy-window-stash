@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Widgets as Widgets
 import Quickshell.Hyprland
 import qs.Commons
 import qs.Commons as Commons
@@ -129,7 +130,7 @@ Item {
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,createdIcons:createdIcons,currentIndex:list.currentIndex,
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
       handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
-      panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
+      panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons}
   }
@@ -273,84 +274,93 @@ Item {
     y:Math.round(dock.horizontal ? dock.geometry.y : (dock.geometry.forward ? dock.anchorY+handle.height+dock.gap : dock.anchorY-dock.gap-height))
     width:dock.horizontal ? Math.round(dock.panelExtent*dock.reveal) : dock.geometry.width
     height:dock.horizontal ? dock.geometry.height : Math.round(dock.panelExtent*dock.reveal)
-    radius:Style.cornerRadius
+    radius:Model.dockRadius(dock.config.dockCorners,dock.config.dockCornerRadius,Style.cornerRadius,width,height)
+    onRadiusChanged:dock.inputChanged()
     color:dock.popupColors.background
     borderSpec:dock.panelBorder
-    GridLayout {
-      columns:dock.horizontal ? 2 : 1
-      x:dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent+dock.inset : dock.inset
-      y:!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent+dock.inset : dock.inset
-      width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-dock.inset*2)
-      height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-dock.inset*2)
-      rowSpacing:dock.gap
-      columnSpacing:dock.gap
-      ListView {
-        id:list
-        Layout.fillWidth:true
-        Layout.fillHeight:true
-        spacing:dock.gap
-        clip:true
-        boundsBehavior:Flickable.StopAtBounds
-        orientation:dock.horizontal ? ListView.Horizontal : ListView.Vertical
-        model:iconModel
-        currentIndex:0
-        delegate:StashDockRow {
-          id:entry
-          required property string groupKey
-          required property int index
-          readonly property var liveGroup:dock.displayGroups.find(function(g) { return g.key === entry.groupKey })
-          property var lastGroup:({key:groupKey,app:"",title:"",windows:[]})
-          onLiveGroupChanged:if (liveGroup) lastGroup=liveGroup
-          Component.onCompleted: { dock.createdIcons++; if (liveGroup) lastGroup=liveGroup }
-          group:lastGroup
-          enabled:index >= 0 && dock.open
-          width:dock.horizontal ? 44 : list.width
-          height:dock.horizontal ? list.height : 44
-          iconShape:dock.config.iconShape || "auto"
-          hasCursor:ListView.isCurrentItem
-          onHovered: function(isHovered) { if (isHovered) list.currentIndex=index }
-          onActivated:dock.activate(group)
-          onContextRequested:dock.context(group)
-        }
-        add:Transition { NumberAnimation { property:"opacity"; from:0; to:1; duration:140; easing.type:Easing.OutCubic } }
-        remove:Transition { NumberAnimation { property:"opacity"; to:0; duration:120; easing.type:Easing.OutCubic } }
-        displaced:Transition { NumberAnimation { properties:"x,y"; duration:180; easing.type:Easing.OutCubic } }
-        Controls.ScrollBar.vertical:Controls.ScrollBar {
-          id:scrollbar
-          policy:dock.horizontal ? Controls.ScrollBar.AlwaysOff : Controls.ScrollBar.AsNeeded
-          padding:0
-          contentItem:Rectangle {
-            implicitWidth:dock.metrics.xxs
-            radius:Style.cornerRadius
-            color:Commons.Color.accent
-            opacity:scrollbar.active ? 0.6 : 0
+    Widgets.ClippingRectangle {
+      anchors.fill:parent
+      radius:panel.radius
+      color:"transparent"
+      contentInsideBorder:false
+      border.color:"transparent"
+      border.width:Math.max(Border.left(dock.panelBorder),Border.right(dock.panelBorder),Border.top(dock.panelBorder),Border.bottom(dock.panelBorder))
+      GridLayout {
+        columns:dock.horizontal ? 2 : 1
+        x:dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent+dock.inset : dock.inset
+        y:!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent+dock.inset : dock.inset
+        width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-dock.inset*2)
+        height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-dock.inset*2)
+        rowSpacing:dock.gap
+        columnSpacing:dock.gap
+        ListView {
+          id:list
+          Layout.fillWidth:true
+          Layout.fillHeight:true
+          spacing:dock.gap
+          clip:true
+          boundsBehavior:Flickable.StopAtBounds
+          orientation:dock.horizontal ? ListView.Horizontal : ListView.Vertical
+          model:iconModel
+          currentIndex:0
+          delegate:StashDockRow {
+            id:entry
+            required property string groupKey
+            required property int index
+            readonly property var liveGroup:dock.displayGroups.find(function(g) { return g.key === entry.groupKey })
+            property var lastGroup:({key:groupKey,app:"",title:"",windows:[]})
+            onLiveGroupChanged:if (liveGroup) lastGroup=liveGroup
+            Component.onCompleted: { dock.createdIcons++; if (liveGroup) lastGroup=liveGroup }
+            group:lastGroup
+            enabled:index >= 0 && dock.open
+            width:dock.horizontal ? 44 : list.width
+            height:dock.horizontal ? list.height : 44
+            iconShape:dock.config.iconShape || "auto"
+            hasCursor:ListView.isCurrentItem
+            onHovered: function(isHovered) { if (isHovered) list.currentIndex=index }
+            onActivated:dock.activate(group)
+            onContextRequested:dock.context(group)
           }
-          background:Item {}
-        }
-        Controls.ScrollBar.horizontal:Controls.ScrollBar {
-          id:horizontalScrollbar
-          policy:dock.horizontal ? Controls.ScrollBar.AsNeeded : Controls.ScrollBar.AlwaysOff
-          padding:0
-          contentItem:Rectangle {
-            implicitHeight:dock.metrics.xxs
-            radius:Style.cornerRadius
-            color:Commons.Color.accent
-            opacity:horizontalScrollbar.active ? 0.6 : 0
+          add:Transition { NumberAnimation { property:"opacity"; from:0; to:1; duration:140; easing.type:Easing.OutCubic } }
+          remove:Transition { NumberAnimation { property:"opacity"; to:0; duration:120; easing.type:Easing.OutCubic } }
+          displaced:Transition { NumberAnimation { properties:"x,y"; duration:180; easing.type:Easing.OutCubic } }
+          Controls.ScrollBar.vertical:Controls.ScrollBar {
+            id:scrollbar
+            policy:dock.horizontal ? Controls.ScrollBar.AlwaysOff : Controls.ScrollBar.AsNeeded
+            padding:0
+            contentItem:Rectangle {
+              implicitWidth:dock.metrics.xxs
+              radius:Style.cornerRadius
+              color:Commons.Color.accent
+              opacity:scrollbar.active ? 0.6 : 0
+            }
+            background:Item {}
           }
-          background:Item {}
+          Controls.ScrollBar.horizontal:Controls.ScrollBar {
+            id:horizontalScrollbar
+            policy:dock.horizontal ? Controls.ScrollBar.AsNeeded : Controls.ScrollBar.AlwaysOff
+            padding:0
+            contentItem:Rectangle {
+              implicitHeight:dock.metrics.xxs
+              radius:Style.cornerRadius
+              color:Commons.Color.accent
+              opacity:horizontalScrollbar.active ? 0.6 : 0
+            }
+            background:Item {}
+          }
         }
-      }
-      Ui.Button {
-        id:footer
-        Layout.fillWidth:!dock.horizontal
-        Layout.alignment:Qt.AlignCenter
-        Layout.preferredWidth:Math.ceil(implicitWidth)
-        Layout.preferredHeight:Math.ceil(implicitHeight)
-        iconText:"󰇙"
-        focusable:true
-        tooltipText:"Window Stash settings and all windows"
-        foreground:dock.popupColors.text
-        onClicked:dock.context(null)
+        Ui.Button {
+          id:footer
+          Layout.fillWidth:!dock.horizontal
+          Layout.alignment:Qt.AlignCenter
+          Layout.preferredWidth:Math.ceil(implicitWidth)
+          Layout.preferredHeight:Math.ceil(implicitHeight)
+          iconText:"󰇙"
+          focusable:true
+          tooltipText:"Window Stash settings and all windows"
+          foreground:dock.popupColors.text
+          onClicked:dock.context(null)
+        }
       }
     }
   }

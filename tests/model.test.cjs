@@ -147,3 +147,12 @@ for(const [w,h] of [[320,240],[1920,1080],[600,1000]]) {
   assert.equal(free.join(','),ctx.bubblePosition([w/2,h/2],0,w,h,1).join(','))
 }
 console.log('Model: edge snapping, bar clearance, stable targets, bubble packing and free placement passed')
+
+assert.equal(ctx.dockRadius('theme',12,7,200,50),7)
+assert.equal(ctx.dockRadius('custom',0,7,200,50),0)
+assert.equal(ctx.dockRadius('custom',12,7,200,50),12)
+assert.equal(ctx.dockRadius('custom',64,7,200,50),25)
+assert.equal(ctx.dockRadius('custom',64,7,50,200),25)
+assert.equal(ctx.dockRadius('custom',12,7,0,56),0)
+for(const invalid of [undefined,null,'12',-1,65,NaN,Infinity]) assert.equal(ctx.dockRadius('custom',invalid,7,200,50),7)
+console.log('Model: independent dock rounding, theme fallback, and small-panel radius limits passed')

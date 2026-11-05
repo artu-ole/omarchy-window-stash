@@ -43,7 +43,7 @@ def shell(method,*args):
 
 
 def configure(key,value):
-    shell('configure',key,value)
+    shell('configure',key,str(value))
     wait(lambda:shell('status')['settings'].get(key)==value,'Setting did not update: '+key)
 
 
