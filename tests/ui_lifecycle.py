@@ -6,6 +6,7 @@ import subprocess
 import time
 import live
 from live import h, shell, command, configure, spawn, stash, wait, Pointer
+from desktop_test import desktop_test
 
 
 def surface():
@@ -17,6 +18,7 @@ def click(pointer,rect,button=272):
     pointer.click(rect['x']+rect['width']/2,rect['y']+rect['height']/2,s['width'],s['height'],button)
 
 
+@desktop_test('Window Stash UI lifecycle tests')
 def main():
     original=h.read('activewindow');original_ws=h.read('activeworkspace')['id']
     settings=command('list')['settings'];pointer=None

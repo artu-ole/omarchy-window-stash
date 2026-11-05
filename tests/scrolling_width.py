@@ -8,8 +8,10 @@ import subprocess
 import sys
 
 from live import ROOT, h, wait
+from desktop_test import desktop_test
 
 
+@desktop_test('Window Stash scrolling width test')
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--installed', action='store_true')

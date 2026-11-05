@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
+import QtQml.Models
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
@@ -51,14 +52,16 @@ PanelWindow {
     var points = []
     for (var i = 0; i < bubbles.count; i++) {
       var b = bubbles.itemAt(i) as StashIcon
-      if (b) points.push({key:b.group.key, x:b.x, y:b.y, width:b.width, height:b.height})
+      if (b) points.push({key:b.group.key, x:b.x, y:b.y, width:b.width, height:b.height,
+        shape:b.iconShape, radius:b.hitRadius})
     }
     var controls = []
     for (var j = 0; j < settingRows.count; j++) {
       var row = settingRows.itemAt(j)
       // Repeater.itemAt() is typed as Item; its delegate adds these properties.
       // qmllint disable missing-property
-      if (row) controls.push({key:row.modelData.key, value:row.selector.value, rect:itemRect(row.selector)})
+      if (row) controls.push({key:row.modelData.key, value:row.selector.value,
+        open:row.selector.popupOpen, rect:itemRect(row.selector)})
       // qmllint enable missing-property
     }
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
@@ -124,6 +127,7 @@ PanelWindow {
           delegate: StashIcon {
             required property var modelData
             group: modelData
+            iconShape: surface.config.iconShape || "auto"
             onActivated: surface.stash.selectGroup(group, surface.screen.name)
             onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
           }
@@ -147,8 +151,31 @@ PanelWindow {
       required property int index
       group: modelData
       bubble: true
+      iconShape: surface.config.iconShape || "auto"
       readonly property var saved: surface.savedPositions[group.key]
-      property Region hitRegion: Region { x: bubble.x; y: bubble.y; width: bubble.width; height: bubble.height; radius: 24 }
+      property var shapedRegions: []
+      property Region hitRegion: Region {
+        x: bubble.iconShape === "squircle" ? 0 : bubble.x
+        y: bubble.iconShape === "squircle" ? 0 : bubble.y
+        width: bubble.iconShape === "squircle" ? 0 : bubble.width
+        height: bubble.iconShape === "squircle" ? 0 : bubble.height
+        radius: bubble.hitRadius
+        regions: bubble.shapedRegions
+      }
+      Instantiator {
+        model: bubble.iconShape === "squircle" ? Model.squircleBands(bubble.width, bubble.height) : []
+        delegate: Region {
+          required property var modelData
+          x: bubble.x + modelData.x; y: bubble.y + modelData.y
+          width: modelData.width; height: modelData.height
+        }
+        onObjectAdded: function(index, object) {
+          var regions = bubble.shapedRegions.slice(); regions.push(object); bubble.shapedRegions = regions
+        }
+        onObjectRemoved: function(index, object) {
+          bubble.shapedRegions = bubble.shapedRegions.filter(function(region) { return region !== object })
+        }
+      }
       function place() {
         var position = Model.bubblePosition(saved, index, surface.width, surface.height, surface.groups.length)
         x = position[0]; y = position[1]
@@ -321,7 +348,9 @@ PanelWindow {
             {key:"presentation", label:"Appearance", values:["dock","bubbles"], labels:["Bottom dock","Floating bubbles"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
             {key:"restoreDestination", label:"Restore destination", values:["current","original"], labels:["Current workspace","Original workspace"]},
-            {key:"grouping", label:"Icon grouping", values:["window","app"], labels:["One per window","One per app"]}
+            {key:"grouping", label:"Icon grouping", values:["window","app"], labels:["One per window","One per app"]},
+            {key:"iconShape", label:"Icon shape", values:["auto","circle","square","rounded","squircle"],
+              labels:["Automatic","Circle","Square","Rounded square","Squircle"]}
           ]
           delegate: RowLayout {
             id: settingRow

@@ -11,7 +11,7 @@ Item {
   property var shell: null
   readonly property string pluginId: "community.window-stash"
   readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -77,10 +77,11 @@ Item {
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
     var options = {presentation:["dock","bubbles"], scope:["global","workspace"],
-      restoreDestination:["current","original"], grouping:["window","app"]}
+      restoreDestination:["current","original"], grouping:["window","app"],
+      iconShape:["auto","circle","square","rounded","squircle"]}
     if (!options[key] || options[key].indexOf(value) < 0) { lastError = "Invalid stash setting"; return }
     // The host replaces the entry with the supplied settings; it does not
-    // merge a patch. Keep the other three choices intact on every edit.
+    // merge a patch. Keep the other choices intact on every edit.
     var patch = Object.assign({}, snapshot.settings)
     patch[key] = value
     var next = Object.assign({}, snapshot)

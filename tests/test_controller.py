@@ -99,6 +99,18 @@ class ControllerTests(unittest.TestCase):
         self.settings(scope="global")
         self.assertEqual(self.stash.restore_last()["id"],second)
 
+    def test_icon_shape_settings_and_legacy_default(self):
+        self.settings(presentation="bubbles", scope="workspace")
+        self.assertEqual(self.stash.settings()["iconShape"], "auto")
+        for shape in ("auto", "circle", "square", "rounded", "squircle"):
+            self.settings(presentation="bubbles", scope="workspace", iconShape=shape)
+            settings = self.stash.settings()
+            self.assertEqual(settings["iconShape"], shape)
+            self.assertEqual(settings["presentation"], "bubbles")
+            self.assertEqual(settings["scope"], "workspace")
+        self.settings(iconShape="invalid")
+        self.assertEqual(self.stash.settings()["iconShape"], "auto")
+
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]
         self.stash.restore(ident,"current",workspace=7)

@@ -5,8 +5,10 @@ import time
 
 from live import h, command, shell, configure, spawn, stash, wait, processes, addresses
 from pointer import Pointer
+from desktop_test import desktop_test
 
 
+@desktop_test('Window Stash themed controls test')
 def main():
     original = h.read('activewindow')
     workspace = h.read('activeworkspace')['id']

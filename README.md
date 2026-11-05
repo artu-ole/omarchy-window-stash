@@ -57,6 +57,13 @@ The UI follows the active Omarchy theme, including popup colors, typography,
 spacing, borders, and corner rounding. Settings, menus, search, and tooltips use
 Omarchy's shared UI components; window rows use its standard selection styling.
 
+**Icon shape** in settings offers Automatic, Circle, Square, Rounded square,
+and Squircle. It changes the frame around each app icon in both presentations.
+Automatic preserves circular bubbles and theme-shaped dock controls. Explicit
+choices also give dock icons a themed background and border. Squircle uses a
+continuous superellipse curve. Changing shape preserves bubble positions and
+the app's original icon artwork.
+
 ## Install / update / remove
 
 **Manual setup is required.** Omarchy's generic plugin installer clones and
@@ -186,17 +193,21 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "presentation": "dock",
   "scope": "global",
   "restoreDestination": "current",
-  "grouping": "window"
+  "grouping": "window",
+  "iconShape": "auto"
 }
 ```
 
-Alternatives are `bubbles`, `workspace`, `original`, and `app`, respectively.
+Alternatives for the first four choices are `bubbles`, `workspace`, `original`,
+and `app`, respectively. `iconShape` accepts `auto`, `circle`, `square`,
+`rounded`, or `squircle`; older configurations default to `auto`.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
 ```sh
 omarchy-shell window-stash configure presentation bubbles
 omarchy-shell window-stash configure scope workspace
+omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
 ```
 
@@ -236,10 +247,12 @@ python3 tests/ui_lifecycle.py
 python3 tests/overflow.py
 python3 tests/themed_ui.py
 python3 tests/scrolling_width.py
+python3 tests/icon_shapes.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
-introspection (`python-gobject` and `gtk4` on Arch), `wtype`, `grim` for the
+introspection (`python-gobject` and `gtk4` on Arch), `wtype`, `notify-send`
+(`libnotify` on Arch), `grim` for the
 themed UI screenshot, and the installed plugin. The non-graphical checks need
 Node.js, Qt6 `qmllint`, and Omarchy's validator (which uses `jq`). They use disposable Wayland
 and XWayland windows, temporary virtual outputs, and restore the original focus
@@ -249,6 +262,12 @@ the original setting afterward; installation leaves input matching unchanged.
 The scrolling-width regression uses an isolated temporary virtual output and
 preserves existing stash entries. It tests the source controller by default;
 pass `--installed` to check the installed copy.
+
+Every desktop test sends a notification asking you to pause input, waits three
+seconds before taking focus or injecting input, and notifies you after cleanup.
+The shared `tests/desktop_test.py` wrapper aborts before desktop actions if the
+initial notification cannot be sent. Unit tests and linting do not take over
+the desktop and run without the countdown.
 
 For QML linting, use Qt6's `/usr/lib/qt6/bin/qmllint`, with an import directory
 mapping `qs/Commons` and `qs/Ui` to their directories under

@@ -1,8 +1,10 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
+import "Model.js" as Model
 
 Ui.BorderSurface {
   id: icon
@@ -11,21 +13,33 @@ Ui.BorderSurface {
   readonly property var metrics: Style.spacing
   required property var group
   property bool bubble: false
+  property string iconShape: "auto"
+  readonly property real hitRadius: Model.iconRadius(iconShape, width, bubble, Style.cornerRadius)
   signal activated()
   signal contextRequested()
   signal moved(real dx, real dy)
   signal dragFinished()
   width: bubble ? 48 : 44
   height: width
-  radius: bubble ? width / 2 : Style.cornerRadius
-  color: pointer.pressed ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
+  radius: hitRadius
+  property color frameColor: pointer.pressed ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
     : pointer.containsMouse ? Style.hoverFillFor(icon.popupColors.text, Commons.Color.accent)
-    : bubble ? icon.popupColors.background : "transparent"
-  borderSpec: pointer.containsMouse || pointer.pressed
+    : bubble || iconShape !== "auto" ? icon.popupColors.background : "transparent"
+  readonly property var frameBorder: pointer.containsMouse || pointer.pressed
     ? Border.controlSpec("hover-cursor", icon.popupColors.text, Commons.Color.accent)
-    : bubble ? Border.surfaceSpec("popups", "border", icon.popupColors.border, Style.normalBorderWidth)
+    : bubble || iconShape !== "auto" ? Border.surfaceSpec("popups", "border", icon.popupColors.border, Style.normalBorderWidth)
     : Border.none()
-  Behavior on color { ColorAnimation { duration: 120 } }
+  color: iconShape === "squircle" ? "transparent" : frameColor
+  borderSpec: iconShape === "squircle" ? Border.none() : frameBorder
+  Behavior on frameColor { ColorAnimation { duration: 120 } }
+  Loader {
+    anchors.fill: parent
+    active: icon.iconShape === "squircle"
+    sourceComponent: StashSquircle {
+      backgroundColor: icon.frameColor
+      borderSpec: icon.frameBorder
+    }
+  }
   readonly property var desktop: DesktopEntries.heuristicLookup(String(group.app || ""))
   readonly property string appIcon: desktop && desktop.icon ? String(desktop.icon) : "application-x-executable"
   Image {

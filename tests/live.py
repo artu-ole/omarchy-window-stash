@@ -11,6 +11,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'controller'))
 from stash import Hyprland
 from pointer import Pointer
+from desktop_test import desktop_test
 
 h=Hyprland()
 binary=str(Path.home()/'.local/bin/window-stash')
@@ -183,7 +184,8 @@ def main():
     print('PASS shell restart recovery',flush=True)
 
 
-if __name__=='__main__':
+@desktop_test('Window Stash live tests')
+def run():
     settings=command('list')['settings']
     try:main()
     finally:
@@ -198,3 +200,6 @@ if __name__=='__main__':
         shell('dismiss')
         if origin_ws:h.dispatch('focus',workspace=str(origin_ws))
         if original and h.client(original['address']):h.dispatch('focus',window='address:'+original['address'])
+
+
+if __name__=='__main__':run()

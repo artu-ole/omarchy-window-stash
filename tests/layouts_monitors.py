@@ -5,6 +5,7 @@ import subprocess
 import time
 import live
 from live import h, shell, command, configure, spawn, stash, wait
+from desktop_test import desktop_test
 
 
 def plugin_call(method,arg=''):
@@ -12,6 +13,7 @@ def plugin_call(method,arg=''):
     return json.loads(text) if text.startswith('{') else text
 
 
+@desktop_test('Window Stash layout and monitor tests')
 def main():
     old_window=h.read('activewindow');old_ws=h.read('activeworkspace')['id']
     monitors=h.read('monitors');settings=command('list')['settings']

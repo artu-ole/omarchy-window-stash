@@ -18,6 +18,8 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Existing window switcher | Search for the parked client, commit selection, verify workspace restoration |
 | Dock and bubbles | Live icon clicks, bubble dragging, position persistence and mode changes |
 | Input regions | A click outside bubbles reaches a GTK window underneath |
+| Icon shapes | Live native dropdown, all five bubble shapes, corner input, squircle dragging, dock restore and saved choice after shell restart; model checks cover exact squircle input pixels and legacy setting defaults |
+| Desktop test notice | All seven desktop suites notify before a three-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
 | App grouping and chooser | Group two windows, open chooser by mouse, search by keyboard and restore with Enter |
 | Restore destination | Live original/current destination checks and original-workspace context action |
 | Global/workspace scope | Live one-, two-, and three-output checks in dock and bubble modes |
@@ -38,7 +40,7 @@ settings and display profile, and removes the test windows and workspaces.
 Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
-`python3 tests/scrolling_width.py`. Pinned restoration and workspace-ID event handling
+`python3 tests/scrolling_width.py`, and `python3 tests/icon_shapes.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 No upgrade, external publication or packaged Omarchy-file modification was
@@ -54,14 +56,14 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.0.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.1.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
 | Consent before configuration edits | Helper displays its plan and prompts before any writes; non-interactive runs require explicit `--yes`; refusal and consent tests pass |
 | File layout | No symlinks, bundled executables, credentials, or private runtime data in the source folder |
 | Shared UI | Uses installed Omarchy theme tokens and UI components; icons are looked up locally rather than bundled |
-| Checks after publishing preparation | 16 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
+| Checks after publishing preparation | 20 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
 
 The current installation path requires manual setup. Generic `omarchy plugin
 add` does not install the controller wrapper or shortcuts, and generic removal
