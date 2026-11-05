@@ -20,6 +20,9 @@ PanelWindow {
   property var windows: []
   readonly property var groups: Model.groups(windows, config.grouping)
   property bool dialogOpen: false
+  readonly property string dockSide: config.dockSide || "bottom"
+  readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
+  readonly property var usableArea: Model.usableArea(width, height, monitor ? monitor.reserved : [])
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: config.presentation === "floating"
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open
@@ -38,8 +41,10 @@ PanelWindow {
     id: modelDelay
     interval: 1
     onTriggered: {
-      surface.windows = Model.visibleWindows(surface.stash.snapshot.windows,
+      var nextWindows = Model.visibleWindows(surface.stash.snapshot.windows,
         surface.monitor ? surface.monitor.activeWorkspace.id : -1, surface.config.scope)
+      // Reserve-only refreshes must preserve delegates, active drags and hover.
+      if (JSON.stringify(nextWindows) !== JSON.stringify(surface.windows)) surface.windows = nextWindows
       surface.dialogOpen = surface.stash.dialogKind !== "" && surface.stash.dialogScreen === surface.screen.name
     }
   }
@@ -67,8 +72,12 @@ PanelWindow {
     }
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,
-      shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,
-        contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX},
+      usableArea:usableArea,
+      shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,
+        contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
+        contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
+        icons:Array.from({length:dockIcons.count},function(_,i) { return itemRect(dockIcons.itemAt(i)) }),
+        more:itemRect(dockMore)},
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialog.visible},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
@@ -104,11 +113,14 @@ PanelWindow {
   Ui.BorderSurface {
     id: shelf
     visible: surface.config.presentation === "dock" && surface.groups.length > 0
-    width: Math.min(surface.width - surface.metrics.popupPadding * 2,
-      dockRow.implicitWidth + surface.metrics.xxs * 2 + borderLeft + borderRight)
-    height: Math.max(44, surface.metrics.controlHeight) + surface.metrics.xxs * 2 + borderTop + borderBottom
-    x: (surface.width - width) / 2
-    y: surface.height - height - Math.max(Style.gapsOut, surface.metrics.lg)
+    readonly property var geometry: Model.staticDockRect(surface.usableArea, surface.dockSide,
+      dockRow.implicitWidth + surface.metrics.xxs * 2 + borderLeft + borderRight,
+      dockRow.implicitHeight + surface.metrics.xxs * 2 + borderTop + borderBottom,
+      Math.max(Style.gapsOut, surface.metrics.lg), surface.metrics.popupPadding)
+    width: geometry.width
+    height: geometry.height
+    x: geometry.x
+    y: geometry.y
     radius: Style.cornerRadius
     color: surface.popupColors.background
     borderSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
@@ -119,14 +131,22 @@ PanelWindow {
       anchors.rightMargin: surface.metrics.xxs + shelf.borderRight
       anchors.topMargin: surface.metrics.xxs + shelf.borderTop
       anchors.bottomMargin: surface.metrics.xxs + shelf.borderBottom
-      contentWidth: dockRow.implicitWidth; contentHeight: height
+      contentWidth: surface.verticalDock ? width : dockRow.implicitWidth
+      contentHeight: surface.verticalDock ? dockRow.implicitHeight : height
       clip: true
-      flickableDirection: Flickable.HorizontalFlick
+      flickableDirection: surface.verticalDock ? Flickable.VerticalFlick : Flickable.HorizontalFlick
       boundsBehavior: Flickable.StopAtBounds
-      Row {
+      Connections {
+        target: surface
+        function onDockSideChanged() { dockViewport.cancelFlick(); dockViewport.contentX = 0; dockViewport.contentY = 0 }
+      }
+      Grid {
         id: dockRow
-        spacing: surface.metrics.sm
+        columns: surface.verticalDock ? 1 : surface.groups.length + 1
+        rowSpacing: surface.metrics.sm
+        columnSpacing: surface.metrics.sm
         Repeater {
+          id: dockIcons
           model: surface.groups
           delegate: StashIcon {
             required property var modelData
@@ -137,7 +157,8 @@ PanelWindow {
           }
         }
         Ui.Button {
-          iconText: "󰇙"; width: 32; height: 44
+          id: dockMore
+          iconText: "󰇙"; width: surface.verticalDock ? 44 : 32; height: surface.verticalDock ? 32 : 44
           focusable: true
           foreground: surface.popupColors.text
           tooltipText: "Window Stash settings and all windows"
@@ -345,7 +366,8 @@ PanelWindow {
           id: settingRows
           model: [
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
-              labels:["Bottom dock","Floating bubbles","Floating dock"]},
+              labels:["Static dock","Floating bubbles","Floating dock"]},
+            {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
             {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
             {key:"restoreDestination", label:"Restore destination", values:["current","original"], labels:["Current workspace","Original workspace"]},
@@ -357,7 +379,8 @@ PanelWindow {
             id: settingRow
             required property var modelData
             readonly property alias selector: settingDropdown
-            visible:modelData.key !== "floatingDirection" || surface.floatingMode
+            visible:(modelData.key !== "floatingDirection" || surface.floatingMode)
+              && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
             Layout.fillWidth: true
             Text {
               text: settingRow.modelData.label

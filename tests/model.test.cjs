@@ -90,3 +90,31 @@ for (const scale of [1,1.25,1.5,2]) for (const frame of [44,48]) {
   }
 }
 console.log('Model: compact artwork remains centered with shape-aware corner clearance')
+
+for (const [w,h] of [[320,240],[1024,576],[1920,1080],[600,1000]]) {
+  for (const reserved of [[],[0,26,0,0],[21,48,37,19]]) {
+    const area=ctx.usableArea(w,h,reserved)
+    for (const side of ['bottom','top','left','right']) {
+      const vertical=side==='left'||side==='right'
+      for (const count of [1,3,50]) {
+        const length=count*44+(count-1)*4+4+32+6
+        const p=ctx.staticDockRect(area,side,vertical?50:length,vertical?length:50,8,16)
+        assert.ok(p.width>=0 && p.height>=0)
+        assert.ok(p.x>=area.x && p.y>=area.y)
+        assert.ok(p.x+p.width<=area.x+area.width && p.y+p.height<=area.y+area.height)
+        if(vertical) {
+          assert.ok(Math.abs(p.y+p.height/2-area.y-area.height/2)<=0.5)
+          assert.equal(side==='left'?p.x-area.x:area.x+area.width-p.x-p.width,8)
+        } else {
+          assert.ok(Math.abs(p.x+p.width/2-area.x-area.width/2)<=0.5)
+          assert.equal(side==='top'?p.y-area.y:area.y+area.height-p.y-p.height,8)
+        }
+      }
+    }
+  }
+}
+for(const side of ['bottom','top','left','right']) {
+  const p=ctx.staticDockRect(ctx.usableArea(5,5,[]),side,50,500,8,16)
+  assert.ok(p.x>=0 && p.y>=0 && p.x+p.width<=5 && p.y+p.height<=5)
+}
+console.log('Model: all four dock sides respect reserved edges, centering, and overflow bounds')

@@ -82,6 +82,7 @@ def main():
 
         # Minimize last so our test icon is the first dock entry, even with an existing stash.
         last = stash(second)
+        configure('dockSide', 'bottom')
         configure('presentation', 'dock')
         s = wait(lambda: next((s for s in shell('status')['surfaces'] if s['visible']), None), 'Dock missing')
         r = s['shelf']

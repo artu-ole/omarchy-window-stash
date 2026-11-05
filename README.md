@@ -1,6 +1,6 @@
 # Window Stash for Omarchy
 
-Minimize running windows into a bottom dock, draggable bubbles, or an expandable
+Minimize running windows into a static edge dock, draggable bubbles, or an expandable
 floating dock. Restore to
 your current workspace or the original one, preserving floating size and
 position. Works with the Omarchy 4.0 shell and Hyprland 0.56.2 Lua API.
@@ -39,8 +39,8 @@ Development-only dependencies are listed under Development and verification.
 | Move the floating dock | Drag its handle; one shared position is remembered per monitor |
 | Search the window chooser | Type; use Up/Down and Enter to select; Escape closes |
 
-Default settings: **dock**, **global visibility**, **restore here**, **one icon
-per window**. The UI appears on every connected monitor. Global mode repeats
+Default settings: **static dock at the bottom**, **global visibility**,
+**restore here**, **one icon per window**. The UI appears on every connected monitor. Global mode repeats
 the same stash on each screen; workspace mode filters by that screen's active
 workspace. Grouping by app is optional and uses a window chooser when needed.
 
@@ -51,9 +51,15 @@ omarchy-shell window-stash settings
 omarchy-shell window-stash all
 ```
 
-The dock floats above the bottom edge without reserving tiling space. Empty
-stashes take no space or input. Bubbles start in a vertically centered column along the right edge and only
-their icon regions intercept input; the rest of the desktop is click-through.
+Choose **Appearance → Static dock**, then **Dock side → Bottom, Top, Left, or
+Right**. Bottom is the default. The dock centers along the selected edge without
+reserving tiling space. Top/bottom docks arrange icons horizontally; left/right
+docks arrange them vertically. Long lists scroll along that edge. Each monitor's
+reserved bar space is respected, so a top dock sits below an existing top bar.
+While the static dock is visible, it checks for reserved-area changes every
+1.5 seconds, including bars appearing or disappearing. Empty stashes take no
+space or input. Bubbles start in a vertically centered column along the right
+edge and only their icon regions intercept input; the rest of the desktop is click-through.
 Tooltips show titles. Hover thumbnail previews are outside version one's scope.
 
 Choose **Appearance → Floating dock** for the compact stack presentation. One
@@ -63,7 +69,7 @@ opens a dock beside the handle, growing toward available screen space. Long
 lists scroll. Selecting an icon restores its window and collapses
 the dock; app-grouped icons open the existing window chooser. Even when several
 windows belong to one app, the collapsed handle expands first so grouping keeps
-the same behavior as the bottom dock.
+the same behavior as the static dock.
 
 This presentation uses the same stash visibility, restore destination, grouping,
 and icon shape settings. The single handle starts at the middle right, remembers
@@ -226,7 +232,8 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "restoreDestination": "current",
   "grouping": "window",
   "iconShape": "auto",
-  "floatingDirection": "vertical"
+  "floatingDirection": "vertical",
+  "dockSide": "bottom"
 }
 ```
 
@@ -236,6 +243,8 @@ respectively. `iconShape` accepts `auto`, `circle`, `square`,
 `rounded`, or `squircle`; older configurations default to `auto`.
 `floatingDirection` accepts `vertical` or `horizontal` and only affects the
 floating dock. Older configurations retain the vertical layout.
+`dockSide` accepts `bottom`, `top`, `left`, or `right` and only affects the static
+dock. Older configurations retain the bottom position.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
@@ -243,6 +252,7 @@ For automation, the same API is exposed through:
 omarchy-shell window-stash configure presentation bubbles
 omarchy-shell window-stash configure presentation floating
 omarchy-shell window-stash configure floatingDirection horizontal
+omarchy-shell window-stash configure dockSide top
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -287,6 +297,7 @@ python3 tests/scrolling_width.py
 python3 tests/icon_shapes.py
 python3 tests/floating_dock.py
 python3 tests/floating_direction.py
+python3 tests/dock_sides.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -298,8 +309,9 @@ and XWayland windows, temporary virtual outputs, and restore the original focus
 and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width and floating-dock regressions use isolated workspaces and
-temporary virtual outputs and preserve existing stash entries. The width test
+The scrolling-width, floating-dock, and static-dock-side regressions use isolated
+workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
+test also uses `qs` to create a temporary bar on its virtual output. The width test
 checks the source controller by default;
 pass `--installed` to check the installed copy.
 

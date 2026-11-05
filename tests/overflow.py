@@ -20,7 +20,7 @@ def main():
         virtual=m['name']
         end=max(m['x']+round(m['width']/m['scale']) for m in monitors)
         h.eval('hl.monitor({output=%s,mode="640x480@60",position=%s,scale=1})'%(json.dumps(virtual),json.dumps('%dx0'%end)))
-        configure('scope','global');configure('grouping','window');configure('presentation','dock')
+        configure('scope','global');configure('grouping','window');configure('presentation','dock');configure('dockSide','bottom')
         for index in range(12):
             address=spawn('Stash overflow %02d'%index)
             stash(address)

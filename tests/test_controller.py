@@ -115,7 +115,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical"))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom"))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")
@@ -126,6 +126,16 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(self.stash.settings()["iconShape"],"circle")
         self.settings(floatingDirection="invalid")
         self.assertEqual(self.stash.settings()["floatingDirection"],"vertical")
+
+    def test_dock_side_defaults_and_validation(self):
+        self.assertEqual(self.stash.settings()["dockSide"], "bottom")
+        for side in ("bottom", "top", "left", "right"):
+            self.settings(dockSide=side, iconShape="squircle", floatingDirection="horizontal")
+            self.assertEqual(self.stash.settings()["dockSide"], side)
+            self.assertEqual(self.stash.settings()["iconShape"], "squircle")
+            self.assertEqual(self.stash.settings()["floatingDirection"], "horizontal")
+        self.settings(dockSide="invalid")
+        self.assertEqual(self.stash.settings()["dockSide"], "bottom")
 
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]

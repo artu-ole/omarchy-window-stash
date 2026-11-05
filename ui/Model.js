@@ -127,3 +127,28 @@ function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, r
     y:down ? y + handleHeight + gap : y - gap - panelHeight,
     width:panelWidth, height:panelHeight, down:down,forward:down,right:false,horizontal:false}
 }
+
+// Hyprland reserved edges are logical pixels in left/top/right/bottom order.
+function usableArea(width, height, reserved) {
+  reserved = reserved || []
+  var left = Math.max(0, Number(reserved[0]) || 0)
+  var top = Math.max(0, Number(reserved[1]) || 0)
+  var right = Math.max(0, Number(reserved[2]) || 0)
+  var bottom = Math.max(0, Number(reserved[3]) || 0)
+  return {x:left, y:top, width:Math.max(0, width-left-right), height:Math.max(0, height-top-bottom)}
+}
+
+function staticDockRect(area, side, desiredWidth, desiredHeight, gap, longMargin) {
+  var vertical = side === "left" || side === "right"
+  var marginX = Math.min(vertical ? gap : longMargin, area.width / 2)
+  var marginY = Math.min(vertical ? longMargin : gap, area.height / 2)
+  var width = Math.max(0, Math.min(desiredWidth, area.width - marginX * 2))
+  var height = Math.max(0, Math.min(desiredHeight, area.height - marginY * 2))
+  var x = area.x + Math.round((area.width-width)/2)
+  var y = area.y + Math.round((area.height-height)/2)
+  if (side === "left") x = area.x + marginX
+  else if (side === "right") x = area.x + area.width - marginX - width
+  else if (side === "top") y = area.y + marginY
+  else y = area.y + area.height - marginY - height
+  return {x:x, y:y, width:width, height:height}
+}

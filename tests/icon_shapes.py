@@ -94,6 +94,7 @@ def main():
             pointer.move(*point(x-step*16, y+step*6)); time.sleep(.03)
         pointer.button(False)
         moved = wait(lambda: bubble() if abs(bubble()['x']-b['x'])>50 else None, 'Squircle drag failed')
+        configure('dockSide', 'bottom')
         configure('presentation', 'dock')
         configure('presentation', 'bubbles')
         wait(lambda: abs(bubble()['x']-moved['x'])<2 and abs(bubble()['y']-moved['y'])<2, 'Saved shape position changed')
@@ -109,6 +110,7 @@ def main():
         status = wait(ready, 'Saved shape did not load after restart', timeout=15)
         assert not status['error'], status['error']
         wait(lambda: b if (b := bubble()) and b['shape'] == 'squircle' else None, 'Shape did not survive restart')
+        configure('dockSide', 'bottom')
         configure('presentation', 'dock')
         s = surface(); shelf = s['shelf']
         click(shelf['x']+31, shelf['y']+shelf['height']/2)
