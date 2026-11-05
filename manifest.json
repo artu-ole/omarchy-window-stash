@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "community.window-stash",
+  "name": "Window Stash",
+  "version": "1.0.0",
+  "author": "artu-ole",
+  "license": "AGPL-3.0-only",
+  "description": "Minimize windows into a dock or draggable bubbles, with geometry-aware restore.",
+  "kinds": ["service"],
+  "keepLoaded": true,
+  "entryPoints": {"service": "Service.qml"}
+}

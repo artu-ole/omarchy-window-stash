@@ -1,0 +1,30 @@
+# Generated Python files and local environments
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local diagnostics, backups, and runtime state
+test-results/
+test-artifacts/
+screenshots/
+backups/
+*.log
+*.bak
+*.swp
+*.swo
+*~
+/state.json
+/bubbles.json
+/shell.json
+.DS_Store
