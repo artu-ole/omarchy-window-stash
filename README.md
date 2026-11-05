@@ -1,6 +1,7 @@
 # Window Stash for Omarchy
 
-Minimize running windows into a bottom dock or draggable bubbles. Restore to
+Minimize running windows into a bottom dock, draggable bubbles, or an expandable
+floating dock. Restore to
 your current workspace or the original one, preserving floating size and
 position. Works with the Omarchy 4.0 shell and Hyprland 0.56.2 Lua API.
 
@@ -34,6 +35,8 @@ Development-only dependencies are listed under Development and verification.
 | Choose between windows grouped by app | Click the icon with a count badge |
 | Choose restore destination, open settings or show every stashed window | Right-click an icon; the dock also has a **⋯** button |
 | Move a bubble | Drag it freely; its position is remembered per monitor |
+| Expand/collapse the floating dock | Click its stacked handle; Escape or an outside click also collapses it |
+| Move the floating dock | Drag its handle; one shared position is remembered per monitor |
 | Search the window chooser | Type; use Up/Down and Enter to select; Escape closes |
 
 Default settings: **dock**, **global visibility**, **restore here**, **one icon
@@ -53,12 +56,32 @@ stashes take no space or input. Bubbles start in a vertically centered column al
 their icon regions intercept input; the rest of the desktop is click-through.
 Tooltips show titles. Hover thumbnail previews are outside version one's scope.
 
+Choose **Appearance → Floating dock** for the compact stack presentation. One
+stashed window behaves like a floating icon and restores on click. With multiple
+windows, layered icons and a count badge form one draggable handle. Clicking it
+opens a vertical dock beside the handle, growing upward or downward to stay on
+screen. Long lists scroll. Selecting an icon restores its window and collapses
+the dock; app-grouped icons open the existing window chooser. Even when several
+windows belong to one app, the collapsed handle expands first so grouping keeps
+the same behavior as the bottom dock.
+
+This presentation uses the same stash visibility, restore destination, grouping,
+and icon shape settings. The single handle starts at the middle right, remembers
+its own position separately from individual bubbles, and remains anchored while
+the dock expands. Right-clicking it opens restore actions, all windows, and
+settings. Up/Down and Enter can choose from the expanded dock.
+
+Opening and closing use eased reveal/fade motion while icons stay at their
+natural size. Changes to the list animate without recreating unchanged icons
+or resetting scroll position. Artwork is centered on the display's pixel grid;
+borders and count badges stay inside their tiles. Counts above 99 show `99+`.
+
 The UI follows the active Omarchy theme, including popup colors, typography,
 spacing, borders, and corner rounding. Settings, menus, search, and tooltips use
 Omarchy's shared UI components; window rows use its standard selection styling.
 
 **Icon shape** in settings offers Automatic, Circle, Square, Rounded square,
-and Squircle. It changes the frame around each app icon in both presentations.
+and Squircle. It changes the frame around each app icon in all presentations.
 Automatic preserves circular bubbles and theme-shaped dock controls. Explicit
 choices also give dock icons a themed background and border. Squircle uses a
 continuous superellipse curve. Changing shape preserves bubble positions and
@@ -198,14 +221,16 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
 }
 ```
 
-Alternatives for the first four choices are `bubbles`, `workspace`, `original`,
-and `app`, respectively. `iconShape` accepts `auto`, `circle`, `square`,
+`presentation` accepts `dock`, `bubbles`, or `floating`. Alternatives for scope,
+restore destination, and grouping are `workspace`, `original`, and `app`,
+respectively. `iconShape` accepts `auto`, `circle`, `square`,
 `rounded`, or `squircle`; older configurations default to `auto`.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
 ```sh
 omarchy-shell window-stash configure presentation bubbles
+omarchy-shell window-stash configure presentation floating
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -248,6 +273,7 @@ python3 tests/overflow.py
 python3 tests/themed_ui.py
 python3 tests/scrolling_width.py
 python3 tests/icon_shapes.py
+python3 tests/floating_dock.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -259,8 +285,9 @@ and XWayland windows, temporary virtual outputs, and restore the original focus
 and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width regression uses an isolated temporary virtual output and
-preserves existing stash entries. It tests the source controller by default;
+The scrolling-width and floating-dock regressions use isolated workspaces and
+temporary virtual outputs and preserve existing stash entries. The width test
+checks the source controller by default;
 pass `--installed` to check the installed copy.
 
 Every desktop test sends a notification asking you to pause input, waits three

@@ -76,7 +76,7 @@ Item {
   }
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
-    var options = {presentation:["dock","bubbles"], scope:["global","workspace"],
+    var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
       iconShape:["auto","circle","square","rounded","squircle"]}
     if (!options[key] || options[key].indexOf(value) < 0) { lastError = "Invalid stash setting"; return }

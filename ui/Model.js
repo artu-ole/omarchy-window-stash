@@ -8,6 +8,14 @@ function iconRadius(shape, size, bubble, themeRadius) {
   return bubble ? size / 2 : themeRadius
 }
 
+function alignedIconSize(frame, desired, scale) {
+  scale = Math.max(1, Number(scale) || 1)
+  var framePixels = Math.round(frame * scale)
+  var pixels = Math.min(framePixels, Math.max(1, Math.round(desired * scale)))
+  if ((framePixels - pixels) % 2 !== 0) pixels = Math.max(1, pixels - 1)
+  return pixels / scale
+}
+
 // The fourth-order superellipse has continuously changing curvature rather
 // than the straight sides and circular corner arcs of a rounded square.
 function squirclePath(width, height, left, top, right, bottom, reverse) {
@@ -80,4 +88,22 @@ function bubblePosition(saved, index, width, height, count) {
   var fallback = [width - 68 - 64 * column, top + 64 * (index % rowsPerColumn)]
   var pos = saved || fallback
   return [Math.max(8, Math.min(width - 56, pos[0])), Math.max(32, Math.min(height - 56, pos[1]))]
+}
+
+function floatingAnchor(saved, width, height) {
+  var x = saved ? saved[0] : width - 68
+  var y = saved ? saved[1] : (height - 48) / 2
+  return [Math.max(8, Math.min(width - 56, x)), Math.max(32, Math.min(height - 64, y))]
+}
+
+function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown) {
+  var margin = 8, panelWidth = rowHeight + padding * 2 + 8
+  var desired = count * rowHeight + Math.max(0, count - 1) * gap + gap + buttonHeight + padding * 2
+  var below = Math.max(0, height - margin - y - handleHeight - gap)
+  var above = Math.max(0, y - gap - margin)
+  var down = typeof preferredDown === "boolean" ? preferredDown : below >= desired || below >= above
+  var panelHeight = Math.min(desired, down ? below : above)
+  return {x:Math.max(margin, Math.min(width - margin - panelWidth, x + (48 - panelWidth) / 2)),
+    y:down ? y + handleHeight + gap : y - gap - panelHeight,
+    width:panelWidth, height:panelHeight, down:down}
 }

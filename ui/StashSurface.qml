@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
-import QtQml.Models
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
@@ -22,6 +21,8 @@ PanelWindow {
   readonly property var groups: Model.groups(windows, config.grouping)
   property bool dialogOpen: false
   readonly property bool bubbleMode: config.presentation === "bubbles"
+  readonly property bool floatingMode: config.presentation === "floating"
+  readonly property bool keyboardOpen: dialogOpen || floatingDock.open
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
   property var bubbleRegions: []
@@ -71,26 +72,29 @@ PanelWindow {
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialog.visible},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
+      floatingDock:floatingDock.details(),
       actions:{here:itemRect(restoreHereButton),original:itemRect(restoreOriginalButton),settings:itemRect(settingsButton)},
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
         accent:String(Commons.Color.accent),fontFamily:surface.fonts.family,bodySize:surface.fonts.body,radius:Style.cornerRadius}}
   }
-  onDialogOpenChanged: {
+  onKeyboardOpenChanged: {
     focusPrimed = false
-    if (dialogOpen) primeFocus.restart()
+    if (keyboardOpen) primeFocus.restart()
   }
+  onDialogOpenChanged: if (dialogOpen) floatingDock.close()
   Timer { id: primeFocus; interval: 70; onTriggered: surface.focusPrimed = true }
   color: "transparent"
   anchors { top: true; left: true; bottom: true; right: true }
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "omarchy-window-stash"
   WlrLayershell.layer: WlrLayer.Top
-  WlrLayershell.keyboardFocus: dialogOpen
+  WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
-  visible: groups.length > 0 || dialogOpen
+  visible: groups.length > 0 || dialogOpen || (floatingMode && floatingDock.present)
   mask: Region {
     id: inputMask
-    regions: surface.dialogOpen ? [dialogRegion] : surface.bubbleMode ? surface.bubbleRegions : [shelfRegion]
+    regions: surface.dialogOpen ? [dialogRegion] : surface.floatingMode ? [floatingDock.inputRegion]
+      : surface.bubbleMode ? surface.bubbleRegions : [shelfRegion]
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
   // open, its surface owns the screen, just like Omarchy's keyboard panels.
@@ -99,7 +103,7 @@ PanelWindow {
 
   Ui.BorderSurface {
     id: shelf
-    visible: !surface.bubbleMode && surface.groups.length > 0
+    visible: surface.config.presentation === "dock" && surface.groups.length > 0
     width: Math.min(surface.width - surface.metrics.popupPadding * 2,
       dockRow.implicitWidth + surface.metrics.lg * 2 + borderLeft + borderRight)
     height: Math.max(44, surface.metrics.controlHeight) + surface.metrics.lg * 2 + borderTop + borderBottom
@@ -153,28 +157,9 @@ PanelWindow {
       bubble: true
       iconShape: surface.config.iconShape || "auto"
       readonly property var saved: surface.savedPositions[group.key]
-      property var shapedRegions: []
-      property Region hitRegion: Region {
-        x: bubble.iconShape === "squircle" ? 0 : bubble.x
-        y: bubble.iconShape === "squircle" ? 0 : bubble.y
-        width: bubble.iconShape === "squircle" ? 0 : bubble.width
-        height: bubble.iconShape === "squircle" ? 0 : bubble.height
-        radius: bubble.hitRadius
-        regions: bubble.shapedRegions
-      }
-      Instantiator {
-        model: bubble.iconShape === "squircle" ? Model.squircleBands(bubble.width, bubble.height) : []
-        delegate: Region {
-          required property var modelData
-          x: bubble.x + modelData.x; y: bubble.y + modelData.y
-          width: modelData.width; height: modelData.height
-        }
-        onObjectAdded: function(index, object) {
-          var regions = bubble.shapedRegions.slice(); regions.push(object); bubble.shapedRegions = regions
-        }
-        onObjectRemoved: function(index, object) {
-          bubble.shapedRegions = bubble.shapedRegions.filter(function(region) { return region !== object })
-        }
+      property Region hitRegion: StashIconRegion {
+        originX:bubble.x; originY:bubble.y; size:bubble.width
+        cornerRadius:bubble.hitRadius; iconShape:bubble.iconShape
       }
       function place() {
         var position = Model.bubblePosition(saved, index, surface.width, surface.height, surface.groups.length)
@@ -197,6 +182,20 @@ PanelWindow {
         function onGroupsChanged() { bubble.place() }
       }
     }
+  }
+
+  StashFloatingDock {
+    id:floatingDock
+    anchors.fill:parent
+    stash:surface.stash
+    hostWindow:surface
+    monitor:surface.monitor
+    screenName:surface.screen.name
+    config:surface.config
+    groups:surface.groups
+    windows:surface.windows
+    savedPosition:surface.savedPositions["dock:floating"]
+    active:surface.floatingMode && surface.groups.length > 0 && !surface.dialogOpen
   }
 
   MouseArea {
@@ -345,7 +344,8 @@ PanelWindow {
         Repeater {
           id: settingRows
           model: [
-            {key:"presentation", label:"Appearance", values:["dock","bubbles"], labels:["Bottom dock","Floating bubbles"]},
+            {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
+              labels:["Bottom dock","Floating bubbles","Floating dock"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
             {key:"restoreDestination", label:"Restore destination", values:["current","original"], labels:["Current workspace","Original workspace"]},
             {key:"grouping", label:"Icon grouping", values:["window","app"], labels:["One per window","One per app"]},

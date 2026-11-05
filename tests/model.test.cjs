@@ -34,3 +34,30 @@ const contour=ctx.squirclePath(48,48,0,0,0,0,false)
 assert.ok(contour.startsWith('M ') && contour.endsWith(' Z'))
 assert.ok(!/NaN|Infinity/.test(contour))
 console.log('Model: shape defaults and exact squircle input coverage passed')
+
+assert.equal(ctx.floatingAnchor(null,1000,600).join(','),'932,276')
+assert.equal(ctx.floatingAnchor([-20,900],1000,600).join(','),'8,536')
+for (const [w,h] of [[640,360],[1920,1080],[320,240]]) {
+  for (const saved of [[8,32],[w-56,h-64],[w/2,h/2]]) {
+    const [x,y]=ctx.floatingAnchor(saved,w,h)
+    for (const count of [1,3,30]) {
+      const p=ctx.floatingPanel(x,y,56,w,h,count,5,8,44,30)
+      assert.ok(p.x>=8 && p.x+p.width<=w-8)
+      assert.ok(p.y>=8 && p.y+p.height<=h-8)
+      assert.ok(p.height>0)
+      assert.ok(p.down ? p.y>=y+56 : p.y+p.height<=y)
+    }
+  }
+}
+console.log('Model: floating anchor, expansion bounds, and overflow geometry passed')
+
+for (const scale of [1,1.25,1.5,2]) for (const frame of [44,48]) {
+  const size=ctx.alignedIconSize(frame,28,scale)
+  const pixels=Math.round(size*scale)
+  assert.ok(Math.abs(size*scale-pixels)<1e-6)
+  assert.equal((Math.round(frame*scale)-pixels)%2,0,'Artwork must be centered without half-pixel offsets')
+}
+const locked=ctx.floatingPanel(500,500,56,1920,1080,100,9,8,44,30,true)
+assert.equal(locked.down,true)
+assert.ok(locked.y+locked.height<=1072,'An open dock grows into scrolling instead of jumping sides')
+console.log('Model: crisp centered artwork and stable expansion direction passed')

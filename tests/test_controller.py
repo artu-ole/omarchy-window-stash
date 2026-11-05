@@ -102,6 +102,7 @@ class ControllerTests(unittest.TestCase):
     def test_icon_shape_settings_and_legacy_default(self):
         self.settings(presentation="bubbles", scope="workspace")
         self.assertEqual(self.stash.settings()["iconShape"], "auto")
+
         for shape in ("auto", "circle", "square", "rounded", "squircle"):
             self.settings(presentation="bubbles", scope="workspace", iconShape=shape)
             settings = self.stash.settings()
@@ -110,6 +111,11 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(settings["scope"], "workspace")
         self.settings(iconShape="invalid")
         self.assertEqual(self.stash.settings()["iconShape"], "auto")
+
+    def test_floating_dock_presentation_preserves_other_choices(self):
+        self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
+        self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
+            grouping="app",iconShape="squircle",restoreDestination="current"))
 
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]

@@ -33,13 +33,15 @@ def main():
         shell('settings')
         wait(lambda: shell('status')['dialog'] == 'settings', 'Settings did not open')
         time.sleep(.3)
-        alternatives = {'presentation': ('dock', 'bubbles'), 'scope': ('global', 'workspace'),
+        alternatives = {'presentation': ('dock', 'bubbles', 'floating'), 'scope': ('global', 'workspace'),
                         'restoreDestination': ('current', 'original'), 'grouping': ('window', 'app')}
         for key, values in alternatives.items():
             control = next(c for c in surface()['settingControls'] if c['key'] == key)
-            wanted = values[1] if settings[key] == values[0] else values[0]
+            wanted_index = (values.index(settings[key]) + 1) % len(values)
+            wanted = values[wanted_index]
             click(control['rect'])
-            keys('-k', 'Down' if wanted == values[1] else 'Up', '-k', 'Return')
+            wait(lambda: next(c for c in surface()['settingControls'] if c['key']==key)['open'], 'Dropdown did not open: '+key)
+            keys(*(['-k','Up']*len(values)+['-k','Down']*wanted_index+['-k','Return']))
             wait(lambda: shell('status')['settings'][key] == wanted, 'Dropdown failed: ' + key)
             configure(key, settings[key])
             wait(lambda: next(c for c in surface()['settingControls'] if c['key'] == key)['value'] == settings[key],
