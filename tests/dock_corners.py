@@ -90,7 +90,6 @@ def main():
                 for frame in ('shown','hidden'):
                     configure('iconFrame',frame)
                     for icon in surface()['shelf']['icons']:inside(p,icon)
-                    inside(p,surface()['shelf']['more'])
             configure('iconFrame','shown')
         configure('dockSide','bottom');p=settled_static()
         screenshot(p,'/tmp/stash-custom-corners-static.png')
@@ -117,7 +116,6 @@ def main():
                 for frame in ('shown','hidden'):
                     configure('iconFrame',frame)
                     for icon in dock()['icons']:inside(d['panel'],icon)
-                    inside(d['panel'],dock()['footer'])
                 configure('iconFrame','shown')
                 if value==64:screenshot(d['panel'],'/tmp/stash-custom-corners-'+direction+'.png')
                 subprocess.run(['wtype','-k','Escape'],check=True)

@@ -29,7 +29,7 @@ def main():
         right=max(m['x']+round(m['width']/m['scale']) for m in monitors)
         bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
         return monitor['x']+x-left,monitor['y']+y-top,right-left,bottom-top
-    def click(rect):pointer.click(*point(rect['x']+rect['width']/2,rect['y']+rect['height']/2))
+    def click(rect,button=272):pointer.click(*point(rect['x']+rect['width']/2,rect['y']+rect['height']/2),button=button)
     def spawn():
         title='Stash dock sides %s %s'%(os.getpid(),len(addresses))
         p=subprocess.Popen(['/usr/bin/python3',str(ROOT/'tests/test-window.py'),title],
@@ -82,8 +82,11 @@ def main():
             click(p['icons'][0])
             wait(lambda:surface()['groups']==2,'Icon did not restore from '+side)
             park(windows[-1],3)
-            click(surface()['shelf']['more'])
+            click(surface()['shelf']['icons'][0],273)
             wait(lambda:shell('status')['dialog']=='menu','Dock menu did not open from '+side)
+            wait(lambda:surface()['dialog']['visible'],'Context menu did not settle')
+            click(surface()['actions']['settings'])
+            wait(lambda:shell('status')['dialog']=='settings','Right-click Settings did not open')
             shell('dismiss')
         print('PASS native dock-side selector, all four edges, centered icons, restore and menu input',flush=True)
 

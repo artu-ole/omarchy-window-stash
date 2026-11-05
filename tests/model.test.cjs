@@ -41,7 +41,7 @@ for (const [w,h] of [[640,360],[1920,1080],[320,240]]) {
   for (const saved of [[8,32],[w-56,h-64],[w/2,h/2]]) {
     const [x,y]=ctx.floatingAnchor(saved,w,h)
     for (const count of [1,3,30]) {
-      const p=ctx.floatingPanel(x,y,56,w,h,count,5,8,44,30)
+      const p=ctx.floatingPanel(x,y,56,w,h,count,5,8,44)
       assert.ok(p.x>=8 && p.x+p.width<=w-8)
       assert.ok(p.y>=8 && p.y+p.height<=h-8)
       assert.ok(p.height>0)
@@ -57,7 +57,7 @@ for (const scale of [1,1.25,1.5,2]) for (const frame of [44,48]) {
   assert.ok(Math.abs(size*scale-pixels)<1e-6)
   assert.equal((Math.round(frame*scale)-pixels)%2,0,'Artwork must be centered without half-pixel offsets')
 }
-const locked=ctx.floatingPanel(500,500,56,1920,1080,100,9,8,44,30,true)
+const locked=ctx.floatingPanel(500,500,56,1920,1080,100,9,8,44,true)
 assert.equal(locked.down,true)
 assert.ok(locked.y+locked.height<=1072,'An open dock grows into scrolling instead of jumping sides')
 console.log('Model: crisp centered artwork and stable expansion direction passed')
@@ -66,7 +66,7 @@ for (const [w,h] of [[320,240],[640,360],[1920,1080]]) {
   for (const saved of [[8,32],[w-56,h-64],[w/2,h/2]]) {
     const [x,y]=ctx.floatingAnchor(saved,w,h)
     for (const count of [1,3,30]) {
-      const p=ctx.floatingPanel(x,y,56,w,h,count,9,8,44,33,undefined,true)
+      const p=ctx.floatingPanel(x,y,56,w,h,count,9,8,44,undefined,true)
       assert.ok(p.x>=8 && p.x+p.width<=w-8)
       assert.ok(p.y>=8 && p.y+p.height<=h-8)
       assert.ok(p.width>0)
@@ -74,8 +74,8 @@ for (const [w,h] of [[320,240],[640,360],[1920,1080]]) {
     }
   }
 }
-assert.equal(ctx.floatingPanel(8,400,56,1920,1080,5,9,8,44,33,undefined,true).right,true)
-assert.equal(ctx.floatingPanel(1864,400,56,1920,1080,5,9,8,44,33,undefined,true).right,false)
+assert.equal(ctx.floatingPanel(8,400,56,1920,1080,5,9,8,44,undefined,true).right,true)
+assert.equal(ctx.floatingPanel(1864,400,56,1920,1080,5,9,8,44,undefined,true).right,false)
 console.log('Model: horizontal dock bounds and left/right expansion passed')
 
 for (const scale of [1,1.25,1.5,2]) for (const frame of [44,48]) {
@@ -97,7 +97,7 @@ for (const [w,h] of [[320,240],[1024,576],[1920,1080],[600,1000]]) {
     for (const side of ['bottom','top','left','right']) {
       const vertical=side==='left'||side==='right'
       for (const count of [1,3,50]) {
-        const length=count*44+(count-1)*4+4+32+6
+        const length=ctx.dockLength(count,44,4)+6
         const p=ctx.staticDockRect(area,side,vertical?50:length,vertical?length:50,8,16)
         assert.ok(p.width>=0 && p.height>=0)
         assert.ok(p.x>=area.x && p.y>=area.y)
@@ -193,11 +193,22 @@ for (const thickness of [44,50,56,62]) for (const border of [0,1,2]) {
   }
 }
 for (const horizontal of [false,true]) for (const count of [2,30]) {
-  const base=ctx.floatingPanel(300,300,56,1000,800,count,3,4,44,33,undefined,horizontal)
-  const inset=ctx.dockEndInset(28,3,1)
-  const safe=ctx.floatingPanel(300,300,56,1000,800,count,3,4,44,33,undefined,horizontal,inset)
+  const base=ctx.floatingPanel(300,300,56,1000,800,count,3,4,44,undefined,horizontal)
+  const inset=ctx.dockEndInset(25,3,1)
+  const safe=ctx.floatingPanel(300,300,56,1000,800,count,3,4,44,undefined,horizontal,inset)
   assert.equal(horizontal?safe.height:safe.width,horizontal?base.height:base.width,'Rounded ends must not thicken the dock')
   if (count===2) assert.equal(horizontal?safe.width-base.width:safe.height-base.height,(inset-3)*2)
   assert.ok(safe.x>=8 && safe.y>=8 && safe.x+safe.width<=992 && safe.y+safe.height<=792)
 }
 console.log('Model: radius-aware end clearance protects square tiles without thickening docks or breaking overflow bounds')
+
+for (const count of [0,1,2,3,30]) {
+  const length=count*44+Math.max(0,count-1)*4
+  assert.equal(ctx.dockLength(count,44,4),length,'Docks must have no footer slot or trailing gap')
+  for (const horizontal of [false,true]) {
+    const p=ctx.floatingPanel(300,300,56,1920,1080,count,3,4,44,undefined,horizontal)
+    assert.equal(horizontal?p.height:p.width,50,'Floating docks should fit only the icon cross section')
+    assert.equal(horizontal?p.width:p.height,Math.min(length+6,horizontal?1920-8-300-48-4:1080-8-300-56-4))
+  }
+}
+console.log('Model: icons-only dock lengths, single-icon sizing and no trailing menu space passed')

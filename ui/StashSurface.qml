@@ -151,15 +151,14 @@ PanelWindow {
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
         icons:shelfIcons(false),exitingIcons:shelfIcons(true),progress:shelf.reveal,
-        animating:shelfWidthAnimation.running || shelfHeightAnimation.running || shelfRevealAnimation.running,
-        more:Object.assign(itemRect(dockMore),{feedback:dockMore.feedbackDetails()})},
+        animating:shelfWidthAnimation.running || shelfHeightAnimation.running || shelfRevealAnimation.running},
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialogOpen && dialogReveal>0.999,rendered:dialog.visible,progress:dialogReveal},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
       opacityControls:opacityControls,
       cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
       floatingDock:floatingDock.details(),
-      actions:{here:itemRect(restoreHereButton),original:itemRect(restoreOriginalButton),settings:itemRect(settingsButton)},
+      actions:{here:itemRect(restoreHereButton),original:itemRect(restoreOriginalButton),settings:Object.assign(itemRect(settingsButton),{feedback:settingsButton.feedbackDetails()})},
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
         accent:String(Commons.Color.accent),fontFamily:surface.fonts.family,bodySize:surface.fonts.body,radius:Style.cornerRadius}}
   }
@@ -279,8 +278,11 @@ PanelWindow {
         Item {
           id: dockRow
           readonly property real step:44+surface.metrics.sm
-          implicitWidth:surface.verticalDock ? 44 : shelfModel.activeKeys.length*step+32
-          implicitHeight:surface.verticalDock ? shelfModel.activeKeys.length*step+32 : 44
+          // The final outgoing icons retain their space until their fade ends.
+          readonly property int layoutCount:shelfModel.activeKeys.length || shelfModel.count
+          readonly property real length:Model.dockLength(layoutCount,44,surface.metrics.sm)
+          implicitWidth:surface.verticalDock ? 44 : length
+          implicitHeight:surface.verticalDock ? length : 44
           width:implicitWidth; height:implicitHeight
           Repeater {
             id: dockIcons
@@ -306,19 +308,6 @@ PanelWindow {
               onActivated: surface.stash.selectGroup(group, surface.screen.name)
               onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
             }
-          }
-          StashButton { animations:surface.animations;
-            id: dockMore
-            idleOpacity:surface.iconIdleOpacity
-            x:surface.verticalDock ? 0 : shelfModel.activeKeys.length*dockRow.step
-            y:surface.verticalDock ? shelfModel.activeKeys.length*dockRow.step : 0
-            Behavior on x { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
-            Behavior on y { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
-            iconText: "󰇙"; width: surface.verticalDock ? 44 : 32; height: surface.verticalDock ? 32 : 44
-            focusable: true
-            foreground: surface.popupColors.text
-            tooltipText: "Window Stash settings and all windows"
-            onClicked: surface.stash.openDialog("menu", surface.screen.name, [], null)
           }
         }
       }

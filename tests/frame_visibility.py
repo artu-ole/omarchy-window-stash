@@ -25,9 +25,9 @@ def main():
         right=max(m['x']+round(m['width']/m['scale']) for m in monitors)
         bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
         return current['x']+x-left,current['y']+y-top,right-left,bottom-top
-    def click(rect):
+    def click(rect,button=272):
         x=rect['x']+rect['width']/2;y=rect['y']+rect['height']/2
-        pointer.move(*point(x-2,y));pointer.click(*point(x,y))
+        pointer.move(*point(x-2,y));pointer.click(*point(x,y),button=button)
     def spawn(app):
         title='Stash frames %s %s'%(os.getpid(),len(addresses))
         p=subprocess.Popen(['/usr/bin/python3',str(ROOT/'tests/test-window.py'),title,app],
@@ -79,7 +79,7 @@ def main():
                 configure('iconFrame',icons);time.sleep(.2)
                 if icons=='hidden':
                     for icon in surface()['shelf']['icons']:bare(icon['appearance'])
-            click(surface()['shelf']['more']);wait(lambda:shell('status')['dialog']=='menu','Frameless dock menu failed');shell('dismiss')
+            click(surface()['shelf']['icons'][0],273);wait(lambda:shell('status')['dialog']=='menu','Frameless dock menu failed');shell('dismiss')
         configure('dockSide','bottom');wait(lambda:not surface()['shelf']['animating'],'Bottom dock did not settle');screenshot(surface()['shelf'],'/tmp/stash-frameless-static.png')
         click(surface()['shelf']['icons'][0]);wait(lambda:surface()['groups']==2,'Frameless static icon did not restore');park(windows[-1],3)
         print('PASS independent icon/dock frames, unchanged static positions, menu and restore',flush=True)

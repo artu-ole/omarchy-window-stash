@@ -108,10 +108,14 @@ function floatingAnchor(saved, width, height) {
   return [Math.max(8, Math.min(width - 56, x)), Math.max(32, Math.min(height - 64, y))]
 }
 
-function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown, horizontal, endPadding) {
-  var margin = 8, panelWidth = rowHeight + padding * 2 + 6
+function dockLength(count, size, gap) {
+  return count > 0 ? count * size + (count - 1) * gap : 0
+}
+
+function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, preferredDown, horizontal, endPadding) {
+  var margin = 8, panelWidth = rowHeight + padding * 2
   var ends = typeof endPadding === "number" ? Math.max(padding,endPadding) : padding
-  var desired = count * rowHeight + Math.max(0, count - 1) * gap + gap + buttonHeight + ends * 2
+  var desired = dockLength(count,rowHeight,gap) + ends * 2
   if (horizontal) {
     var right = Math.max(0, width - margin - x - 48 - gap)
     var left = Math.max(0, x - gap - margin)

@@ -65,7 +65,7 @@ Ui.BorderSurface {
   function appearance() {
     return {width:width,height:height,frameVisible:frameVisible,enabled:enabled,background:String(frameColor),presence:presence,retiring:retiring,presenceFrames:presenceFrames,feedback:interaction.details(),
       borderWidth:Math.max(Border.left(frameBorder),Border.right(frameBorder),Border.top(frameBorder),Border.bottom(frameBorder)),
-      artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale,animating:image.animating,blend:image.mix},
+      artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale,animating:image.animating,blend:image.mix,transitions:image.crossfadeSerial,frames:image.frames},
       badge:{visible:badge.visible,x:badge.x,y:badge.y,width:badge.width,height:badge.height}}
   }
   color: iconShape === "squircle" ? "transparent" : frameColor

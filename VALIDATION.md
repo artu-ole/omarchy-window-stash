@@ -16,6 +16,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Individual Hyprland group members | Live two-member group, stash one member and restore separately |
 | Repeated/concurrent requests | Two concurrent minimize processes create one record |
 | Existing window switcher | Search for the parked client, commit selection, verify workspace restoration |
+| Icons-only docks | Static and floating docks contain app icons only; shared length checks exclude menu slots and trailing gaps; native right-click Settings access, all four sides, both floating directions, rounded end clearance, scrolling and final-icon exit remain covered |
 | Dock and bubbles | Live icon clicks, bubble dragging, position persistence and mode changes |
 | Floating dock | Live single-window direct restore, stacked multi-window expansion, per-app chooser, outside/Escape dismissal, icon selection, drag and restart persistence, upward edge placement, workspace/global scope, vertical overflow on a small virtual output, and two-monitor global stacks |
 | Animation modes | Native Full/Reduced/Off selector; live intermediate icon arrival/exit frames, final-icon cleanup, stable refreshes and bubble neighbours, floating stack artwork crossfade, row reflow and keyboard selection, Reduced fades without scaling, interrupted transitions, immediate Off and saved mode after restart; offscreen native Qt test verifies delegate identity, rapid revival/reordering, timed cleanup, and Off disposal |
@@ -40,7 +41,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Workspace renumbering | Observe `changeworkspaceid>>9,90`, verify origin update, then restore ID 90 to 9 and remove the test workspace |
 | Shell restart | Park a window, restart the shell, recover the same record and floating state |
 | Closed minimized windows | Close the parked test window and verify ledger cleanup |
-| Dock overflow | Twelve entries on a 640×480 virtual output; real pointer drag scrolls without restoring a window |
+| Dock overflow | Fourteen entries on a 640×480 virtual output; real pointer drag scrolls without restoring a window |
 | Omarchy theme and shared controls | Native buttons, dropdowns, search, and tooltips; live Tokyo Night visual check, all four dropdowns and external-setting synchronization, grouped bubble search/Enter restore, context restore and dock click |
 | Safe removal and reinstall | Removal restores a parked window and removes bindings/integration; reinstall reloads successfully |
 
@@ -69,7 +70,7 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.10.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.11.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |

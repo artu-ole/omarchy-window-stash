@@ -114,16 +114,16 @@ def main():
         h.eval('hl.monitor({output=%s,mode="320x240@60",position=%s,scale=1})'%(json.dumps(output),json.dumps('%dx0'%end)))
         monitor=next(m for m in h.read('monitors') if m['name']==output)
         h.dispatch('focus',monitor=output);h.dispatch('focus',workspace=str(workspace+1))
-        for i in range(5):park(spawn('Stash horizontal overflow %s %s'%(os.getpid(),i)))
+        for i in range(7):park(spawn('Stash horizontal overflow %s %s'%(os.getpid(),i)))
         d=expand();p=d['panel'];s=surface()
         assert p['x']>=0 and p['x']+p['width']<=s['width'] and p['y']>=0 and p['y']+p['height']<=s['height']
-        assert d['contentWidth']>d['viewportWidth']
+        assert d['contentWidth']-d['viewportWidth']>60
         x=p['x']+p['inset']+d['viewportWidth']/2;y=p['y']+p['height']/2
         pointer.move(*point(x,y));pointer.button(True)
         for step in range(1,7):pointer.move(*point(max(1,x-step*15),y));time.sleep(.04)
         pointer.button(False)
         wait(lambda:dock()['contentX']>10,'Horizontal dock could not scroll')
-        assert len(command('list')['windows'])==len(baseline)+8,'Scrolling restored a window'
+        assert len(command('list')['windows'])==len(baseline)+10,'Scrolling restored a window'
         print('PASS horizontal overflow scrolling and bounds on a small screen',flush=True)
     finally:
         pointer.button(False);shell('dismiss')

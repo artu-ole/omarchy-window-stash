@@ -21,11 +21,11 @@ def main():
         end=max(m['x']+round(m['width']/m['scale']) for m in monitors)
         h.eval('hl.monitor({output=%s,mode="640x480@60",position=%s,scale=1})'%(json.dumps(virtual),json.dumps('%dx0'%end)))
         configure('scope','global');configure('grouping','window');configure('presentation','dock');configure('dockSide','bottom')
-        for index in range(12):
+        for index in range(14):
             address=spawn('Stash overflow %02d'%index)
             stash(address)
         def get_surface():return next(s for s in shell('status')['surfaces'] if s['screen']==virtual)
-        s=wait(lambda:get_surface() if get_surface()['groups']==12 else None,'All dock entries did not appear')
+        s=wait(lambda:get_surface() if get_surface()['groups']==14 else None,'All dock entries did not appear')
         assert s['shelf']['contentWidth']>s['shelf']['viewportWidth'],s
         assert s['shelf']['width']<=s['width']-32,s
         pointer=Pointer()
@@ -41,7 +41,7 @@ def main():
             pointer.move(x-24*step,y,right-left,bottom-top);time.sleep(.025)
         pointer.button(False)
         wait(lambda:get_surface()['shelf']['contentX']>20,'Overflow shelf could not be scrolled')
-        assert len(command('list')['windows'])==12,'Dragging the dock restored an unintended window'
+        assert len(command('list')['windows'])==14,'Dragging the dock restored an unintended window'
         print('PASS constrained dock width and real horizontal overflow scrolling',flush=True)
     finally:
         if pointer:pointer.close()

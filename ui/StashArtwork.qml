@@ -14,11 +14,17 @@ Item {
   property bool initialized:false
   property bool resetting:false
   property real mix:1
+  property int crossfadeSerial:0
+  property int frames:0
   Behavior on mix { enabled:!artwork.resetting; NumberAnimation { id:blend; duration:Motion.duration(artwork.animations,160,100); easing.type:Easing.OutCubic } }
-  onMixChanged:if (mix===1) previous=""
+  onMixChanged: {
+    if (mix>0 && mix<1) frames++
+    if (mix===1) previous=""
+  }
   onSourceChanged: {
     if (!initialized) { lastSource=source; return }
     if (source===lastSource) return
+    crossfadeSerial++; frames=0
     blend.stop(); previous=lastSource; lastSource=source
     if (animations==="off") { mix=1; previous="" }
     else { resetting=true; mix=0; resetting=false; ready.restart() }

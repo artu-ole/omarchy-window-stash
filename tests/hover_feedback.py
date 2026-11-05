@@ -84,19 +84,21 @@ def main():
             wait(lambda:surface()['groups']==2,'Styled icon click failed to restore');park(windows[-1])
             print('PASS '+mode+' icon artwork pixel tint, smooth hover/press, stable input geometry and restore',flush=True)
 
+        hover(icon());pointer.button(True,273);pointer.button(False,273)
+        wait(lambda:surface()['dialog']['visible'] and shell('status')['dialog']=='menu','Right-click menu did not open')
         away()
-        def more():return surface()['shelf']['more']
-        wait(lambda:more()['feedback']['hover']<.001,'Button idle did not clear')
-        idle=capture(more(),'button-idle');hover(more())
-        f=wait(lambda:more()['feedback'] if more()['feedback']['hover']>.999 else None,'Button hover did not settle')
+        def button():return surface()['actions']['settings']
+        wait(lambda:button()['feedback']['hover']<.001,'Button idle did not clear')
+        idle=capture(button(),'button-idle');hover(button())
+        f=wait(lambda:button()['feedback'] if button()['feedback']['hover']>.999 else None,'Button hover did not settle')
         assert f['hoverFrames']>=2 and f['tint']>.3
-        lit=capture(more(),'button-hot');glyphs=[i for i,p in enumerate(idle[2]) if sum(p)>400]
+        lit=capture(button(),'button-hot');glyphs=[i for i,p in enumerate(idle[2]) if sum(p)>400]
         assert len(glyphs)>2 and changed(idle,lit,glyphs)>2,'Button glyph did not tint'
         pointer.button(True)
-        wait(lambda:more()['feedback']['press']>.999,'Button press feedback missing')
-        pointer.button(False);wait(lambda:shell('status')['dialog']=='menu','Native button activation was intercepted')
+        wait(lambda:button()['feedback']['press']>.999,'Button press feedback missing')
+        pointer.button(False);wait(lambda:shell('status')['dialog']=='settings','Context Settings action was intercepted')
         shell('dismiss')
-        print('PASS whole button glyph tint, eased press and native menu activation',flush=True)
+        print('PASS right-click Settings, whole button text tint, eased press and native activation',flush=True)
 
         configure('presentation','floating');configure('floatingDirection','horizontal')
         wait(lambda:dock()['active'] and dock()['handle']['opacity']>.99 and not dock()['snapping'] and not dock()['animating'],'Floating handle did not settle')

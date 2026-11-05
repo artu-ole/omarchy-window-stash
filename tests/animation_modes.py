@@ -115,9 +115,11 @@ def main():
         for a in windows:park(a)
         wait(lambda:dock()['active'] and dock()['windows']==3 and not dock()['animating'] and not dock()['snapping'],'Floating stack did not settle')
         assert dock()['handle']['appearance']['presenceFrames']>=2
+        transitions=dock()['handle']['appearance']['artwork']['transitions']
         restore(windows[2])
-        wait(lambda:0<dock()['handle']['appearance']['artwork']['blend']<1,'Front artwork changed without a crossfade')
+        wait(lambda:dock()['handle']['appearance']['artwork']['transitions']>transitions,'Front artwork did not change')
         wait(lambda:not dock()['animating'],'Artwork crossfade did not finish')
+        assert dock()['handle']['appearance']['artwork']['frames']>=2,'Front artwork changed without a crossfade'
         assert dock()['handle']['appearance']['presence']>.999,'New artwork replayed the whole stack'
         park(windows[2]);wait(lambda:not dock()['animating'],'Stack did not settle after stash')
         click(dock()['handle']);wait(lambda:dock()['expanded'] and not dock()['animating'],'Floating dock did not expand')
