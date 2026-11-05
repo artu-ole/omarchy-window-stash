@@ -33,7 +33,7 @@ Ui.BorderSurface {
     ? Border.controlSpec("hover-cursor", icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? Border.surfaceSpec("popups", "border", icon.popupColors.border, Style.normalBorderWidth)
     : Border.none()
-  readonly property real artworkInset: Math.max(metrics.sm, 2 + Math.max(Border.left(frameBorder),
+  readonly property real artworkInset: Math.max(1, 0.5 + Math.max(Border.left(frameBorder),
     Border.right(frameBorder), Border.top(frameBorder), Border.bottom(frameBorder)))
   function appearance() {
     return {width:width,height:height,
@@ -56,7 +56,7 @@ Ui.BorderSurface {
   Image {
     id: image
     anchors.centerIn: parent
-    width: Model.alignedIconSize(icon.width, Math.min(icon.width - icon.artworkInset * 2, Style.space(28)), Screen.devicePixelRatio)
+    width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio)
     height: width
     source: Quickshell.iconPath(icon.appIcon, true)
     sourceSize.width: Math.round(width * Screen.devicePixelRatio)

@@ -35,7 +35,8 @@ Item {
   readonly property var popupColors: Commons.Color.popups
   readonly property var metrics: Style.spacing
   readonly property var panelBorder: Border.surfaceSpec("popups","border",popupColors.border,Style.normalBorderWidth)
-  readonly property real inset: metrics.controlGap + Math.max(Border.left(panelBorder), Border.right(panelBorder),
+  readonly property real gap: metrics.sm
+  readonly property real inset: metrics.xxs + Math.max(Border.left(panelBorder), Border.right(panelBorder),
     Border.top(panelBorder), Border.bottom(panelBorder))
   readonly property int stackDepth: Math.min(3, displayWindows.length)
   readonly property int tail: Math.max(0, stackDepth - 1) * 4
@@ -48,7 +49,7 @@ Item {
   readonly property var frontGroup: ({app:displayWindows.length ? displayWindows[0].app : "", windows:displayWindows,
     title:displayWindows.length === 1 ? displayWindows[0].title : displayWindows.length + " stashed windows · Click to expand"})
   readonly property var geometry: Model.floatingPanel(anchorX, anchorY, handle.height, width, height,
-    displayGroups.length, inset, metrics.controlGap, 44, horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight), expansionDirection, horizontal)
+    displayGroups.length, inset, gap, 44, horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight), expansionDirection, horizontal)
   property real panelExtent: horizontal ? geometry.width : geometry.height
   visible: present
   focus: open
@@ -146,7 +147,7 @@ Item {
       openingFrames=0
       syncGroups()
       expansionDirection=Model.floatingPanel(anchorX,anchorY,handle.height,width,height,
-        displayGroups.length,inset,metrics.controlGap,44,horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight),undefined,horizontal).forward
+        displayGroups.length,inset,gap,44,horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight),undefined,horizontal).forward
       grabDelay.restart()
       Qt.callLater(function() { if (dock.open) dock.forceActiveFocus() })
     } else closingFrames=0
@@ -232,8 +233,8 @@ Item {
     enabled:dock.open
     clip:true
     opacity:Math.min(1,dock.reveal*2)
-    x:Math.round(dock.horizontal ? (dock.geometry.forward ? dock.anchorX+48+dock.metrics.controlGap : dock.anchorX-dock.metrics.controlGap-width) : dock.geometry.x)
-    y:Math.round(dock.horizontal ? dock.geometry.y : (dock.geometry.forward ? dock.anchorY+handle.height+dock.metrics.controlGap : dock.anchorY-dock.metrics.controlGap-height))
+    x:Math.round(dock.horizontal ? (dock.geometry.forward ? dock.anchorX+48+dock.gap : dock.anchorX-dock.gap-width) : dock.geometry.x)
+    y:Math.round(dock.horizontal ? dock.geometry.y : (dock.geometry.forward ? dock.anchorY+handle.height+dock.gap : dock.anchorY-dock.gap-height))
     width:dock.horizontal ? Math.round(dock.panelExtent*dock.reveal) : dock.geometry.width
     height:dock.horizontal ? dock.geometry.height : Math.round(dock.panelExtent*dock.reveal)
     radius:Style.cornerRadius
@@ -245,13 +246,13 @@ Item {
       y:!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent+dock.inset : dock.inset
       width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-dock.inset*2)
       height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-dock.inset*2)
-      rowSpacing:dock.metrics.controlGap
-      columnSpacing:dock.metrics.controlGap
+      rowSpacing:dock.gap
+      columnSpacing:dock.gap
       ListView {
         id:list
         Layout.fillWidth:true
         Layout.fillHeight:true
-        spacing:dock.metrics.controlGap
+        spacing:dock.gap
         clip:true
         boundsBehavior:Flickable.StopAtBounds
         orientation:dock.horizontal ? ListView.Horizontal : ListView.Vertical

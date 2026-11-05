@@ -16,6 +16,17 @@ function alignedIconSize(frame, desired, scale) {
   return pixels / scale
 }
 
+function artworkSize(frame, desired, radius, shape, inset, scale) {
+  scale = Math.max(1, Number(scale) || 1)
+  var half = Math.max(0, frame / 2 - inset)
+  var r = Math.max(0, Math.min(half, radius - inset))
+  var limit = shape === "squircle" ? half * 2 * Math.pow(0.5, 0.25)
+    : 2 * (half - r + r / Math.sqrt(2))
+  // Fit the outermost pixel centers inside the frame while keeping crisp,
+  // centered artwork. Circular shapes need more corner clearance than squares.
+  return alignedIconSize(frame, Math.min(desired, limit + 1 / scale), scale)
+}
+
 // The fourth-order superellipse has continuously changing curvature rather
 // than the straight sides and circular corner arcs of a rounded square.
 function squirclePath(width, height, left, top, right, bottom, reverse) {
@@ -97,7 +108,7 @@ function floatingAnchor(saved, width, height) {
 }
 
 function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown, horizontal) {
-  var margin = 8, panelWidth = rowHeight + padding * 2 + 8
+  var margin = 8, panelWidth = rowHeight + padding * 2 + 6
   var desired = count * rowHeight + Math.max(0, count - 1) * gap + gap + buttonHeight + padding * 2
   if (horizontal) {
     var right = Math.max(0, width - margin - x - 48 - gap)

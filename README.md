@@ -81,6 +81,8 @@ Opening and closing use eased reveal/fade motion while icons stay at their
 natural size. Changes to the list animate without recreating unchanged icons
 or resetting scroll position. Artwork is centered on the display's pixel grid;
 borders and count badges stay inside their tiles. Counts above 99 show `99+`.
+Both docks use compact outer padding and tight icon spacing. App artwork fills
+more of each tile while keeping clearance from rounded and circular borders.
 
 The UI follows the active Omarchy theme, including popup colors, typography,
 spacing, borders, and corner rounding. Settings, menus, search, and tooltips use

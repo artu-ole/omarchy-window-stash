@@ -105,8 +105,8 @@ PanelWindow {
     id: shelf
     visible: surface.config.presentation === "dock" && surface.groups.length > 0
     width: Math.min(surface.width - surface.metrics.popupPadding * 2,
-      dockRow.implicitWidth + surface.metrics.lg * 2 + borderLeft + borderRight)
-    height: Math.max(44, surface.metrics.controlHeight) + surface.metrics.lg * 2 + borderTop + borderBottom
+      dockRow.implicitWidth + surface.metrics.xxs * 2 + borderLeft + borderRight)
+    height: Math.max(44, surface.metrics.controlHeight) + surface.metrics.xxs * 2 + borderTop + borderBottom
     x: (surface.width - width) / 2
     y: surface.height - height - Math.max(Style.gapsOut, surface.metrics.lg)
     radius: Style.cornerRadius
@@ -115,17 +115,17 @@ PanelWindow {
     Flickable {
       id: dockViewport
       anchors.fill: parent
-      anchors.leftMargin: surface.metrics.lg + shelf.borderLeft
-      anchors.rightMargin: surface.metrics.lg + shelf.borderRight
-      anchors.topMargin: surface.metrics.lg + shelf.borderTop
-      anchors.bottomMargin: surface.metrics.lg + shelf.borderBottom
+      anchors.leftMargin: surface.metrics.xxs + shelf.borderLeft
+      anchors.rightMargin: surface.metrics.xxs + shelf.borderRight
+      anchors.topMargin: surface.metrics.xxs + shelf.borderTop
+      anchors.bottomMargin: surface.metrics.xxs + shelf.borderBottom
       contentWidth: dockRow.implicitWidth; contentHeight: height
       clip: true
       flickableDirection: Flickable.HorizontalFlick
       boundsBehavior: Flickable.StopAtBounds
       Row {
         id: dockRow
-        spacing: surface.metrics.controlGap
+        spacing: surface.metrics.sm
         Repeater {
           model: surface.groups
           delegate: StashIcon {
@@ -137,7 +137,7 @@ PanelWindow {
           }
         }
         Ui.Button {
-          iconText: "󰇙"; width: 38; height: 44
+          iconText: "󰇙"; width: 32; height: 44
           focusable: true
           foreground: surface.popupColors.text
           tooltipText: "Window Stash settings and all windows"

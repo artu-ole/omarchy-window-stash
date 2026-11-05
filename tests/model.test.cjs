@@ -77,3 +77,16 @@ for (const [w,h] of [[320,240],[640,360],[1920,1080]]) {
 assert.equal(ctx.floatingPanel(8,400,56,1920,1080,5,9,8,44,33,undefined,true).right,true)
 assert.equal(ctx.floatingPanel(1864,400,56,1920,1080,5,9,8,44,33,undefined,true).right,false)
 console.log('Model: horizontal dock bounds and left/right expansion passed')
+
+for (const scale of [1,1.25,1.5,2]) for (const frame of [44,48]) {
+  for (const shape of ['circle','square','rounded','squircle']) {
+    const radius=ctx.iconRadius(shape,frame,frame===48,0)
+    const size=ctx.artworkSize(frame,36,radius,shape,1.5,scale)
+    assert.ok(size>28 && size<frame,'Compact artwork should use more of its frame')
+    assert.equal((Math.round(frame*scale)-Math.round(size*scale))%2,0)
+    const half=(size-1/scale)/2, inner=frame/2-1.5, r=Math.max(0,Math.min(inner,radius-1.5))
+    const limit=shape==='squircle' ? inner*Math.pow(0.5,0.25) : inner-r+r/Math.sqrt(2)
+    assert.ok(half<=limit+0.5/scale,'Artwork corners exceed their shape clearance')
+  }
+}
+console.log('Model: compact artwork remains centered with shape-aware corner clearance')

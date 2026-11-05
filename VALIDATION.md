@@ -20,6 +20,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Floating dock | Live single-window direct restore, stacked multi-window expansion, per-app chooser, outside/Escape dismissal, icon selection, drag and restart persistence, upward edge placement, workspace/global scope, vertical overflow on a small virtual output, and two-monitor global stacks |
 | Floating dock direction | Live native Vertical/Horizontal selector, horizontal centering and complete borders, Left/Right keyboard selection, app grouping, left/right edge placement, collapse before changing axes at the same anchor, restart persistence, and horizontal scrolling on a 320×240 virtual output |
 | Dock motion and alignment | Live intermediate expansion/collapse frames, unchanged delegate count across refreshes, centered artwork and icon rows, bounded count badges, and exact content/viewport height for fully visible borders; pixel-grid centering checks at 1×, 1.25×, 1.5× and 2× |
+| Compact dock spacing | Live horizontal/vertical floating docks and bottom-dock restore with reduced panel padding and icon gaps; enlarged artwork has shape-aware corner clearance and pixel-grid centering checks at 1×, 1.25×, 1.5× and 2× |
 | Input regions | A click outside bubbles reaches a GTK window underneath |
 | Icon shapes | Live native dropdown, all five bubble shapes, corner input, squircle dragging, dock restore and saved choice after shell restart; model checks cover exact squircle input pixels and legacy setting defaults |
 | Desktop test notice | All nine desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
@@ -60,7 +61,7 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.3.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.3.1`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
