@@ -128,11 +128,13 @@ Item {
         icons.push({key:item.group.key,x:point.x,y:point.y,width:item.width,height:item.height,appearance:item.appearance()})
       }
     }
+    var footerPoint=footer.mapToItem(dock,0,0)
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,createdIcons:createdIcons,currentIndex:list.currentIndex,
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
       handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
         borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
+      footer:{x:footerPoint.x,y:footerPoint.y,width:footer.width,height:footer.height,feedback:footer.feedbackDetails()},
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons}
   }
@@ -214,6 +216,8 @@ Item {
         Behavior on opacity { NumberAnimation { duration:140; easing.type:Easing.OutCubic } }
         group:dock.preview(layerNumber-1)
         bubble:true; frameVisible:dock.config.iconFrame !== "hidden"; iconShape:front.iconShape; enabled:false
+        hasCursor:drag.containsMouse || dock.open
+        externalPressed:drag.pressed
       }
     }
     StashIcon {
@@ -224,6 +228,7 @@ Item {
       bubble:true
       iconShape:dock.config.iconShape || "auto"
       hasCursor:drag.containsMouse || dock.open
+      externalPressed:drag.pressed
       enabled:false
     }
     Ui.PanelToolTip { visible: drag.containsMouse && !drag.pressed && !dock.open; text:dock.frontGroup.title }
@@ -354,7 +359,7 @@ Item {
             background:Item {}
           }
         }
-        Ui.Button {
+        StashButton {
           id:footer
           Layout.fillWidth:!dock.horizontal
           Layout.alignment:Qt.AlignCenter

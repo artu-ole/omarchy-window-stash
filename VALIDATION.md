@@ -18,6 +18,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Existing window switcher | Search for the parked client, commit selection, verify workspace restoration |
 | Dock and bubbles | Live icon clicks, bubble dragging, position persistence and mode changes |
 | Floating dock | Live single-window direct restore, stacked multi-window expansion, per-app chooser, outside/Escape dismissal, icon selection, drag and restart persistence, upward edge placement, workspace/global scope, vertical overflow on a small virtual output, and two-monitor global stacks |
+| Whole-icon/button feedback | Live RGB capture confirms app artwork and button glyphs tint; framed/frameless hover and press include intermediate animation frames, preserve transparent corners and clickable geometry, and still restore/open menus; floating stack pressure and one shared mouse/keyboard highlight verified, plus existing themed UI and frame-visibility suites |
 | Independent icon/dock frames | Native visibility selectors, larger centered artwork, no frame during hover, unchanged static/floating positions, frameless bubble corner input, retained app badges/chooser, both floating orientations, keyboard restore, saved settings after restart and retained shape/corner choices; model checks verify size, pixel alignment and hover bounds |
 | Independent dock corners | Native Follow desktop/Custom selector and numeric radius entry; all static sides and both floating directions with 0/7/64-pixel settings, rounded content clipping, corner click-through, icon restore, numeric storage, restart persistence and retained custom value when returning to theme; model checks clamp to panel dimensions |
 | Floating edge placement | Native Snap to edges/Free placement selector; live direct dragging, intermediate snap positions on four edges, bar clearance, separate bubble slots, interrupted motion, app grouping, dock expansion in both orientations, saved resting positions and settings after restart, first click at the restored edge, and drags across background refreshes; model checks cover portrait/small screens and crowded edge packing |
@@ -27,7 +28,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Compact dock spacing | Live horizontal/vertical floating docks and bottom-dock restore with reduced panel padding and icon gaps; enlarged artwork has shape-aware corner clearance and pixel-grid centering checks at 1×, 1.25×, 1.5× and 2× |
 | Input regions | A click outside bubbles reaches a GTK window underneath |
 | Icon shapes | Live native dropdown, all five bubble shapes, corner input, squircle dragging, dock restore and saved choice after shell restart; model checks cover exact squircle input pixels and legacy setting defaults |
-| Desktop test notice | All thirteen desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
+| Desktop test notice | All fourteen desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
 | App grouping and chooser | Group two windows, open chooser by mouse, search by keyboard and restore with Enter |
 | Restore destination | Live original/current destination checks and original-workspace context action |
 | Global/workspace scope | Live one-, two-, and three-output checks in dock and bubble modes |
@@ -49,7 +50,7 @@ Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
 `python3 tests/scrolling_width.py`, `python3 tests/icon_shapes.py`, and
-`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`. Pinned restoration and workspace-ID event handling
+`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 Validation did not upgrade system packages or modify packaged Omarchy files.
@@ -65,7 +66,7 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.7.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.8.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |

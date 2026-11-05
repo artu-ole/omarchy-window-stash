@@ -21,6 +21,7 @@ Item {
     frameVisible:row.frameVisible
     iconShape:row.iconShape
     hasCursor:row.hasCursor
+    cursorManaged:true
     onActivated:row.activated()
     onContextRequested:row.contextRequested()
     onHovered:function(isHovered) { row.hovered(isHovered) }

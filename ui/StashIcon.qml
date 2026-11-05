@@ -17,9 +17,12 @@ Ui.BorderSurface {
   property bool bubble: false
   property string iconShape: "auto"
   property bool hasCursor: false
+  property bool cursorManaged: false
+  property bool externalPressed: false
   property bool positionAnimating: false
   property bool positionHeld: false
-  readonly property bool hot: pointer.containsMouse || hasCursor
+  readonly property bool hot: hasCursor || (!cursorManaged && pointer.containsMouse)
+  readonly property bool down: pointer.pressed || externalPressed
   readonly property real hitRadius: frameVisible ? Model.iconRadius(iconShape, width, bubble, Style.cornerRadius) : 0
   signal activated()
   signal contextRequested()
@@ -31,17 +34,23 @@ Ui.BorderSurface {
   height: width
   clip: true
   radius: hitRadius
-  property color frameColor: !frameVisible ? "transparent" : pointer.pressed ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
+  layer.enabled: true
+  layer.smooth: true
+  layer.effect: StashHoverEffect { feedback:interaction }
+  StashFeedback { id:interaction; hot:icon.hot; down:icon.down }
+  property color frameColor: !frameVisible ? "transparent" : down ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
     : hot ? Style.hoverFillFor(icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? icon.popupColors.background : "transparent"
-  readonly property var frameBorder: !frameVisible ? Border.none() : hot || pointer.pressed
-    ? Border.controlSpec("hover-cursor", icon.popupColors.text, Commons.Color.accent)
-    : bubble || iconShape !== "auto" ? Border.surfaceSpec("popups", "border", icon.popupColors.border, Style.normalBorderWidth)
-    : Border.none()
-  readonly property real artworkInset: Math.max(1, 0.5 + Math.max(Border.left(frameBorder),
-    Border.right(frameBorder), Border.top(frameBorder), Border.bottom(frameBorder)))
+  readonly property var hoverBorder: Border.controlSpec("hover-cursor", icon.popupColors.text, Commons.Color.accent)
+  readonly property var normalBorder: bubble || iconShape !== "auto"
+    ? Border.surfaceSpec("popups", "border", icon.popupColors.border, Style.normalBorderWidth) : Border.none()
+  readonly property var frameBorder: !frameVisible ? Border.none() : hot || down ? hoverBorder : normalBorder
+  // Reserve both border states so the artwork never jumps in size on hover.
+  readonly property real artworkInset: Math.max(1, 0.5 + Math.max(Border.left(normalBorder),
+    Border.right(normalBorder), Border.top(normalBorder), Border.bottom(normalBorder),
+    Border.left(hoverBorder), Border.right(hoverBorder), Border.top(hoverBorder), Border.bottom(hoverBorder)))
   function appearance() {
-    return {width:width,height:height,frameVisible:frameVisible,background:String(frameColor),
+    return {width:width,height:height,frameVisible:frameVisible,background:String(frameColor),feedback:interaction.details(),
       borderWidth:Math.max(Border.left(frameBorder),Border.right(frameBorder),Border.top(frameBorder),Border.bottom(frameBorder)),
       artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale},
       badge:{visible:badge.visible,x:badge.x,y:badge.y,width:badge.width,height:badge.height}}
@@ -65,9 +74,7 @@ Ui.BorderSurface {
     width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio, !icon.frameVisible)
     height: width
     scale: !icon.frameVisible && icon.hot ? 1.04 : 1
-    opacity: !icon.frameVisible && pointer.pressed ? 0.75 : 1
     Behavior on scale { NumberAnimation { duration:140; easing.type:Easing.OutCubic } }
-    Behavior on opacity { NumberAnimation { duration:100; easing.type:Easing.OutCubic } }
     source: Quickshell.iconPath(icon.appIcon, true)
     sourceSize.width: Math.round(width * Screen.devicePixelRatio)
     sourceSize.height: Math.round(height * Screen.devicePixelRatio)

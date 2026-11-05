@@ -107,7 +107,7 @@ PanelWindow {
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
         icons:Array.from({length:dockIcons.count},function(_,i) { var icon=dockIcons.itemAt(i) as StashIcon; return Object.assign(itemRect(icon),{appearance:icon.appearance()}) }),
-        more:itemRect(dockMore)},
+        more:Object.assign(itemRect(dockMore),{feedback:dockMore.feedbackDetails()})},
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialog.visible},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
@@ -211,7 +211,7 @@ PanelWindow {
               onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
             }
           }
-          Ui.Button {
+          StashButton {
             id: dockMore
             iconText: "󰇙"; width: surface.verticalDock ? 44 : 32; height: surface.verticalDock ? 32 : 44
             focusable: true
@@ -339,7 +339,7 @@ PanelWindow {
           font.bold: true
           Layout.fillWidth: true
         }
-        Ui.PanelActionButton {
+        StashActionButton {
           iconText: "󰅖"
           tooltipText: "Close"
           focusable: true
@@ -412,7 +412,7 @@ PanelWindow {
       ColumnLayout {
         visible: surface.stash.dialogKind === "menu"
         Layout.fillWidth: true
-        Ui.Button { id: restoreHereButton; text: "Restore here"; visible: surface.stash.dialogWindows.length > 0; Layout.fillWidth: true
+        StashButton { id: restoreHereButton; text: "Restore here"; visible: surface.stash.dialogWindows.length > 0; Layout.fillWidth: true
           leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: {
             if (surface.stash.dialogWindows.length === 1) surface.stash.restoreWindow(surface.stash.dialogWindows[0].id, "current")
@@ -422,7 +422,7 @@ PanelWindow {
             }
           }
         }
-        Ui.Button { id: restoreOriginalButton; text: "Restore to original workspace"; visible: surface.stash.dialogWindows.length > 0; Layout.fillWidth: true
+        StashButton { id: restoreOriginalButton; text: "Restore to original workspace"; visible: surface.stash.dialogWindows.length > 0; Layout.fillWidth: true
           leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: {
             if (surface.stash.dialogWindows.length === 1) surface.stash.restoreWindow(surface.stash.dialogWindows[0].id, "original")
@@ -432,9 +432,9 @@ PanelWindow {
             }
           }
         }
-        Ui.Button { text: "All stashed windows"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
+        StashButton { text: "All stashed windows"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }
-        Ui.Button { id: settingsButton; text: "Settings"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
+        StashButton { id: settingsButton; text: "Settings"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.openDialog("settings", surface.screen.name, [], null) }
       }
       ColumnLayout {
@@ -519,7 +519,7 @@ PanelWindow {
           font.family: surface.fonts.family
           font.pixelSize: surface.fonts.caption
         }
-        Ui.Button { text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
+        StashButton { text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }
       }
     }

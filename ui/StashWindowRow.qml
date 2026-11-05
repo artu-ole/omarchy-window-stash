@@ -17,6 +17,10 @@ Ui.CursorSurface {
   signal pointed()
   implicitHeight: Math.max(Style.space(48), labels.implicitHeight + row.metrics.controlPaddingY * 2)
   foreground: row.popupColors.text
+  layer.enabled: true
+  layer.smooth: true
+  layer.effect: StashHoverEffect { feedback:interaction }
+  StashFeedback { id:interaction; hot:row.hasCursor || row.current; down:pointer.pressed; pressDepth:0.02 }
 
   RowLayout {
     anchors.fill: parent

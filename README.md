@@ -12,7 +12,8 @@ Source: [artu-ole/omarchy-window-stash](https://github.com/artu-ole/omarchy-wind
 ## Requirements
 
 - Omarchy 4.0 with its Quickshell shell, Qt6.7 or newer, shared `qs.Commons` /
-  `qs.Ui` components, and `Quickshell.Widgets`. Tested on Omarchy 4.0.6-1; older shells are not supported.
+  `qs.Ui` components, `Quickshell.Widgets`, and `QtQuick.Effects`. Tested on
+  Omarchy 4.0.6-1; older shells are not supported.
 - Hyprland 0.56.2 with the Lua `hl.dispatch` API and `hyprctl` on `PATH`.
 - Python 3.9 or newer, using only the standard library.
 - For setup: `omarchy`, `omarchy-shell`, and `hyprctl` on `PATH`, plus an
@@ -104,12 +105,18 @@ The UI follows the active Omarchy theme, including popup colors, typography,
 spacing, borders, and corner rounding. Settings, menus, search, and tooltips use
 Omarchy's shared UI components; window rows use its standard selection styling.
 
+Hover smoothly tints the whole visible icon or button with the active theme's
+accent, including artwork, glyphs, badges and frames. Pressing briefly compresses
+the visual, then eases back on release; clickable areas and layout stay fixed.
+Frameless icons retain their transparent surroundings. Mouse and keyboard
+selection share one highlight in the expanded dock.
+
 **Icon border/background** and **Dock border/background** are separate settings,
 both **Shown** by default. Set the icon option to **Hidden (larger icons)** for
 artwork without the plugin's frame in the static dock, bubbles, floating handle,
 and expanded floating dock. Artwork grows from its framed size to 40-pixel dock
-icons or 44-pixel bubbles, staying centered in the same clickable tiles. Hover
-and keyboard selection use a subtle scale change; app-group count badges remain.
+icons or 44-pixel bubbles, staying centered in the same clickable tiles. App-group
+count badges remain, and transparent areas stay clear during hover.
 Backgrounds built into an application's own icon artwork remain part of that icon.
 
 Set the dock option to **Hidden** to remove the static or expanded floating dock's
@@ -351,6 +358,7 @@ python3 tests/dock_sides.py
 python3 tests/floating_placement.py
 python3 tests/dock_corners.py
 python3 tests/frame_visibility.py
+python3 tests/hover_feedback.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -363,7 +371,8 @@ and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
 The scrolling-width, floating-dock, static-dock-side, floating-placement, dock-corner, and
-frame-visibility regressions use isolated workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
+frame-visibility and hover-feedback regressions use isolated workspaces and
+temporary virtual outputs and preserve existing stash entries. The dock-side
 test also uses `qs` to create a temporary bar on its virtual output. The width test
 checks the source controller by default;
 pass `--installed` to check the installed copy.
