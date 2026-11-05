@@ -134,7 +134,7 @@ def main():
                 if original not in data and modified not in data:
                     raise RuntimeError("Window switcher changed; missing integration anchor in " + name)
         target.mkdir(parents=True, exist_ok=True)
-        for name in ("manifest.json", "Service.qml", "ui", "controller", "window-stash", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "VALIDATION.md"):
+        for name in ("manifest.json", "Service.qml", "ui", "controller", "window-stash", "README.md", "assets", "LICENSE", "THIRD_PARTY_NOTICES.md", "VALIDATION.md"):
             source = SOURCE / name
             dest = target / name
             if source.is_dir(): shutil.copytree(source, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))

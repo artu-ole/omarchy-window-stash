@@ -1,406 +1,190 @@
-# Window Stash for Omarchy
+# Window Stash
 
-Minimize running windows into a static edge dock, draggable bubbles, or an expandable
-floating dock. Restore to
-your current workspace or the original one, preserving floating size and
-position. Works with the Omarchy 4.0 shell and Hyprland 0.56.2 Lua API.
+**Your windows. On your terms.**
 
-Copyright © 2026 **artu-ole**. Licensed under [AGPL-3.0-only](LICENSE).
-See [third-party notices](THIRD_PARTY_NOTICES.md) for integration excerpts.
-Source: [artu-ole/omarchy-window-stash](https://github.com/artu-ole/omarchy-window-stash).
+![Window Stash: static dock, floating bubbles, and an expandable floating dock, with theme and icon-shape variations. Illustrative artwork.](assets/title.png)
 
-## Requirements
+Window minimization for Omarchy. Park live Hyprland windows, then restore them to
+the current or original workspace. A QML frontend and standard-library Python
+controller; no compiled compositor plugin or additional daemon.
 
-- Omarchy 4.0 with its Quickshell shell, Qt6.7 or newer, shared `qs.Commons` /
-  `qs.Ui` components, `Quickshell.Widgets`, and `QtQuick.Effects`. Tested on
-  Omarchy 4.0.6-1; older shells are not supported.
-- Hyprland 0.56.2 with the Lua `hl.dispatch` API and `hyprctl` on `PATH`.
-- Python 3.9 or newer, using only the standard library.
-- For setup: `omarchy`, `omarchy-shell`, and `hyprctl` on `PATH`, plus an
-  existing user `~/.config/hypr/bindings.lua` and Omarchy `shell.json`.
-- Optional: `community.window-switcher` for switcher restoration integration.
-  The helper supports the integration anchors in its 1.0.0 release and stops
-  if an installed switcher's code is incompatible.
-
-No dependency installation, compilation, network access, root privileges,
-system service, or separate background daemon is required by this plugin.
-Development-only dependencies are listed under Development and verification.
-
-## Use
-
-| Action | Shortcut / interaction |
+| Presentation | Behavior |
 |---|---|
-| Minimize focused window | **Super+A** |
-| Restore most recently minimized eligible window | **Super+Z** |
-| Restore a window | Click its dock icon or bubble |
-| Choose between windows grouped by app | Click the icon with a count badge |
-| Choose restore destination, open settings or show every stashed window | Right-click an icon; the dock also has a **⋯** button |
-| Move a bubble | Drag it; it snaps to an edge by default, with free placement available |
-| Expand/collapse the floating dock | Click its stacked handle; Escape or an outside click also collapses it |
-| Move the floating dock | Drag its handle; one shared position is remembered per monitor |
-| Search the window chooser | Type; use Up/Down and Enter to select; Escape closes |
+| **Static dock** | A slim dock on any screen edge. Respects bar reservations; long lists scroll. |
+| **Floating bubbles** | Separate draggable icons, starting at the middle right. Snap to edges or place freely. |
+| **Floating dock** | One draggable stack. A single window restores directly; multiple windows expand into a horizontal or vertical dock. |
 
-Default settings: **static dock at the bottom**, **global visibility**,
-**restore here**, **one icon per window**. The UI appears on every connected monitor. Global mode repeats
-the same stash on each screen; workspace mode filters by that screen's active
-workspace. Floating items default to **Snap to edges**. Grouping by app is optional and uses a window chooser when needed.
+Uses Omarchy's theme and shared controls. Configure grouping, visibility, icon
+shapes, frames, corners, placement, and motion. Empty stashes occupy no screen
+space or input; floating surfaces leave the surrounding desktop click-through.
 
-Open settings or the full recovery chooser even when no dock is visible:
+## Setup
+
+Requires **Omarchy 4.0**, **Hyprland 0.56.2 with its Lua API**, and **Python 3.9+**.
+Tested on Omarchy 4.0.6-1. The shell must provide Quickshell, Qt 6.7+,
+`qs.Commons`, `qs.Ui`, `Quickshell.Widgets`, and `QtQuick.Effects`.
+Have `omarchy`, `omarchy-shell`, and `hyprctl` on `PATH`, with existing
+`~/.config/hypr/bindings.lua` and `~/.config/omarchy/shell.json`.
+
+Run as your normal user in an unlocked desktop session:
+
+```sh
+git clone https://github.com/artu-ole/omarchy-window-stash.git
+cd omarchy-window-stash
+python3 tools/install.py
+omarchy restart shell
+```
+
+**Use the helper: generic Omarchy plugin installation does not install the
+controller or shortcuts.** Keep this separate checkout for updates and removal;
+the helper itself is not installed.
+
+The helper previews changes and asks for confirmation (`--yes` for automation).
+It installs `community.window-stash` under `~/.config/omarchy/plugins/`, creates
+`~/.local/bin/window-stash`, adds a marked binding block to `bindings.lua`, and
+enables the plugin in `shell.json`. It checks shortcut conflicts, backs up
+configuration, reloads Hyprland while preserving runtime monitor geometry, and
+rescans shell plugins. It uses no root privileges, downloads, or packaged-file
+edits. If installed, `community.window-switcher` is patched for restoration;
+incompatible integration anchors abort installation. Tested with switcher 1.0.0.
+
+Update with `git pull`, rerun the helper, then restart the shell. Settings persist.
+Remove from this checkout:
+
+```sh
+python3 tools/install.py --uninstall
+```
+
+Removal restores parked windows and removes the plugin, wrapper, binding block,
+and known switcher edits; saved positions remain. Run this **before** generic
+`omarchy plugin remove`, which does not run cleanup hooks. Configuration backups
+live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
+`~/.local/state/omarchy/window-stash/backups`).
+
+## Controls
+
+| Action | Input |
+|---|---|
+| Stash focused window | **Super+A** |
+| Restore last eligible window | **Super+Z**; newest first, obeys visibility scope |
+| Restore / choose a grouped window | Click an icon; app groups open a searchable chooser |
+| Restore destination, settings, all windows | Right-click an icon or use the dock's **⋯** button |
+| Move bubbles / floating dock | Drag the icon / stack handle; positions persist per monitor |
+| Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
+| Collapse floating dock | Click its handle, click outside, or press Escape |
+
+Shortcuts are ordinary Hyprland bindings to `window-stash minimize` and
+`window-stash restore-last`; change them in your personal bindings as needed.
+Open settings or the global recovery chooser even when the stash is empty:
 
 ```sh
 omarchy-shell window-stash settings
 omarchy-shell window-stash all
 ```
 
-Choose **Appearance → Static dock**, then **Dock side → Bottom, Top, Left, or
-Right**. Bottom is the default. The dock centers along the selected edge without
-reserving tiling space. Top/bottom docks arrange icons horizontally; left/right
-docks arrange them vertically. Long lists scroll along that edge. Each monitor's
-reserved bar space is respected, so a top dock sits below an existing top bar.
-While the static dock is visible, it checks for reserved-area changes every
-1.5 seconds, including bars appearing or disappearing. Empty stashes take no
-space or input. Bubbles start in a vertically centered column along the right
-edge and only their icon regions intercept input; the rest of the desktop is click-through.
-Tooltips show titles. Hover thumbnail previews are outside version one's scope.
+## Configuration
 
-Choose **Appearance → Floating dock** for the compact stack presentation. One
-stashed window behaves like a floating icon and restores on click. With multiple
-windows, layered icons and a count badge form one draggable handle. Clicking it
-opens a dock beside the handle, growing toward available screen space. Long
-lists scroll. Selecting an icon restores its window and collapses
-the dock; app-grouped icons open the existing window chooser. Even when several
-windows belong to one app, the collapsed handle expands first so grouping keeps
-the same behavior as the static dock.
-
-This presentation uses the same stash visibility, restore destination, grouping,
-and icon shape settings. The single handle starts at the middle right, remembers
-its own position separately from individual bubbles, and remains anchored while
-the dock expands. Right-clicking it opens restore actions, all windows, and
-settings. Up/Down and Enter can choose from the expanded dock.
-
-With Floating dock selected, **Floating dock direction** offers **Vertical**
-(the default) and **Horizontal**. Vertical docks expand upward or downward;
-horizontal docks expand left or right and also support Left/Right keys.
-Scrolling follows the chosen axis. Changing direction first collapses the dock
-smoothly, preserving its anchor and existing grouping and icon-shape choices.
-
-For Floating bubbles and Floating dock, **Floating placement** offers **Snap to
-edges** (the default) and **Free placement**. Edge mode glides to the nearest of
-the four screen edges after you release a drag, staying clear of reserved bar
-space. Separate bubbles choose nearby open slots; crowded edges repack before
-using another edge. If the entire perimeter fills, bubbles can share slots; the
-floating dock handles long lists with scrolling. Dragging follows the pointer
-directly, and grabbing an item during its glide stops the animation. Switching to Free placement lets you leave
-items anywhere. Dragged resting positions are remembered per monitor. The
-setting also applies to older configurations, which default to edge snapping.
-
-**Animations** offers **Full** (the default), **Reduced**, and **Off** in settings.
-Full uses short eased fades and subtle settling for arriving/departing icons,
-smooth list reflow and dock resizing, stack artwork crossfades, count badges,
-and dialog opening/closing. Hover and press feedback follow the same setting.
-Reduced keeps short fades and color feedback without movement or scaling;
-Off makes the plugin's transitions immediate. Dragging follows the pointer in
-all modes; edge placement still applies when animations are disabled.
-
-Unchanged icons retain their identity during refreshes and reordering. A quick
-reversal can bring back an outgoing icon without rebuilding it. Restoring a
-window releases its icon's input immediately while the visual finishes fading;
-the final icon also fades before the empty overlay disappears. Switching modes
-settles motion already in progress. Artwork is centered on the display's pixel grid;
-borders and count badges stay inside their tiles. Counts above 99 show `99+`.
-Both docks use compact outer padding and tight icon spacing. App artwork fills
-more of each tile while keeping clearance from rounded and circular borders.
-
-The UI follows the active Omarchy theme, including popup colors, typography,
-spacing, borders, and corner rounding. Settings, menus, search, and tooltips use
-Omarchy's shared UI components; window rows use its standard selection styling.
-
-Hover smoothly tints the whole visible icon or button with the active theme's
-accent, including artwork, glyphs, badges and frames. Pressing briefly compresses
-the visual, then eases back on release; clickable areas and layout stay fixed.
-Frameless icons retain their transparent surroundings. Mouse and keyboard
-selection share one highlight in the expanded dock.
-
-**Icon border/background** and **Dock border/background** are separate settings,
-both **Shown** by default. Set the icon option to **Hidden (larger icons)** for
-artwork without the plugin's frame in the static dock, bubbles, floating handle,
-and expanded floating dock. Artwork grows from its framed size to 40-pixel dock
-icons or 44-pixel bubbles, staying centered in the same clickable tiles. App-group
-count badges remain, and transparent areas stay clear during hover.
-Backgrounds built into an application's own icon artwork remain part of that icon.
-
-Set the dock option to **Hidden** to remove the static or expanded floating dock's
-background and border while keeping icon positions, spacing, scrolling and the
-menu button. Corners stop clipping the artwork while the frame is hidden. The
-saved icon shape and dock corner settings return when their frames are shown
-again. The two options can be combined or used independently.
-
-**Dock corners** offers **Follow desktop** (the default) or **Custom** for the
-static dock and expanded floating dock. Follow desktop uses Omarchy's shared
-radius, which mirrors Hyprland's `decoration:rounding`. Custom reveals a native
-**Corner radius (px)** field accepting whole numbers from 0 to 64. Zero gives
-square corners; larger values are limited to half the dock's shorter dimension.
-The dock clips its contents to the rounded border. Your custom value is retained
-when you switch back to Follow desktop. App icon shapes and other Omarchy
-controls keep their own styling. Dock corner controls appear while the dock
-border/background is shown.
-
-**Icon shape** in settings offers Automatic, Circle, Square, Rounded square,
-and Squircle. It changes the frame around each app icon in all presentations.
-Automatic preserves circular bubbles and theme-shaped dock controls. Explicit
-choices also give dock icons a themed background and border. Squircle uses a
-continuous superellipse curve. Changing shape preserves bubble positions and
-the app's original icon artwork.
-
-## Install / update / remove
-
-**Manual setup is required.** Omarchy's generic plugin installer clones and
-enables QML; it does not run this helper. The service currently expects the
-controller at `~/.local/bin/window-stash`, which the helper creates. Adding
-the plugin through the marketplace alone is therefore insufficient.
-
-From a separate local checkout of this source folder, in an unlocked Omarchy
-session, review the helper and run it as your normal user:
+Settings belong to the `community.window-stash` entry in
+`~/.config/omarchy/shell.json`. Use the UI or the shell's plugin-scoped API:
 
 ```sh
-git clone https://github.com/artu-ole/omarchy-window-stash.git
-cd omarchy-window-stash
-python3 tools/install.py
-```
-
-The installer validates the manifest, checks live shortcut conflicts, backs up
-affected user files, copies the plugin and controller into the user's home,
-adds two bindings, enables the plugin, and patches the installed
-`community.window-switcher` when present. Re-running updates the installation
-without resetting settings. A kept-loaded service needs a shell restart to
-load changed QML:
-
-```sh
-omarchy restart shell
-```
-
-The helper displays its file changes and asks for confirmation before writing
-anything. For automation after reviewing those changes, pass `--yes` explicitly.
-It does not install dependencies or fetch or execute remote code.
-
-Installation does not change packaged Omarchy files, themes, or the existing
-scratchpad. Backups are under `$XDG_STATE_HOME/omarchy/window-stash/backups`
-(default `~/.local/state/omarchy/window-stash/backups`).
-
-Remove with the helper so parked windows are restored first:
-
-```sh
-python3 tools/install.py --uninstall
-```
-
-For non-interactive removal, use `python3 tools/install.py --uninstall --yes`.
-Use the same separate source checkout for updates and removal. Keep it until
-removal is complete; the helper is not copied into the installed plugin folder.
-
-The helper removes only its binding block and known switcher integration
-edits, preserving unrelated configuration changes. Durable bubble positions
-remain available for reinstall. Using Omarchy's generic plugin-disable command
-alone hides the UI; the controller remains available to recover windows.
-Before using `omarchy plugin remove community.window-stash`, run the helper's
-uninstall command. Generic removal does not run cleanup hooks and would leave
-the controller wrapper, shortcuts, and switcher edits behind.
-
-## Configuration changes and local data
-
-Installation and removal operate as your user. After confirmation, the helper
-copies/removes the plugin under `~/.config/omarchy/plugins/community.window-stash`,
-creates/removes `~/.local/bin/window-stash`, adds/removes its marked shortcut
-block in `~/.config/hypr/bindings.lua`, and adds/removes its entry in
-`~/.config/omarchy/shell.json`. It patches only `Switcher.qml`,
-`components/WindowRecords.qml`, and `model/WindowSnapshot.js` in the optional
-user-installed switcher. It backs up affected files, reloads Hyprland while
-preserving runtime monitor geometry, and rescans shell plugins. Unrelated
-settings and packaged files are preserved.
-
-The UI saves only this plugin's settings through Omarchy's scoped settings API.
-Its controller reads window titles, app identifiers, workspaces, monitor
-identity (including serial where available), and geometry from Hyprland.
-The session ledger stores the metadata needed for restoration; monitor identity
-and bubble positions also persist locally. These files can contain private
-window titles or hardware identifiers. Their locations are described below;
-they are not part of the source tree. The plugin sends no telemetry and makes
-no network requests. Icons come from installed desktop entries and icon themes;
-no third-party icon assets are bundled.
-
-## Restore behavior
-
-- **Floating:** saved logical size and monitor-relative position are reapplied.
-  Different screen dimensions clamp the restored window into the work area;
-  application-imposed size limits still apply.
-- **Tiled:** a new tile is inserted. In scrolling layouts it becomes the final
-  column in the configured direction and restores its saved visible width,
-  accounting for gaps and borders. Destination layout and application size
-  limits still apply, including scrolling's single-column fullscreen policy.
-  Dwindle uses normal new-window insertion.
-- **Fullscreen / maximized / pinned:** the recorded state is restored after
-  the underlying geometry. Restoring a normal window does not maximize it.
-- **Hyprland groups:** only the selected group member is stashed. Restoration
-  inserts it as a separate window rather than reconstructing the old group.
-- **Original workspace:** an empty original workspace can be recreated. If its
-  monitor is disconnected, its local slot maps to the invoking screen's bank.
-  The existing `hypr/monitor-workspaces.lua` bank map is honored. Arbitrary
-  external window merges cannot be automatically reversed.
-- **Workspace renumbering:** compositor ID-change events update saved origins.
-- **Closed windows:** disappear from the stash automatically. Other programs'
-  minimized windows and the scratchpad are not managed by this plugin.
-
-## Commands and settings
-
-`window-stash` is a standalone controller; it needs Hyprland but does not need
-the dock or Quickshell service to be running. Commands emit JSON with `ok` and
-an action/result or error; failures return a nonzero exit code.
-
-```sh
-window-stash minimize
-window-stash restore-last
-window-stash list
-window-stash restore WINDOW_ID --to current
-window-stash restore WINDOW_ID --to original
-window-stash restore-all --to current
-window-stash status
-```
-
-`restore` also accepts a live window address. `activate ADDRESS` restores a
-plugin-owned stashed window or normally focuses an unmanaged window, for
-window-switcher integration without relying on cached tags.
-Restore commands accept `--monitor OUTPUT --workspace ID` to capture a
-destination before a chooser takes focus. `minimize --address ADDRESS` targets
-one exact window. `restore-last` obeys the configured visibility scope and
-uses newest-first order; `restore-all` is a global recovery action.
-
-Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
-
-```json
-{
-  "id": "community.window-stash",
-  "presentation": "dock",
-  "scope": "global",
-  "restoreDestination": "current",
-  "grouping": "window",
-  "iconShape": "auto",
-  "floatingDirection": "vertical",
-  "dockSide": "bottom",
-  "floatingPlacement": "edges",
-  "dockCorners": "theme",
-  "dockCornerRadius": 12,
-  "iconFrame": "shown",
-  "dockFrame": "shown",
-  "animations": "full"
-}
-```
-
-`presentation` accepts `dock`, `bubbles`, or `floating`. Alternatives for scope,
-restore destination, and grouping are `workspace`, `original`, and `app`,
-respectively. `iconShape` accepts `auto`, `circle`, `square`,
-`rounded`, or `squircle`; older configurations default to `auto`.
-`floatingDirection` accepts `vertical` or `horizontal` and only affects the
-floating dock. Older configurations retain the vertical layout.
-`dockSide` accepts `bottom`, `top`, `left`, or `right` and only affects the static
-dock. Older configurations retain the bottom position.
-`floatingPlacement` accepts `edges` (default) or `free`, shared by bubbles and the
-floating dock. The static dock keeps its separate side setting.
-`dockCorners` accepts `theme` (default) or `custom`; `dockCornerRadius` stores an
-integer from 0 to 64 (default 12), applied in custom mode.
-`iconFrame` and `dockFrame` each accept `shown` (default) or `hidden`. Icon frames
-apply to all presentations; dock frames apply to the static and floating docks.
-`animations` accepts `full` (default), `reduced`, or `off`.
-The settings panel writes through the shell's plugin-scoped settings API.
-For automation, the same API is exposed through:
-
-```sh
-omarchy-shell window-stash configure presentation bubbles
 omarchy-shell window-stash configure presentation floating
-omarchy-shell window-stash configure floatingDirection horizontal
-omarchy-shell window-stash configure dockSide top
-omarchy-shell window-stash configure floatingPlacement free
-omarchy-shell window-stash configure dockCorners custom
-omarchy-shell window-stash configure dockCornerRadius 12
-omarchy-shell window-stash configure iconFrame hidden
-omarchy-shell window-stash configure dockFrame hidden
-omarchy-shell window-stash configure animations reduced
-omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
-omarchy-shell window-stash status
+omarchy-shell window-stash configure animations reduced
 ```
 
-Bind any unused keys to `window-stash minimize` and `window-stash restore-last`
-in your personal Hyprland bindings. Always check conflicts before replacing a
-binding. The installed Super+A/Super+Z bindings do not repeat while held down.
+| Key | Default | Values / meaning |
+|---|---|---|
+| `presentation` | `dock` | `dock`, `bubbles`, `floating` |
+| `scope` | `global` | `global`: repeat the stash on every monitor; `workspace`: filter by each screen's active workspace |
+| `restoreDestination` | `current` | `current`, `original` |
+| `grouping` | `window` | `window`, `app` (count badge and window chooser) |
+| `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
+| `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock only |
+| `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
+| `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
+| `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
+| `dockFrame` | `shown` | `shown`, `hidden`; static and expanded floating docks |
+| `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |
+| `dockCornerRadius` | `12` | Integer `0`–`64` pixels in custom mode, clamped to panel dimensions |
+| `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
 
-## State and recovery
+Frames can be hidden independently. Automatic shapes and theme corners follow
+the desktop; custom choices persist when their frames are hidden. Placement
+still applies with animations off. Changes take effect without a shell restart.
 
-The controller writes an atomic, locked ledger before changing a window, then
-parks it on `special:minimized` with a unique `window-stash-…` tag. Records also
-validate the process and compositor window identity to prevent address reuse
-from affecting a new client. An interrupted restore retains metadata for retry.
-Session data lives under
-`$XDG_RUNTIME_DIR/omarchy-window-stash/$HYPRLAND_INSTANCE_SIGNATURE/`; a fresh
-compositor session starts with a separate ledger. Shell restarts do not lose it.
-Bubble positions live under `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json`.
+## Restoration contract
 
-Recovery without the UI:
+- **Floating:** restore logical size and monitor-relative position, clamped to
+  the destination work area and application size limits.
+- **Tiled:** insert a new tile. Scrolling layouts append a column in the
+  configured direction and restore the saved visible width, subject to layout
+  policy and application limits. Dwindle uses normal insertion.
+- **State:** restore maximized, fullscreen, and pinned state after geometry.
+  Stashing one Hyprland group member restores it as a separate window.
+- **Workspaces:** recreate an empty original workspace when needed. If its
+  monitor is missing, map its local slot to the invoking screen's workspace bank,
+  honoring `hypr/monitor-workspaces.lua`. Workspace-ID changes update origins;
+  arbitrary external workspace merges cannot be reversed automatically.
+- **Lifetime:** closed windows leave the stash. Shell restarts preserve it;
+  logout/compositor restart does not restore application sessions. Existing
+  scratchpads and windows minimized by other tools are outside plugin ownership.
+
+## Controller API and recovery
+
+The controller works without the QML frontend. Commands return JSON (`ok` plus
+result/error); failures exit nonzero.
 
 ```sh
-window-stash list
-window-stash restore-all --to current
+window-stash minimize                          # optional: --address ADDRESS
+window-stash restore-last                      # optional: --to current|original
+window-stash restore ID --to original          # ID or live window address
+window-stash restore-all --to current          # global recovery, ignores scope
+window-stash list                              # reconciled windows/settings/positions
+window-stash status                            # alias of list
 ```
 
-The plugin uses compositor events and watched files rather than periodic
-polling. Actions launch a small standard-library Python controller; no extra
-daemon, network service, screenshots, or C++ plugin is required.
+Restore commands accept `--monitor OUTPUT --workspace ID` to pin invocation
+context before a chooser takes focus. `activate ADDRESS` restores an owned
+window or focuses an unmanaged one. Internal helpers: `position MONITOR KEY X Y`
+and `rebase OLD_ID NEW_ID`. Frontend IPC also exposes `status`, `refresh`, and
+`dismiss` through `omarchy-shell window-stash`.
 
-## Development and verification
+## Internals and local data
+
+[Service.qml](Service.qml) serializes controller requests and watches compositor
+events and state/config files. Visible edge surfaces refresh bar reservations
+every 1.5 seconds. [ui/](ui/) contains the themed surfaces, placement model,
+feedback, and keyed animation lifecycles. [controller/stash.py](controller/stash.py)
+parks windows on `special:minimized` with ownership tags, validates client
+identity, and writes an atomic, locked ledger before moving windows. Interrupted
+restores retain records for retry.
+
+| Data | Location |
+|---|---|
+| Session ledger | `$XDG_RUNTIME_DIR/omarchy-window-stash/<sanitized compositor signature>/state.json` |
+| Persistent bubble / stack positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
+| Plugin settings | `$XDG_CONFIG_HOME/omarchy/shell.json` |
+
+XDG config/state fall back to `~/.config` and `~/.local/state`. Runtime records
+include window titles, application IDs, monitor identity, and geometry; persistent
+positions can include monitor identifiers. These stay local. No telemetry or
+network requests. App icons resolve from installed desktop entries and themes.
+
+## Development
 
 ```sh
-python3 tools/check.py
-python3 tests/live.py
-python3 tests/layouts_monitors.py
-python3 tests/ui_lifecycle.py
-python3 tests/overflow.py
-python3 tests/themed_ui.py
-python3 tests/scrolling_width.py
-python3 tests/icon_shapes.py
-python3 tests/floating_dock.py
-python3 tests/floating_direction.py
-python3 tests/dock_sides.py
-python3 tests/floating_placement.py
-python3 tests/dock_corners.py
-python3 tests/frame_visibility.py
-python3 tests/hover_feedback.py
-python3 tests/animation_modes.py
+python3 tools/check.py             # unit/model checks, offscreen Qt, manifest, qmllint
+python3 tests/live.py              # controller + desktop integration
+python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 ```
 
-Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
-introspection (`python-gobject` and `gtk4` on Arch), `wtype`, `notify-send`
-(`libnotify` on Arch), `grim` for the
-themed UI screenshot, and the installed plugin. The non-graphical checks need
-Node.js, Qt6 `qmllint`, `qs` for an offscreen native collection test, and
-Omarchy's validator (which uses `jq`). The offscreen test creates no desktop
-windows and verifies delegate identity, revival, and timed cleanup.
+Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator
+(with `jq`). Desktop suites also require an unlocked session, the installed
+plugin, `/usr/bin/python3` with GTK4 introspection, `wtype`, `notify-send`, and
+`grim`. Start with an empty stash. Suites use disposable windows/virtual outputs,
+notify **five seconds before taking input**, and restore desktop state in cleanup.
+See [tests/](tests/) and [VALIDATION.md](VALIDATION.md) for coverage and commands.
 
-Live suites use disposable Wayland and XWayland windows and temporary virtual
-outputs, and restore the original focus and settings in cleanup. Run them with an empty stash. The keyboard test
-temporarily enables keysym matching for wtype's synthetic keymap and restores
-the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width, floating-dock, static-dock-side, floating-placement,
-dock-corner, frame-visibility, hover-feedback, and animation-mode regressions use isolated workspaces and
-temporary virtual outputs and preserve existing stash entries. The dock-side
-test also uses `qs` to create a temporary bar on its virtual output. The width test
-checks the source controller by default;
-pass `--installed` to check the installed copy.
-
-Every desktop test sends a notification asking you to pause input, waits five
-seconds before taking focus or injecting input, and notifies you after cleanup.
-The shared `tests/desktop_test.py` wrapper aborts before desktop actions if the
-initial notification cannot be sent. Unit tests and linting do not take over
-the desktop and run without the countdown.
-
-For QML linting, use Qt6's `/usr/lib/qt6/bin/qmllint`, with an import directory
-mapping `qs/Commons` and `qs/Ui` to their directories under
-`/usr/share/omarchy/shell/`. Omarchy also loads
-these imports through its own shell scanner at runtime.
+Copyright © 2026 **artu-ole** · [AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md).
+Banner: generated product illustration; [generation prompt](assets/title-prompt.txt).
