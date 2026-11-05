@@ -273,7 +273,7 @@ class Stash:
                 self.hypr.dispatch("window.resize", window=target, x=width, y=height, relative=False)
                 self.hypr.dispatch("window.move", window=target, x=x, y=y, relative=False)
             else:
-                self.append_scrolling(record["address"], destination)
+                self.append_scrolling(record["address"], destination, record["size"][0])
             self.hypr.dispatch("focus", window=target)
             pin_state = self.hypr.client(record["address"])
             if pin_state is None:
@@ -297,7 +297,7 @@ class Stash:
             self.save()
             raise
 
-    def append_scrolling(self, address, destination):
+    def append_scrolling(self, address, destination, width):
         # Query Lua layout state rather than infer order from off-screen coordinates.
         # Focus the terminal column first, then reinsert this exact window after it.
         code = '''local w = hl.get_window(%s)
@@ -307,20 +307,28 @@ if w and ws and ws.tiled_layout == "scrolling" then
   hl.dispatch(hl.dsp.window.float({window=w, action="on"}))
   local windows = hl.get_workspace_windows(ws)
   local last = nil
-  local direction = hl.get_config("scrolling.direction")
   for _, candidate in pairs(windows) do
     if candidate.address ~= w.address and not candidate.floating then
-      if not last then last = candidate else
-        local vertical = direction == "up" or direction == "down"
-        local axis = vertical and "y" or "x"
-        local sign = (direction == "left" or direction == "up") and -1 or 1
-        if candidate.at[axis] * sign > last.at[axis] * sign then last = candidate end
+      local layout = candidate.layout
+      if layout and layout.column and (not last or layout.column.index > last.layout.column.index) then
+        last = candidate
       end
     end
   end
   if last then hl.dispatch(hl.dsp.focus({window=last})) end
   hl.dispatch(hl.dsp.window.float({window=w, action="off"}))
-end''' % (lua("address:"+address), lua(destination))
+  hl.dispatch(hl.dsp.focus({window=w}))
+  -- Start wide so the scrolling resize cannot clip growth at the viewport edge.
+  -- Absolute client sizing then accounts for this column's gaps and borders.
+  local columnWidth = w.layout.column.width
+  local initialWidth = w.size.x
+  hl.dispatch(hl.dsp.layout("colresize 1"))
+  if w.size.x == initialWidth then
+    -- A vertical tape or forced single-column fullscreen may keep X unchanged.
+    hl.dispatch(hl.dsp.layout("colresize " .. tostring(columnWidth)))
+  end
+  hl.dispatch(hl.dsp.window.resize({window=w, x=math.min(%s, w.size.x), y=w.size.y, relative=false}))
+end''' % (lua("address:"+address), lua(destination), lua(width))
         self.hypr.eval(code)
 
     def listing(self):

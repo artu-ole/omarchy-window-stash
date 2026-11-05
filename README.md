@@ -6,6 +6,7 @@ position. Works with the Omarchy 4.0 shell and Hyprland 0.56.2 Lua API.
 
 Copyright © 2026 **artu-ole**. Licensed under [AGPL-3.0-only](LICENSE).
 See [third-party notices](THIRD_PARTY_NOTICES.md) for integration excerpts.
+Source: [artu-ole/omarchy-window-stash](https://github.com/artu-ole/omarchy-window-stash).
 
 ## Requirements
 
@@ -67,6 +68,8 @@ From a separate local checkout of this source folder, in an unlocked Omarchy
 session, review the helper and run it as your normal user:
 
 ```sh
+git clone https://github.com/artu-ole/omarchy-window-stash.git
+cd omarchy-window-stash
 python3 tools/install.py
 ```
 
@@ -135,7 +138,10 @@ no third-party icon assets are bundled.
   Different screen dimensions clamp the restored window into the work area;
   application-imposed size limits still apply.
 - **Tiled:** a new tile is inserted. In scrolling layouts it becomes the final
-  column in the configured direction; dwindle uses normal new-window insertion.
+  column in the configured direction and restores its saved visible width,
+  accounting for gaps and borders. Destination layout and application size
+  limits still apply, including scrolling's single-column fullscreen policy.
+  Dwindle uses normal new-window insertion.
 - **Fullscreen / maximized / pinned:** the recorded state is restored after
   the underlying geometry. Restoring a normal window does not maximize it.
 - **Hyprland groups:** only the selected group member is stashed. Restoration
@@ -229,6 +235,7 @@ python3 tests/layouts_monitors.py
 python3 tests/ui_lifecycle.py
 python3 tests/overflow.py
 python3 tests/themed_ui.py
+python3 tests/scrolling_width.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -239,6 +246,9 @@ and XWayland windows, temporary virtual outputs, and restore the original focus
 and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
+The scrolling-width regression uses an isolated temporary virtual output and
+preserves existing stash entries. It tests the source controller by default;
+pass `--installed` to check the installed copy.
 
 For QML linting, use Qt6's `/usr/lib/qt6/bin/qmllint`, with an import directory
 mapping `qs/Commons` and `qs/Ui` to their directories under

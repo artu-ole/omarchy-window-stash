@@ -12,6 +12,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | XWayland windows | Live GTK test using the X11 backend |
 | Pinned windows | Live pin/minimize/restore check |
 | Tiled restoration | Live dwindle insertion and scrolling end-column assertion |
+| Scrolling width restoration | Live narrow/wide columns, repeated restores, original/current destinations, per-workspace right/left direction, another scrolling workspace, and underlying width after maximized/fullscreen restoration; exact saved client width within one logical pixel |
 | Individual Hyprland group members | Live two-member group, stash one member and restore separately |
 | Repeated/concurrent requests | Two concurrent minimize processes create one record |
 | Existing window switcher | Search for the parked client, commit selection, verify workspace restoration |
@@ -36,7 +37,8 @@ settings and display profile, and removes the test windows and workspaces.
 
 Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
-`python3 tests/overflow.py`, and `python3 tests/themed_ui.py`. Pinned restoration and workspace-ID event handling
+`python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
+`python3 tests/scrolling_width.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 No upgrade, external publication or packaged Omarchy-file modification was
@@ -67,10 +69,10 @@ does not undo them. The README explains the helper and cleanup order. Disclose
 this to marketplace maintainers and request the `manual-setup` label when
 submitting; the marketplace does not execute installer hooks.
 
-Deferred until publication: create the public repository, recheck ID availability,
-select the exact release commit, and submit it for marketplace compatibility,
-security-baseline, and maintainer review. Suggested category: `Desktop`; tags:
+Marketplace submission remains separate: recheck ID availability, select the
+exact release commit, and submit it for compatibility, security-baseline, and
+maintainer review. Suggested category: `Desktop`; tags:
 `hyprland`, `quickshell`, `workspaces`. A root preview image is optional and has
-not been added. No repository, submission issue, or listing was created by this
-review; no claim of marketplace approval or security-baseline verification is
-made.
+not been added. No marketplace submission or listing has been requested by this
+review, and marketplace approval and security-baseline verification remain
+pending.
