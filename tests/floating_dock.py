@@ -63,6 +63,7 @@ def main():
 
     try:
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial controller snapshot did not load')
+        configure('floatingDirection','vertical')
         configure('presentation','dock');shell('settings')
         def appearance():
             return next(c for c in surface()['settingControls'] if c['key']=='presentation')

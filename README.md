@@ -59,8 +59,8 @@ Tooltips show titles. Hover thumbnail previews are outside version one's scope.
 Choose **Appearance → Floating dock** for the compact stack presentation. One
 stashed window behaves like a floating icon and restores on click. With multiple
 windows, layered icons and a count badge form one draggable handle. Clicking it
-opens a vertical dock beside the handle, growing upward or downward to stay on
-screen. Long lists scroll. Selecting an icon restores its window and collapses
+opens a dock beside the handle, growing toward available screen space. Long
+lists scroll. Selecting an icon restores its window and collapses
 the dock; app-grouped icons open the existing window chooser. Even when several
 windows belong to one app, the collapsed handle expands first so grouping keeps
 the same behavior as the bottom dock.
@@ -70,6 +70,12 @@ and icon shape settings. The single handle starts at the middle right, remembers
 its own position separately from individual bubbles, and remains anchored while
 the dock expands. Right-clicking it opens restore actions, all windows, and
 settings. Up/Down and Enter can choose from the expanded dock.
+
+With Floating dock selected, **Floating dock direction** offers **Vertical**
+(the default) and **Horizontal**. Vertical docks expand upward or downward;
+horizontal docks expand left or right and also support Left/Right keys.
+Scrolling follows the chosen axis. Changing direction first collapses the dock
+smoothly, preserving its anchor and existing grouping and icon-shape choices.
 
 Opening and closing use eased reveal/fade motion while icons stay at their
 natural size. Changes to the list animate without recreating unchanged icons
@@ -217,7 +223,8 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "scope": "global",
   "restoreDestination": "current",
   "grouping": "window",
-  "iconShape": "auto"
+  "iconShape": "auto",
+  "floatingDirection": "vertical"
 }
 ```
 
@@ -225,12 +232,15 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
 restore destination, and grouping are `workspace`, `original`, and `app`,
 respectively. `iconShape` accepts `auto`, `circle`, `square`,
 `rounded`, or `squircle`; older configurations default to `auto`.
+`floatingDirection` accepts `vertical` or `horizontal` and only affects the
+floating dock. Older configurations retain the vertical layout.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
 ```sh
 omarchy-shell window-stash configure presentation bubbles
 omarchy-shell window-stash configure presentation floating
+omarchy-shell window-stash configure floatingDirection horizontal
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -274,6 +284,7 @@ python3 tests/themed_ui.py
 python3 tests/scrolling_width.py
 python3 tests/icon_shapes.py
 python3 tests/floating_dock.py
+python3 tests/floating_direction.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4

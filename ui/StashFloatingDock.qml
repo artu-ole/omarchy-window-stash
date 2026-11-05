@@ -22,6 +22,8 @@ Item {
   property bool active: false
   property bool expanded: false
   property bool grabReady: false
+  readonly property bool requestedHorizontal: config.floatingDirection === "horizontal"
+  property bool horizontal: false
   property real anchorX: 0
   property real anchorY: 0
   property var displayWindows: []
@@ -46,13 +48,15 @@ Item {
   readonly property var frontGroup: ({app:displayWindows.length ? displayWindows[0].app : "", windows:displayWindows,
     title:displayWindows.length === 1 ? displayWindows[0].title : displayWindows.length + " stashed windows · Click to expand"})
   readonly property var geometry: Model.floatingPanel(anchorX, anchorY, handle.height, width, height,
-    displayGroups.length, inset, metrics.controlGap, 44, footer.implicitHeight, expansionDirection)
-  property real panelExtent: geometry.height
+    displayGroups.length, inset, metrics.controlGap, 44, horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight), expansionDirection, horizontal)
+  property real panelExtent: horizontal ? geometry.width : geometry.height
   visible: present
   focus: open
   Keys.onEscapePressed: close()
   Keys.onDownPressed: list.incrementCurrentIndex()
   Keys.onUpPressed: list.decrementCurrentIndex()
+  Keys.onRightPressed:function(event) { if (horizontal) list.incrementCurrentIndex(); else event.accepted=false }
+  Keys.onLeftPressed:function(event) { if (horizontal) list.decrementCurrentIndex(); else event.accepted=false }
   Keys.onReturnPressed: if (open && list.currentIndex >= 0 && list.currentIndex < groups.length)
     activate(displayGroups[list.currentIndex])
   Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:180; easing.type:Easing.OutCubic } }
@@ -109,11 +113,12 @@ Item {
         icons.push({key:item.group.key,x:point.x,y:point.y,width:item.width,height:item.height,appearance:item.appearance()})
       }
     }
-    return {active:active,expanded:open,animating:animating,progress:reveal,createdIcons:createdIcons,
+    return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,createdIcons:createdIcons,currentIndex:list.currentIndex,
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,windows:windows.length,groups:groups.length,
       handle:{x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
-      panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,targetHeight:geometry.height,inset:inset,visible:panel.visible,down:geometry.down},
-      contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,icons:icons}
+      panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
+      contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
+      contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons}
   }
   onSavedPositionChanged: place()
   onWidthChanged: place()
@@ -127,12 +132,13 @@ Item {
     if (windows.length <= 1) close()
   }
   onGroupsChanged: if (open || reveal === 0) syncGroups()
+  onRequestedHorizontalChanged: { close(); if (reveal === 0) horizontal=requestedHorizontal }
   onRevealChanged: {
     if (reveal > 0 && reveal < 1) {
       if (open) openingFrames++
       else closingFrames++
     }
-    if (!open && reveal === 0) { expansionDirection=null; syncGroups() }
+    if (!open && reveal === 0) { expansionDirection=null; horizontal=requestedHorizontal; syncGroups() }
   }
   onOpenChanged: {
     grabReady=false
@@ -140,13 +146,13 @@ Item {
       openingFrames=0
       syncGroups()
       expansionDirection=Model.floatingPanel(anchorX,anchorY,handle.height,width,height,
-        displayGroups.length,inset,metrics.controlGap,44,footer.implicitHeight).down
+        displayGroups.length,inset,metrics.controlGap,44,horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight),undefined,horizontal).forward
       grabDelay.restart()
       Qt.callLater(function() { if (dock.open) dock.forceActiveFocus() })
     } else closingFrames=0
   }
   Timer { id:grabDelay; interval:100; onTriggered:dock.grabReady=dock.open }
-  Component.onCompleted: { place(); if (windows.length) displayWindows=windows.slice(); syncGroups() }
+  Component.onCompleted: { horizontal=requestedHorizontal; place(); if (windows.length) displayWindows=windows.slice(); syncGroups() }
 
   readonly property Region inputRegion: Region {
     regions: !dock.active ? [] : dock.open ? [frontRegion, middleRegion, backRegion, panelRegion] : [frontRegion, middleRegion, backRegion]
@@ -226,18 +232,21 @@ Item {
     enabled:dock.open
     clip:true
     opacity:Math.min(1,dock.reveal*2)
-    x:Math.round(dock.geometry.x)
-    y:Math.round(dock.geometry.down ? dock.anchorY+handle.height+dock.metrics.controlGap : dock.anchorY-dock.metrics.controlGap-height)
-    width:dock.geometry.width; height:Math.round(dock.panelExtent*dock.reveal)
+    x:Math.round(dock.horizontal ? (dock.geometry.forward ? dock.anchorX+48+dock.metrics.controlGap : dock.anchorX-dock.metrics.controlGap-width) : dock.geometry.x)
+    y:Math.round(dock.horizontal ? dock.geometry.y : (dock.geometry.forward ? dock.anchorY+handle.height+dock.metrics.controlGap : dock.anchorY-dock.metrics.controlGap-height))
+    width:dock.horizontal ? Math.round(dock.panelExtent*dock.reveal) : dock.geometry.width
+    height:dock.horizontal ? dock.geometry.height : Math.round(dock.panelExtent*dock.reveal)
     radius:Style.cornerRadius
     color:dock.popupColors.background
     borderSpec:dock.panelBorder
-    ColumnLayout {
-      x:dock.inset
-      y:dock.geometry.down ? dock.inset : panel.height-dock.panelExtent+dock.inset
-      width:panel.width-dock.inset*2
-      height:Math.max(0,dock.panelExtent-dock.inset*2)
-      spacing:dock.metrics.controlGap
+    GridLayout {
+      columns:dock.horizontal ? 2 : 1
+      x:dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent+dock.inset : dock.inset
+      y:!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent+dock.inset : dock.inset
+      width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-dock.inset*2)
+      height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-dock.inset*2)
+      rowSpacing:dock.metrics.controlGap
+      columnSpacing:dock.metrics.controlGap
       ListView {
         id:list
         Layout.fillWidth:true
@@ -245,6 +254,7 @@ Item {
         spacing:dock.metrics.controlGap
         clip:true
         boundsBehavior:Flickable.StopAtBounds
+        orientation:dock.horizontal ? ListView.Horizontal : ListView.Vertical
         model:iconModel
         currentIndex:0
         delegate:StashDockRow {
@@ -257,7 +267,8 @@ Item {
           Component.onCompleted: { dock.createdIcons++; if (liveGroup) lastGroup=liveGroup }
           group:lastGroup
           enabled:index >= 0 && dock.open
-          width:list.width
+          width:dock.horizontal ? 44 : list.width
+          height:dock.horizontal ? list.height : 44
           iconShape:dock.config.iconShape || "auto"
           hasCursor:ListView.isCurrentItem
           onHovered: function(isHovered) { if (isHovered) list.currentIndex=index }
@@ -269,6 +280,8 @@ Item {
         displaced:Transition { NumberAnimation { properties:"x,y"; duration:180; easing.type:Easing.OutCubic } }
         Controls.ScrollBar.vertical:Controls.ScrollBar {
           id:scrollbar
+          policy:dock.horizontal ? Controls.ScrollBar.AlwaysOff : Controls.ScrollBar.AsNeeded
+          padding:0
           contentItem:Rectangle {
             implicitWidth:dock.metrics.xxs
             radius:Style.cornerRadius
@@ -277,10 +290,25 @@ Item {
           }
           background:Item {}
         }
+        Controls.ScrollBar.horizontal:Controls.ScrollBar {
+          id:horizontalScrollbar
+          policy:dock.horizontal ? Controls.ScrollBar.AsNeeded : Controls.ScrollBar.AlwaysOff
+          padding:0
+          contentItem:Rectangle {
+            implicitHeight:dock.metrics.xxs
+            radius:Style.cornerRadius
+            color:Commons.Color.accent
+            opacity:horizontalScrollbar.active ? 0.6 : 0
+          }
+          background:Item {}
+        }
       }
       Ui.Button {
         id:footer
-        Layout.fillWidth:true
+        Layout.fillWidth:!dock.horizontal
+        Layout.alignment:Qt.AlignCenter
+        Layout.preferredWidth:Math.ceil(implicitWidth)
+        Layout.preferredHeight:Math.ceil(implicitHeight)
         iconText:"󰇙"
         focusable:true
         tooltipText:"Window Stash settings and all windows"

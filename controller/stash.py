@@ -16,10 +16,11 @@ import uuid
 PLUGIN = "community.window-stash"
 SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
-DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto")
+DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical")
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
-               iconShape=("auto", "circle", "square", "rounded", "squircle"))
+               iconShape=("auto", "circle", "square", "rounded", "squircle"),
+               floatingDirection=("vertical", "horizontal"))
 
 
 def lua(value):

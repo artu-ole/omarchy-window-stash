@@ -115,7 +115,17 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current"))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical"))
+
+    def test_floating_direction_defaults_and_validation(self):
+        self.settings(presentation="floating")
+        self.assertEqual(self.stash.settings()["floatingDirection"],"vertical")
+        for direction in ("horizontal","vertical"):
+            self.settings(presentation="floating",floatingDirection=direction,iconShape="circle")
+            self.assertEqual(self.stash.settings()["floatingDirection"],direction)
+            self.assertEqual(self.stash.settings()["iconShape"],"circle")
+        self.settings(floatingDirection="invalid")
+        self.assertEqual(self.stash.settings()["floatingDirection"],"vertical")
 
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]

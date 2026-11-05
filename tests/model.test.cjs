@@ -61,3 +61,19 @@ const locked=ctx.floatingPanel(500,500,56,1920,1080,100,9,8,44,30,true)
 assert.equal(locked.down,true)
 assert.ok(locked.y+locked.height<=1072,'An open dock grows into scrolling instead of jumping sides')
 console.log('Model: crisp centered artwork and stable expansion direction passed')
+
+for (const [w,h] of [[320,240],[640,360],[1920,1080]]) {
+  for (const saved of [[8,32],[w-56,h-64],[w/2,h/2]]) {
+    const [x,y]=ctx.floatingAnchor(saved,w,h)
+    for (const count of [1,3,30]) {
+      const p=ctx.floatingPanel(x,y,56,w,h,count,9,8,44,33,undefined,true)
+      assert.ok(p.x>=8 && p.x+p.width<=w-8)
+      assert.ok(p.y>=8 && p.y+p.height<=h-8)
+      assert.ok(p.width>0)
+      assert.ok(p.forward ? p.x>=x+48 : p.x+p.width<=x)
+    }
+  }
+}
+assert.equal(ctx.floatingPanel(8,400,56,1920,1080,5,9,8,44,33,undefined,true).right,true)
+assert.equal(ctx.floatingPanel(1864,400,56,1920,1080,5,9,8,44,33,undefined,true).right,false)
+console.log('Model: horizontal dock bounds and left/right expansion passed')

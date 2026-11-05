@@ -96,14 +96,23 @@ function floatingAnchor(saved, width, height) {
   return [Math.max(8, Math.min(width - 56, x)), Math.max(32, Math.min(height - 64, y))]
 }
 
-function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown) {
+function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown, horizontal) {
   var margin = 8, panelWidth = rowHeight + padding * 2 + 8
   var desired = count * rowHeight + Math.max(0, count - 1) * gap + gap + buttonHeight + padding * 2
+  if (horizontal) {
+    var right = Math.max(0, width - margin - x - 48 - gap)
+    var left = Math.max(0, x - gap - margin)
+    var forward = typeof preferredDown === "boolean" ? preferredDown : right >= desired || right >= left
+    var extent = Math.min(desired, forward ? right : left)
+    return {x:forward ? x + 48 + gap : x - gap - extent,
+      y:Math.max(margin, Math.min(height - margin - panelWidth, y + (48 - panelWidth) / 2)),
+      width:extent,height:panelWidth,forward:forward,right:forward,down:false,horizontal:true}
+  }
   var below = Math.max(0, height - margin - y - handleHeight - gap)
   var above = Math.max(0, y - gap - margin)
   var down = typeof preferredDown === "boolean" ? preferredDown : below >= desired || below >= above
   var panelHeight = Math.min(desired, down ? below : above)
   return {x:Math.max(margin, Math.min(width - margin - panelWidth, x + (48 - panelWidth) / 2)),
     y:down ? y + handleHeight + gap : y - gap - panelHeight,
-    width:panelWidth, height:panelHeight, down:down}
+    width:panelWidth, height:panelHeight, down:down,forward:down,right:false,horizontal:false}
 }

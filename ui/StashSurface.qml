@@ -346,6 +346,7 @@ PanelWindow {
           model: [
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
               labels:["Bottom dock","Floating bubbles","Floating dock"]},
+            {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
             {key:"restoreDestination", label:"Restore destination", values:["current","original"], labels:["Current workspace","Original workspace"]},
             {key:"grouping", label:"Icon grouping", values:["window","app"], labels:["One per window","One per app"]},
@@ -356,6 +357,7 @@ PanelWindow {
             id: settingRow
             required property var modelData
             readonly property alias selector: settingDropdown
+            visible:modelData.key !== "floatingDirection" || surface.floatingMode
             Layout.fillWidth: true
             Text {
               text: settingRow.modelData.label
