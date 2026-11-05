@@ -23,6 +23,7 @@ PanelWindow {
   readonly property var groups: Model.groups(windows, groupingMode)
   property bool dialogOpen: false
   readonly property string dockSide: config.dockSide || "bottom"
+  readonly property bool dockFrameVisible: config.dockFrame !== "hidden"
   readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
   readonly property var usableArea: Model.usableArea(width, height, monitor ? monitor.reserved : [])
   readonly property bool bubbleMode: config.presentation === "bubbles"
@@ -87,7 +88,7 @@ PanelWindow {
     for (var i = 0; i < bubbles.count; i++) {
       var b = bubbles.itemAt(i) as StashIcon
       if (b) points.push({key:b.group.key, x:b.x, y:b.y, width:b.width, height:b.height,
-        shape:b.iconShape, radius:b.hitRadius,animating:b.positionAnimating,held:b.positionHeld})
+        shape:b.iconShape, radius:b.hitRadius,animating:b.positionAnimating,held:b.positionHeld,appearance:b.appearance()})
     }
     var controls = []
     for (var j = 0; j < settingRows.count; j++) {
@@ -101,10 +102,11 @@ PanelWindow {
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,createdBubbles:createdBubbles,
       usableArea:usableArea,
-      shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,
+      shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
+        borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
-        icons:Array.from({length:dockIcons.count},function(_,i) { return itemRect(dockIcons.itemAt(i)) }),
+        icons:Array.from({length:dockIcons.count},function(_,i) { var icon=dockIcons.itemAt(i) as StashIcon; return Object.assign(itemRect(icon),{appearance:icon.appearance()}) }),
         more:itemRect(dockMore)},
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialog.visible},
       pickerCount:picker.count, picker:itemRect(picker),
@@ -151,33 +153,38 @@ PanelWindow {
 
   Ui.BorderSurface {
     id: shelf
+    readonly property var frameSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
+    readonly property real frameLeft: Border.left(frameSpec)
+    readonly property real frameRight: Border.right(frameSpec)
+    readonly property real frameTop: Border.top(frameSpec)
+    readonly property real frameBottom: Border.bottom(frameSpec)
     visible: surface.config.presentation === "dock" && surface.groups.length > 0
     readonly property var geometry: Model.staticDockRect(surface.usableArea, surface.dockSide,
-      dockRow.implicitWidth + surface.metrics.xxs * 2 + borderLeft + borderRight,
-      dockRow.implicitHeight + surface.metrics.xxs * 2 + borderTop + borderBottom,
+      dockRow.implicitWidth + surface.metrics.xxs * 2 + frameLeft + frameRight,
+      dockRow.implicitHeight + surface.metrics.xxs * 2 + frameTop + frameBottom,
       Math.max(Style.gapsOut, surface.metrics.lg), surface.metrics.popupPadding)
     width: geometry.width
     height: geometry.height
     x: geometry.x
     y: geometry.y
-    radius: Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
+    radius: !surface.dockFrameVisible ? 0 : Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
     onRadiusChanged: surface.refreshInputMask()
-    color: surface.popupColors.background
-    borderSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
+    color: surface.dockFrameVisible ? surface.popupColors.background : "transparent"
+    borderSpec: surface.dockFrameVisible ? frameSpec : Border.none()
     Widgets.ClippingRectangle {
       anchors.fill:parent
       radius:shelf.radius
       color:"transparent"
       contentInsideBorder:false
       border.color:"transparent"
-      border.width:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom)
+      border.width:surface.dockFrameVisible ? Math.max(shelf.frameLeft,shelf.frameRight,shelf.frameTop,shelf.frameBottom) : 0
       Flickable {
         id: dockViewport
         anchors.fill: parent
-        anchors.leftMargin: surface.metrics.xxs + shelf.borderLeft
-        anchors.rightMargin: surface.metrics.xxs + shelf.borderRight
-        anchors.topMargin: surface.metrics.xxs + shelf.borderTop
-        anchors.bottomMargin: surface.metrics.xxs + shelf.borderBottom
+        anchors.leftMargin: surface.metrics.xxs + shelf.frameLeft
+        anchors.rightMargin: surface.metrics.xxs + shelf.frameRight
+        anchors.topMargin: surface.metrics.xxs + shelf.frameTop
+        anchors.bottomMargin: surface.metrics.xxs + shelf.frameBottom
         contentWidth: surface.verticalDock ? width : dockRow.implicitWidth
         contentHeight: surface.verticalDock ? dockRow.implicitHeight : height
         clip: true
@@ -198,6 +205,7 @@ PanelWindow {
             delegate: StashIcon {
               required property var modelData
               group: modelData
+              frameVisible: surface.config.iconFrame !== "hidden"
               iconShape: surface.config.iconShape || "auto"
               onActivated: surface.stash.selectGroup(group, surface.screen.name)
               onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
@@ -224,6 +232,8 @@ PanelWindow {
       required property int index
       group: modelData
       bubble: true
+      frameVisible: surface.config.iconFrame !== "hidden"
+      onFrameVisibleChanged: surface.refreshInputMask()
       iconShape: surface.config.iconShape || "auto"
       property bool held: false
       property bool motionReady: false
@@ -237,7 +247,7 @@ PanelWindow {
         NumberAnimation { id:bubbleYAnimation; duration:240; easing.type:Easing.OutCubic } }
       property Region hitRegion: StashIconRegion {
         originX:bubbleIcon.x; originY:bubbleIcon.y; size:bubbleIcon.width
-        cornerRadius:bubbleIcon.hitRadius; iconShape:bubbleIcon.iconShape
+        cornerRadius:bubbleIcon.hitRadius; iconShape:bubbleIcon.inputShape
       }
       function place() {
         if (held || !surface.bubbleTargets[index]) return
@@ -435,6 +445,8 @@ PanelWindow {
           model: [
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
               labels:["Static dock","Floating bubbles","Floating dock"]},
+            {key:"iconFrame", label:"Icon border/background", values:["shown","hidden"], labels:["Shown","Hidden (larger icons)"]},
+            {key:"dockFrame", label:"Dock border/background", values:["shown","hidden"], labels:["Shown","Hidden"]},
             {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
             {key:"dockCorners", label:"Dock corners", values:["theme","custom"], labels:["Follow desktop","Custom"]},
             {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
@@ -452,7 +464,9 @@ PanelWindow {
             visible:(modelData.key !== "floatingDirection" || surface.floatingMode)
               && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
               && (modelData.key !== "floatingPlacement" || surface.bubbleMode || surface.floatingMode)
-              && (modelData.key !== "dockCorners" || !surface.bubbleMode)
+              && (modelData.key !== "dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
+              && (modelData.key !== "dockFrame" || !surface.bubbleMode)
+              && (modelData.key !== "iconShape" || surface.config.iconFrame !== "hidden")
             Layout.fillWidth: true
             Text {
               text: settingRow.modelData.label
@@ -479,7 +493,7 @@ PanelWindow {
         }
         RowLayout {
           id:radiusRow
-          visible:!surface.bubbleMode && surface.config.dockCorners === "custom"
+          visible:!surface.bubbleMode && surface.dockFrameVisible && surface.config.dockCorners === "custom"
           Layout.fillWidth:true
           Text {
             text:"Corner radius (px)"

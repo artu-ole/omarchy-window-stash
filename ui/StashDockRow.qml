@@ -4,6 +4,7 @@ import QtQuick
 Item {
   id:row
   required property var group
+  property bool frameVisible:true
   property string iconShape:"auto"
   property bool hasCursor:false
   readonly property alias icon:graphic
@@ -17,6 +18,7 @@ Item {
     anchors.horizontalCenter:parent.horizontalCenter
     anchors.verticalCenter:parent.verticalCenter
     group:row.group
+    frameVisible:row.frameVisible
     iconShape:row.iconShape
     hasCursor:row.hasCursor
     onActivated:row.activated()

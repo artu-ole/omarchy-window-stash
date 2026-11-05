@@ -46,6 +46,7 @@ def main():
     try:
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial snapshot missing')
         configure('presentation','dock');configure('dockSide','bottom');configure('scope','workspace');configure('grouping','window')
+        configure('dockFrame','shown');configure('iconFrame','shown')
         configure('dockCorners','theme');configure('dockCornerRadius',12)
         h.dispatch('focus',workspace=str(workspace))
         windows=[spawn() for _ in range(3)]

@@ -5,7 +5,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio
 
-app=Gtk.Application(application_id='org.windowstash.Test',flags=Gio.ApplicationFlags.NON_UNIQUE)
+app=Gtk.Application(application_id=sys.argv[2] if len(sys.argv)>2 else 'org.windowstash.Test',flags=Gio.ApplicationFlags.NON_UNIQUE)
 def activate(application):
     window=Gtk.ApplicationWindow(application=application,title=sys.argv[1] if len(sys.argv)>1 else 'Window Stash test')
     window.set_default_size(640,420)

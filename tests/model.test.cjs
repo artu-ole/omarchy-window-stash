@@ -156,3 +156,11 @@ assert.equal(ctx.dockRadius('custom',64,7,50,200),25)
 assert.equal(ctx.dockRadius('custom',12,7,0,56),0)
 for(const invalid of [undefined,null,'12',-1,65,NaN,Infinity]) assert.equal(ctx.dockRadius('custom',invalid,7,200,50),7)
 console.log('Model: independent dock rounding, theme fallback, and small-panel radius limits passed')
+
+for(const frame of [44,48]) for(const scale of [1,1.25,1.5,2]) {
+  const size=ctx.artworkSize(frame,36,frame/2,'circle',1.5,scale,true)
+  assert.ok(size>ctx.artworkSize(frame,36,frame/2,'circle',1.5,scale,false))
+  assert.ok(size*1.04<frame,'Frameless hover must fit its tile')
+  assert.equal((Math.round(frame*scale)-Math.round(size*scale))%2,0)
+}
+console.log('Model: larger frameless artwork remains centered and hover fits its tile')

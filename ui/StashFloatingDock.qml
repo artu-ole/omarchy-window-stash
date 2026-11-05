@@ -26,6 +26,7 @@ Item {
   property bool grabReady: false
   readonly property bool requestedHorizontal: config.floatingDirection === "horizontal"
   property bool horizontal: false
+  readonly property bool dockFrameVisible: config.dockFrame !== "hidden"
   readonly property bool snapEdges: config.floatingPlacement !== "free"
   readonly property var usableArea: Model.usableArea(width,height,monitor ? monitor.reserved : [])
   property var pendingPosition: null
@@ -130,7 +131,8 @@ Item {
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,createdIcons:createdIcons,currentIndex:list.currentIndex,
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
       handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
-      panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
+      panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
+        borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons}
   }
@@ -182,11 +184,11 @@ Item {
   readonly property var inputRegions: !active ? [] : open
     ? [frontRegion, middleRegion, backRegion, panelRegion] : [frontRegion, middleRegion, backRegion]
   StashIconRegion { id: frontRegion; originX: dock.anchorX; originY: dock.anchorY
-    size:48; cornerRadius:front.hitRadius; iconShape:front.iconShape }
+    size:48; cornerRadius:front.hitRadius; iconShape:front.inputShape }
   StashIconRegion { id: middleRegion; originX: dock.anchorX; originY: dock.anchorY + Math.min(4,dock.stackTail)
-    size:dock.stackTail > 0 ? 48 : 0; cornerRadius:front.hitRadius; iconShape:front.iconShape }
+    size:dock.stackTail > 0 ? 48 : 0; cornerRadius:front.hitRadius; iconShape:front.inputShape }
   StashIconRegion { id: backRegion; originX: dock.anchorX; originY: dock.anchorY + Math.min(8,dock.stackTail)
-    size:dock.stackTail > 4 ? 48 : 0; cornerRadius:front.hitRadius; iconShape:front.iconShape }
+    size:dock.stackTail > 4 ? 48 : 0; cornerRadius:front.hitRadius; iconShape:front.inputShape }
   Region { id: panelRegion; item: panel; radius: panel.radius }
   HyprlandFocusGrab {
     id:grab
@@ -211,12 +213,14 @@ Item {
         visible:opacity > 0
         Behavior on opacity { NumberAnimation { duration:140; easing.type:Easing.OutCubic } }
         group:dock.preview(layerNumber-1)
-        bubble:true; iconShape:front.iconShape; enabled:false
+        bubble:true; frameVisible:dock.config.iconFrame !== "hidden"; iconShape:front.iconShape; enabled:false
       }
     }
     StashIcon {
       id: front
       group:dock.frontGroup
+      frameVisible:dock.config.iconFrame !== "hidden"
+      onFrameVisibleChanged:dock.inputChanged()
       bubble:true
       iconShape:dock.config.iconShape || "auto"
       hasCursor:drag.containsMouse || dock.open
@@ -274,17 +278,17 @@ Item {
     y:Math.round(dock.horizontal ? dock.geometry.y : (dock.geometry.forward ? dock.anchorY+handle.height+dock.gap : dock.anchorY-dock.gap-height))
     width:dock.horizontal ? Math.round(dock.panelExtent*dock.reveal) : dock.geometry.width
     height:dock.horizontal ? dock.geometry.height : Math.round(dock.panelExtent*dock.reveal)
-    radius:Model.dockRadius(dock.config.dockCorners,dock.config.dockCornerRadius,Style.cornerRadius,width,height)
+    radius:!dock.dockFrameVisible ? 0 : Model.dockRadius(dock.config.dockCorners,dock.config.dockCornerRadius,Style.cornerRadius,width,height)
     onRadiusChanged:dock.inputChanged()
-    color:dock.popupColors.background
-    borderSpec:dock.panelBorder
+    color:dock.dockFrameVisible ? dock.popupColors.background : "transparent"
+    borderSpec:dock.dockFrameVisible ? dock.panelBorder : Border.none()
     Widgets.ClippingRectangle {
       anchors.fill:parent
       radius:panel.radius
       color:"transparent"
       contentInsideBorder:false
       border.color:"transparent"
-      border.width:Math.max(Border.left(dock.panelBorder),Border.right(dock.panelBorder),Border.top(dock.panelBorder),Border.bottom(dock.panelBorder))
+      border.width:dock.dockFrameVisible ? Math.max(Border.left(dock.panelBorder),Border.right(dock.panelBorder),Border.top(dock.panelBorder),Border.bottom(dock.panelBorder)) : 0
       GridLayout {
         columns:dock.horizontal ? 2 : 1
         x:dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent+dock.inset : dock.inset
@@ -315,6 +319,7 @@ Item {
             enabled:index >= 0 && dock.open
             width:dock.horizontal ? 44 : list.width
             height:dock.horizontal ? list.height : 44
+            frameVisible:dock.config.iconFrame !== "hidden"
             iconShape:dock.config.iconShape || "auto"
             hasCursor:ListView.isCurrentItem
             onHovered: function(isHovered) { if (isHovered) list.currentIndex=index }

@@ -16,7 +16,8 @@ function alignedIconSize(frame, desired, scale) {
   return pixels / scale
 }
 
-function artworkSize(frame, desired, radius, shape, inset, scale) {
+function artworkSize(frame, desired, radius, shape, inset, scale, frameless) {
+  if (frameless) return alignedIconSize(frame,frame-4,scale)
   scale = Math.max(1, Number(scale) || 1)
   var half = Math.max(0, frame / 2 - inset)
   var r = Math.max(0, Math.min(half, radius - inset))

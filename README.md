@@ -104,6 +104,20 @@ The UI follows the active Omarchy theme, including popup colors, typography,
 spacing, borders, and corner rounding. Settings, menus, search, and tooltips use
 Omarchy's shared UI components; window rows use its standard selection styling.
 
+**Icon border/background** and **Dock border/background** are separate settings,
+both **Shown** by default. Set the icon option to **Hidden (larger icons)** for
+artwork without the plugin's frame in the static dock, bubbles, floating handle,
+and expanded floating dock. Artwork grows from its framed size to 40-pixel dock
+icons or 44-pixel bubbles, staying centered in the same clickable tiles. Hover
+and keyboard selection use a subtle scale change; app-group count badges remain.
+Backgrounds built into an application's own icon artwork remain part of that icon.
+
+Set the dock option to **Hidden** to remove the static or expanded floating dock's
+background and border while keeping icon positions, spacing, scrolling and the
+menu button. Corners stop clipping the artwork while the frame is hidden. The
+saved icon shape and dock corner settings return when their frames are shown
+again. The two options can be combined or used independently.
+
 **Dock corners** offers **Follow desktop** (the default) or **Custom** for the
 static dock and expanded floating dock. Follow desktop uses Omarchy's shared
 radius, which mirrors Hyprland's `decoration:rounding`. Custom reveals a native
@@ -111,7 +125,8 @@ radius, which mirrors Hyprland's `decoration:rounding`. Custom reveals a native
 square corners; larger values are limited to half the dock's shorter dimension.
 The dock clips its contents to the rounded border. Your custom value is retained
 when you switch back to Follow desktop. App icon shapes and other Omarchy
-controls keep their own styling.
+controls keep their own styling. Dock corner controls appear while the dock
+border/background is shown.
 
 **Icon shape** in settings offers Automatic, Circle, Square, Rounded square,
 and Squircle. It changes the frame around each app icon in all presentations.
@@ -255,7 +270,9 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "dockSide": "bottom",
   "floatingPlacement": "edges",
   "dockCorners": "theme",
-  "dockCornerRadius": 12
+  "dockCornerRadius": 12,
+  "iconFrame": "shown",
+  "dockFrame": "shown"
 }
 ```
 
@@ -271,6 +288,8 @@ dock. Older configurations retain the bottom position.
 floating dock. The static dock keeps its separate side setting.
 `dockCorners` accepts `theme` (default) or `custom`; `dockCornerRadius` stores an
 integer from 0 to 64 (default 12), applied in custom mode.
+`iconFrame` and `dockFrame` each accept `shown` (default) or `hidden`. Icon frames
+apply to all presentations; dock frames apply to the static and floating docks.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
@@ -282,6 +301,8 @@ omarchy-shell window-stash configure dockSide top
 omarchy-shell window-stash configure floatingPlacement free
 omarchy-shell window-stash configure dockCorners custom
 omarchy-shell window-stash configure dockCornerRadius 12
+omarchy-shell window-stash configure iconFrame hidden
+omarchy-shell window-stash configure dockFrame hidden
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -329,6 +350,7 @@ python3 tests/floating_direction.py
 python3 tests/dock_sides.py
 python3 tests/floating_placement.py
 python3 tests/dock_corners.py
+python3 tests/frame_visibility.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -340,8 +362,8 @@ and XWayland windows, temporary virtual outputs, and restore the original focus
 and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width, floating-dock, static-dock-side, floating-placement, and dock-corner
-regressions use isolated workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
+The scrolling-width, floating-dock, static-dock-side, floating-placement, dock-corner, and
+frame-visibility regressions use isolated workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
 test also uses `qs` to create a temporary bar on its virtual output. The width test
 checks the source controller by default;
 pass `--installed` to check the installed copy.

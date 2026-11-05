@@ -12,13 +12,15 @@ Ui.BorderSurface {
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   required property var group
+  property bool frameVisible: true
+  readonly property string inputShape: frameVisible ? iconShape : "square"
   property bool bubble: false
   property string iconShape: "auto"
   property bool hasCursor: false
   property bool positionAnimating: false
   property bool positionHeld: false
   readonly property bool hot: pointer.containsMouse || hasCursor
-  readonly property real hitRadius: Model.iconRadius(iconShape, width, bubble, Style.cornerRadius)
+  readonly property real hitRadius: frameVisible ? Model.iconRadius(iconShape, width, bubble, Style.cornerRadius) : 0
   signal activated()
   signal contextRequested()
   signal moved(real dx, real dy)
@@ -29,18 +31,19 @@ Ui.BorderSurface {
   height: width
   clip: true
   radius: hitRadius
-  property color frameColor: pointer.pressed ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
+  property color frameColor: !frameVisible ? "transparent" : pointer.pressed ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
     : hot ? Style.hoverFillFor(icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? icon.popupColors.background : "transparent"
-  readonly property var frameBorder: hot || pointer.pressed
+  readonly property var frameBorder: !frameVisible ? Border.none() : hot || pointer.pressed
     ? Border.controlSpec("hover-cursor", icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? Border.surfaceSpec("popups", "border", icon.popupColors.border, Style.normalBorderWidth)
     : Border.none()
   readonly property real artworkInset: Math.max(1, 0.5 + Math.max(Border.left(frameBorder),
     Border.right(frameBorder), Border.top(frameBorder), Border.bottom(frameBorder)))
   function appearance() {
-    return {width:width,height:height,
-      artwork:{x:image.x,y:image.y,width:image.width,height:image.height},
+    return {width:width,height:height,frameVisible:frameVisible,background:String(frameColor),
+      borderWidth:Math.max(Border.left(frameBorder),Border.right(frameBorder),Border.top(frameBorder),Border.bottom(frameBorder)),
+      artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale},
       badge:{visible:badge.visible,x:badge.x,y:badge.y,width:badge.width,height:badge.height}}
   }
   color: iconShape === "squircle" ? "transparent" : frameColor
@@ -48,7 +51,7 @@ Ui.BorderSurface {
   Behavior on frameColor { ColorAnimation { duration: 120 } }
   Loader {
     anchors.fill: parent
-    active: icon.iconShape === "squircle"
+    active: icon.frameVisible && icon.iconShape === "squircle"
     sourceComponent: StashSquircle {
       backgroundColor: icon.frameColor
       borderSpec: icon.frameBorder
@@ -59,8 +62,12 @@ Ui.BorderSurface {
   Image {
     id: image
     anchors.centerIn: parent
-    width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio)
+    width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio, !icon.frameVisible)
     height: width
+    scale: !icon.frameVisible && icon.hot ? 1.04 : 1
+    opacity: !icon.frameVisible && pointer.pressed ? 0.75 : 1
+    Behavior on scale { NumberAnimation { duration:140; easing.type:Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { duration:100; easing.type:Easing.OutCubic } }
     source: Quickshell.iconPath(icon.appIcon, true)
     sourceSize.width: Math.round(width * Screen.devicePixelRatio)
     sourceSize.height: Math.round(height * Screen.devicePixelRatio)
