@@ -164,3 +164,17 @@ for(const frame of [44,48]) for(const scale of [1,1.25,1.5,2]) {
   assert.equal((Math.round(frame*scale)-Math.round(size*scale))%2,0)
 }
 console.log('Model: larger frameless artwork remains centered and hover fits its tile')
+
+for(const [old,next] of [
+  [['a','b','c'],['a','c']], [['a','b','c'],['d','a','c']],
+  [['a','b','c'],['c','a']], [['a','b'],[]], [[],['a','b']],
+  [['a','b','c'],['b','d','c','a']], [['a','b'],['d']]
+]) {
+  const merged=ctx.reconcileKeys(old,next)
+  assert.deepEqual(Array.from(merged.filter(k=>next.includes(k))),next)
+  assert.equal(new Set(merged).size,merged.length)
+  assert.deepEqual(Array.from(ctx.reconcileKeys(merged,next)),Array.from(merged),'Repeated refresh must preserve retiring slots')
+  assert.equal(merged.length,new Set([...old,...next]).size)
+}
+assert.equal(ctx.reconcileKeys(['a','b','c'],['a','c']).join(','),'a,b,c')
+console.log('Model: stable keyed arrivals, retiring slots, reorder and revival passed')

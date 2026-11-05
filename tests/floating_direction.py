@@ -42,7 +42,7 @@ def main():
     def park(address):
         command('minimize','--address',address)
         expected=len([w for w in command('list')['windows'] if w['origin']['id']==h.read('activeworkspace')['id']])
-        wait(lambda:dock()['windows']==expected,'Dock count lagged')
+        wait(lambda:dock()['windows']==expected and not dock()['animating'] and not dock()['snapping'],'Dock count lagged')
 
     try:
         configure("floatingPlacement","free")

@@ -16,13 +16,14 @@ import uuid
 PLUGIN = "community.window-stash"
 SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
-DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown")
+DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown", animations="full")
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
                floatingDirection=("vertical", "horizontal"), dockSide=("bottom", "top", "left", "right"),
                floatingPlacement=("edges", "free"), dockCorners=("theme", "custom"),
-               dockCornerRadius=range(65), iconFrame=("shown", "hidden"), dockFrame=("shown", "hidden"))
+               dockCornerRadius=range(65), iconFrame=("shown", "hidden"), dockFrame=("shown", "hidden"),
+               animations=("full", "reduced", "off"))
 
 
 def lua(value):

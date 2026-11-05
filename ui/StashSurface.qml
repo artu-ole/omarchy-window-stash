@@ -9,6 +9,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
 import "Model.js" as Model
+import "Motion.js" as Motion
 
 PanelWindow {
   id: surface
@@ -17,15 +18,37 @@ PanelWindow {
   readonly property var metrics: Style.spacing
   required property var stash
   readonly property var monitor: stash.screenMonitor(screen.name)
+  readonly property int activeWorkspaceId:monitor ? monitor.activeWorkspace.id : -1
+  onActiveWorkspaceIdChanged:if (floatingDock) floatingDock.close()
   readonly property var config: stash.snapshot.settings
+  readonly property string animations: config.animations || "full"
+  readonly property real canvasWidth:screen ? screen.width : width
+  readonly property real canvasHeight:screen ? screen.height : height
   property var windows: []
   readonly property string groupingMode: config.grouping || "window"
   readonly property var groups: Model.groups(windows, groupingMode)
   property bool dialogOpen: false
+  property string renderDialogKind:""
+  property var renderDialogWindows:[]
+  property string renderDialogQuery:""
+  property int dialogFrames:0
+  property int createdShelfIcons:0
+  property int exitSerial:0
+  property var completedExits:[]
+  function recordExit(view,key,frames) {
+    exitSerial++
+    completedExits=completedExits.concat([{serial:exitSerial,view:view,key:key,frames:frames}]).slice(-16)
+  }
+  property real dialogReveal:dialogOpen ? 1 : 0
+  Behavior on dialogReveal { NumberAnimation { id:dialogAnimation; duration:Motion.duration(surface.animations,surface.dialogOpen ? 180 : 140,100); easing.type:Easing.OutCubic } }
+  onDialogRevealChanged: {
+    if (dialogReveal>0 && dialogReveal<1) dialogFrames++
+    if (dialogReveal===0 && !dialogOpen) renderDialogKind=""
+  }
   readonly property string dockSide: config.dockSide || "bottom"
   readonly property bool dockFrameVisible: config.dockFrame !== "hidden"
   readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
-  readonly property var usableArea: Model.usableArea(width, height, monitor ? monitor.reserved : [])
+  readonly property var usableArea: Model.usableArea(canvasWidth, canvasHeight, monitor ? monitor.reserved : [])
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: config.presentation === "floating"
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open
@@ -33,8 +56,10 @@ PanelWindow {
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
   readonly property bool snapFloating: config.floatingPlacement !== "free"
   property var bubbleDrafts: ({})
-  readonly property var bubbleTargets: Model.bubbleLayout(groups.map(function(g) { return g.key }),
-    savedPositions, bubbleDrafts, width, height, usableArea, snapFloating)
+  readonly property var bubbleTargets: Model.bubbleLayout(bubblesModel.activeKeys,
+    savedPositions, bubbleDrafts, canvasWidth, canvasHeight, usableArea, snapFloating)
+  StashCollection { id:shelfModel; sourceGroups:surface.config.presentation==="dock" ? surface.groups : []; animations:surface.animations }
+  StashCollection { id:bubblesModel; sourceGroups:surface.bubbleMode ? surface.groups : []; animations:surface.animations }
   onSavedPositionsChanged: {
     var next=Object.assign({},bubbleDrafts)
     Object.keys(next).forEach(function(key) {
@@ -42,10 +67,12 @@ PanelWindow {
     })
     if (JSON.stringify(next) !== JSON.stringify(bubbleDrafts)) bubbleDrafts=next
   }
-  function finishBubbleMove(key, index, x, y) {
+  function finishBubbleMove(key, x, y) {
+    var at=bubblesModel.activeKeys.indexOf(key)
+    if (at<0 || !bubbleTargets[at]) return
     var next=Object.assign({},bubbleDrafts)
     next[key]=[x,y]; bubbleDrafts=next
-    var point=bubbleTargets[index].map(Math.round)
+    var point=bubbleTargets[at].map(Math.round)
     next=Object.assign({},bubbleDrafts); next[key]=point; bubbleDrafts=next
     stash.recordPosition(monitor,key,point[0],point[1])
   }
@@ -75,6 +102,11 @@ PanelWindow {
       // Reserve-only refreshes must preserve delegates, active drags and hover.
       if (JSON.stringify(nextWindows) !== JSON.stringify(surface.windows)) surface.windows = nextWindows
       surface.dialogOpen = surface.stash.dialogKind !== "" && surface.stash.dialogScreen === surface.screen.name
+      if (surface.dialogOpen) {
+        surface.renderDialogKind=surface.stash.dialogKind
+        surface.renderDialogWindows=surface.stash.dialogWindows.slice()
+        surface.renderDialogQuery=surface.stash.dialogQuery
+      }
     }
   }
   Connections {
@@ -82,12 +114,14 @@ PanelWindow {
     function onSnapshotChanged() { modelDelay.restart() }
     function onDialogKindChanged() { modelDelay.restart() }
     function onDialogScreenChanged() { modelDelay.restart() }
+    function onDialogWindowsChanged() { modelDelay.restart() }
+    function onDialogQueryChanged() { modelDelay.restart() }
   }
   function details() {
-    var points = []
+    var points = [], exiting=[]
     for (var i = 0; i < bubbles.count; i++) {
       var b = bubbles.itemAt(i) as StashIcon
-      if (b) points.push({key:b.group.key, x:b.x, y:b.y, width:b.width, height:b.height,
+      if (b) (b.retiring ? exiting : points).push({key:b.group.key, x:b.x, y:b.y, width:b.width, height:b.height,
         shape:b.iconShape, radius:b.hitRadius,animating:b.positionAnimating,held:b.positionHeld,appearance:b.appearance()})
     }
     var controls = []
@@ -100,15 +134,17 @@ PanelWindow {
       // qmllint enable missing-property
     }
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
-      groups:groups.length, visible:visible, bubbles:points,createdBubbles:createdBubbles,
+      groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
+      motion:{mode:animations,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal},
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
         borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
-        icons:Array.from({length:dockIcons.count},function(_,i) { var icon=dockIcons.itemAt(i) as StashIcon; return Object.assign(itemRect(icon),{appearance:icon.appearance()}) }),
+        icons:shelfIcons(false),exitingIcons:shelfIcons(true),progress:shelf.reveal,
+        animating:shelfWidthAnimation.running || shelfHeightAnimation.running || shelfRevealAnimation.running,
         more:Object.assign(itemRect(dockMore),{feedback:dockMore.feedbackDetails()})},
-      dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialog.visible},
+      dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialogOpen && dialogReveal>0.999,rendered:dialog.visible,progress:dialogReveal},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
       cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
@@ -117,11 +153,24 @@ PanelWindow {
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
         accent:String(Commons.Color.accent),fontFamily:surface.fonts.family,bodySize:surface.fonts.body,radius:Style.cornerRadius}}
   }
+  function shelfIcons(retiring) {
+    var result=[]
+    for (var i=0;i<dockIcons.count;i++) {
+      var icon=dockIcons.itemAt(i) as StashIcon
+      if (icon && icon.retiring===retiring) result.push(Object.assign(itemRect(icon),{key:icon.group.key,appearance:icon.appearance()}))
+    }
+    return result
+  }
+  onAnimationsChanged:if (!Motion.full(animations)) {
+    shelfWidthAnimation.complete(); shelfHeightAnimation.complete()
+    if (animations==="off") { dialogAnimation.complete(); shelfRevealAnimation.complete() }
+  }
   onKeyboardOpenChanged: {
     focusPrimed = false
     if (keyboardOpen) primeFocus.restart()
   }
   onDialogOpenChanged: {
+    dialogFrames=0
     if (dialogOpen) floatingDock.close()
     else for (var i=0;i<settingRows.count;i++) {
       var row=settingRows.itemAt(i)
@@ -138,13 +187,13 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
-  visible: groups.length > 0 || dialogOpen || (floatingMode && floatingDock.present)
+  visible: shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present
   mask: Region {
     id: inputMask
     // Keep motion on this surface during a drag, including the gaps between
     // small animated regions. Restore click-through immediately on release.
     regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held ? [dialogRegion] : surface.floatingMode ? floatingDock.inputRegions
-      : surface.bubbleMode ? surface.bubbleRegions : [shelfRegion]
+      : surface.bubbleMode ? surface.bubbleRegions : surface.config.presentation==="dock" && surface.groups.length>0 ? [shelfRegion] : []
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
   // open, its surface owns the screen, just like Omarchy's keyboard panels.
@@ -158,15 +207,21 @@ PanelWindow {
     readonly property real frameRight: Border.right(frameSpec)
     readonly property real frameTop: Border.top(frameSpec)
     readonly property real frameBottom: Border.bottom(frameSpec)
-    visible: surface.config.presentation === "dock" && surface.groups.length > 0
+    property real reveal:surface.config.presentation==="dock" && surface.groups.length>0 ? 1 : 0
+    visible:shelfModel.count>0 || reveal>0
+    enabled:surface.config.presentation==="dock" && surface.groups.length>0
+    opacity:reveal
+    Behavior on reveal { NumberAnimation { id:shelfRevealAnimation; duration:Motion.duration(surface.animations,180,100); easing.type:Easing.OutCubic } }
     readonly property var geometry: Model.staticDockRect(surface.usableArea, surface.dockSide,
       dockRow.implicitWidth + surface.metrics.xxs * 2 + frameLeft + frameRight,
       dockRow.implicitHeight + surface.metrics.xxs * 2 + frameTop + frameBottom,
       Math.max(Style.gapsOut, surface.metrics.lg), surface.metrics.popupPadding)
     width: geometry.width
     height: geometry.height
-    x: geometry.x
-    y: geometry.y
+    x:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).x
+    y:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).y
+    Behavior on width { NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
+    Behavior on height { NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
     radius: !surface.dockFrameVisible ? 0 : Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
     onRadiusChanged: surface.refreshInputMask()
     color: surface.dockFrameVisible ? surface.popupColors.background : "transparent"
@@ -194,25 +249,42 @@ PanelWindow {
           target: surface
           function onDockSideChanged() { dockViewport.cancelFlick(); dockViewport.contentX = 0; dockViewport.contentY = 0 }
         }
-        Grid {
+        Item {
           id: dockRow
-          columns: surface.verticalDock ? 1 : surface.groups.length + 1
-          rowSpacing: surface.metrics.sm
-          columnSpacing: surface.metrics.sm
+          readonly property real step:44+surface.metrics.sm
+          implicitWidth:surface.verticalDock ? 44 : shelfModel.activeKeys.length*step+32
+          implicitHeight:surface.verticalDock ? shelfModel.activeKeys.length*step+32 : 44
+          width:implicitWidth; height:implicitHeight
           Repeater {
             id: dockIcons
-            model: surface.groups
-            delegate: StashIcon {
-              required property var modelData
-              group: modelData
+            model: shelfModel
+            delegate: StashAnimatedIcon {
+              required property string groupKey
+              required retiring
+              readonly property int liveIndex:shelfModel.activeKeys.indexOf(groupKey)
+              property int lastSlot:0
+              onLiveIndexChanged:if (liveIndex>=0) lastSlot=liveIndex
+              x:surface.verticalDock ? 0 : Math.max(0,liveIndex>=0 ? liveIndex : lastSlot)*dockRow.step
+              y:surface.verticalDock ? Math.max(0,liveIndex>=0 ? liveIndex : lastSlot)*dockRow.step : 0
+              Behavior on x { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
+              Behavior on y { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
+              group:shelfModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
+              animations:surface.animations
+              onExited:function(frames) { surface.recordExit("dock",groupKey,frames) }
+              Component.onCompleted: { surface.createdShelfIcons++; if (liveIndex>=0) lastSlot=liveIndex }
+              enabled:!retiring && surface.config.presentation==="dock"
               frameVisible: surface.config.iconFrame !== "hidden"
               iconShape: surface.config.iconShape || "auto"
               onActivated: surface.stash.selectGroup(group, surface.screen.name)
               onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
             }
           }
-          StashButton {
+          StashButton { animations:surface.animations;
             id: dockMore
+            x:surface.verticalDock ? 0 : shelfModel.activeKeys.length*dockRow.step
+            y:surface.verticalDock ? shelfModel.activeKeys.length*dockRow.step : 0
+            Behavior on x { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
+            Behavior on y { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
             iconText: "󰇙"; width: surface.verticalDock ? 44 : 32; height: surface.verticalDock ? 32 : 44
             focusable: true
             foreground: surface.popupColors.text
@@ -225,12 +297,21 @@ PanelWindow {
   }
   Repeater {
     id: bubbles
-    model: surface.bubbleMode ? surface.groups : []
-    delegate: StashIcon {
+    model: bubblesModel
+    delegate: StashAnimatedIcon {
       id: bubbleIcon
-      required property var modelData
+      required property string groupKey
+      required retiring
       required property int index
-      group: modelData
+      group:bubblesModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
+      animations:surface.animations
+      onExited:function(frames) { surface.recordExit("bubbles",groupKey,frames) }
+      enabled:!retiring && surface.bubbleMode
+      onRetiringChanged: {
+        if (retiring) { bubbleXAnimation.stop(); bubbleYAnimation.stop() }
+        else place()
+        surface.refreshInputMask()
+      }
       bubble: true
       frameVisible: surface.config.iconFrame !== "hidden"
       onFrameVisibleChanged: surface.refreshInputMask()
@@ -241,17 +322,18 @@ PanelWindow {
       onYChanged: surface.refreshInputMask()
       positionHeld: held
       positionAnimating: bubbleXAnimation.running || bubbleYAnimation.running
-      Behavior on x { enabled:bubbleIcon.motionReady && !bubbleIcon.held
+      Behavior on x { enabled:Motion.full(bubbleIcon.animations) && bubbleIcon.motionReady && !bubbleIcon.held
         NumberAnimation { id:bubbleXAnimation; duration:240; easing.type:Easing.OutCubic } }
-      Behavior on y { enabled:bubbleIcon.motionReady && !bubbleIcon.held
+      Behavior on y { enabled:Motion.full(bubbleIcon.animations) && bubbleIcon.motionReady && !bubbleIcon.held
         NumberAnimation { id:bubbleYAnimation; duration:240; easing.type:Easing.OutCubic } }
       property Region hitRegion: StashIconRegion {
-        originX:bubbleIcon.x; originY:bubbleIcon.y; size:bubbleIcon.width
+        originX:bubbleIcon.x; originY:bubbleIcon.y; size:bubbleIcon.retiring ? 0 : bubbleIcon.width
         cornerRadius:bubbleIcon.hitRadius; iconShape:bubbleIcon.inputShape
       }
       function place() {
-        if (held || !surface.bubbleTargets[index]) return
-        var position = surface.bubbleTargets[index]
+        var at=bubblesModel.activeKeys.indexOf(groupKey)
+        if (held || retiring || at<0 || !surface.bubbleTargets[at]) return
+        var position = surface.bubbleTargets[at]
         x = position[0]; y = position[1]
       }
       onDragHeld: function(pressed) {
@@ -263,10 +345,10 @@ PanelWindow {
       onActivated: surface.stash.selectGroup(group, surface.screen.name)
       onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
       onMoved: function(dx, dy) { x = Math.max(0, Math.min(surface.width - width, x + dx)); y = Math.max(24, Math.min(surface.height - height, y + dy)) }
-      onDragFinished: surface.finishBubbleMove(group.key,index,x,y)
+      onDragFinished: surface.finishBubbleMove(group.key,x,y)
       Component.onCompleted: {
         surface.createdBubbles++
-        var initial=Model.bubblePosition(surface.savedPositions[group.key],index,surface.width,surface.height,surface.groups.length)
+        var initial=Model.bubblePosition(surface.savedPositions[group.key],Math.max(0,bubblesModel.activeKeys.indexOf(groupKey)),surface.canvasWidth,surface.canvasHeight,bubblesModel.activeKeys.length)
         x=initial[0]; y=initial[1]
         Qt.callLater(function() { bubbleIcon.motionReady=true; bubbleIcon.place() })
         var next = surface.bubbleRegions.slice(); next.push(hitRegion); surface.bubbleRegions = next
@@ -278,6 +360,10 @@ PanelWindow {
       Connections {
         target: surface
         function onBubbleTargetsChanged() { bubbleIcon.place() }
+        function onAnimationsChanged() {
+          if (!Motion.full(surface.animations)) { bubbleXAnimation.complete(); bubbleYAnimation.complete() }
+          bubbleIcon.place()
+        }
       }
     }
   }
@@ -285,7 +371,9 @@ PanelWindow {
   StashFloatingDock {
     id:floatingDock
     onInputChanged: surface.refreshInputMask()
-    anchors.fill:parent
+    onIconExited:function(key,frames) { surface.recordExit("floating",key,frames) }
+    width:surface.canvasWidth
+    height:surface.canvasHeight
     stash:surface.stash
     hostWindow:surface
     monitor:surface.monitor
@@ -304,16 +392,19 @@ PanelWindow {
   }
   Ui.BorderSurface {
     id: dialog
-    visible: surface.dialogOpen
-    x: (surface.width - width) / 2
-    y: Math.max(surface.metrics.popupPadding, (surface.height - height) / 2)
-    width: Math.min(Style.space(560), surface.width - surface.metrics.popupPadding * 2)
-    height: Math.min(surface.height - surface.metrics.popupPadding * 2,
+    visible:surface.dialogOpen || surface.dialogReveal>0
+    enabled:surface.dialogOpen
+    opacity:surface.dialogReveal
+    scale:Motion.full(surface.animations) ? 0.97+surface.dialogReveal*0.03 : 1
+    x: (surface.canvasWidth - width) / 2
+    y: Math.max(surface.metrics.popupPadding, (surface.canvasHeight - height) / 2)
+    width: Math.min(Style.space(560), surface.canvasWidth - surface.metrics.popupPadding * 2)
+    height: Math.min(surface.canvasHeight - surface.metrics.popupPadding * 2,
       contents.implicitHeight + surface.metrics.popupPadding * 2 + borderTop + borderBottom)
     radius: Style.cornerRadius
     color: surface.popupColors.background
     borderSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
-    focus: visible
+    focus: surface.dialogOpen
     onVisibleChanged: if (visible) Qt.callLater(function() {
       if (search.visible) search.forceActiveFocus()
       else dialog.forceActiveFocus()
@@ -331,7 +422,7 @@ PanelWindow {
       RowLayout {
         Layout.fillWidth: true
         Text {
-          text: surface.stash.dialogKind === "settings" ? "Window Stash settings" : surface.stash.dialogKind === "picker" ? "Stashed windows" : "Window Stash"
+          text: surface.renderDialogKind === "settings" ? "Window Stash settings" : surface.renderDialogKind === "picker" ? "Stashed windows" : "Window Stash"
           textFormat: Text.PlainText
           color: surface.popupColors.text
           font.family: surface.fonts.family
@@ -339,7 +430,7 @@ PanelWindow {
           font.bold: true
           Layout.fillWidth: true
         }
-        StashActionButton {
+        StashActionButton { animations:surface.animations;
           iconText: "󰅖"
           tooltipText: "Close"
           focusable: true
@@ -359,11 +450,11 @@ PanelWindow {
       }
       Ui.TextField {
         id: search
-        visible: surface.stash.dialogKind === "picker"
+        visible: surface.renderDialogKind === "picker"
         Layout.fillWidth: true
         foreground: surface.popupColors.text
         placeholderText: "Find by title or app…"
-        text: surface.stash.dialogQuery
+        text: surface.renderDialogQuery
         onTextEdited: surface.stash.dialogQuery = text
         Keys.onDownPressed: picker.incrementCurrentIndex()
         Keys.onUpPressed: picker.decrementCurrentIndex()
@@ -372,15 +463,16 @@ PanelWindow {
       }
       ListView {
         id: picker
-        visible: surface.stash.dialogKind === "picker"
+        visible: surface.renderDialogKind === "picker"
         Layout.fillWidth: true
         Layout.preferredHeight: Math.min(Style.space(360), contentHeight)
         clip: true; spacing: surface.metrics.labelGap; currentIndex: 0
-        model: surface.stash.dialogWindows.filter(function(w) {
-          return (w.title + " " + w.app).toLowerCase().indexOf(surface.stash.dialogQuery.toLowerCase()) >= 0
-            && surface.stash.snapshot.windows.some(function(live) { return live.id === w.id })
+        model: surface.renderDialogWindows.filter(function(w) {
+          return (w.title + " " + w.app).toLowerCase().indexOf(surface.renderDialogQuery.toLowerCase()) >= 0
+            && (!surface.dialogOpen || surface.stash.snapshot.windows.some(function(live) { return live.id === w.id }))
         })
         delegate: StashWindowRow {
+          animations:surface.animations
           required property var modelData
           required property int index
           width: picker.width
@@ -410,41 +502,42 @@ PanelWindow {
         font.pixelSize: surface.fonts.body
       }
       ColumnLayout {
-        visible: surface.stash.dialogKind === "menu"
+        visible: surface.renderDialogKind === "menu"
         Layout.fillWidth: true
-        StashButton { id: restoreHereButton; text: "Restore here"; visible: surface.stash.dialogWindows.length > 0; Layout.fillWidth: true
+        StashButton { animations:surface.animations; id: restoreHereButton; text: "Restore here"; visible: surface.renderDialogWindows.length > 0; Layout.fillWidth: true
           leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: {
-            if (surface.stash.dialogWindows.length === 1) surface.stash.restoreWindow(surface.stash.dialogWindows[0].id, "current")
+            if (surface.renderDialogWindows.length === 1) surface.stash.restoreWindow(surface.renderDialogWindows[0].id, "current")
             else {
-              surface.stash.openDialog("picker", surface.screen.name, surface.stash.dialogWindows, surface.stash.dialogGroup)
+              surface.stash.openDialog("picker", surface.screen.name, surface.renderDialogWindows, surface.stash.dialogGroup)
               surface.stash.dialogDestination = "current"
             }
           }
         }
-        StashButton { id: restoreOriginalButton; text: "Restore to original workspace"; visible: surface.stash.dialogWindows.length > 0; Layout.fillWidth: true
+        StashButton { animations:surface.animations; id: restoreOriginalButton; text: "Restore to original workspace"; visible: surface.renderDialogWindows.length > 0; Layout.fillWidth: true
           leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: {
-            if (surface.stash.dialogWindows.length === 1) surface.stash.restoreWindow(surface.stash.dialogWindows[0].id, "original")
+            if (surface.renderDialogWindows.length === 1) surface.stash.restoreWindow(surface.renderDialogWindows[0].id, "original")
             else {
-              surface.stash.openDialog("picker", surface.screen.name, surface.stash.dialogWindows, surface.stash.dialogGroup)
+              surface.stash.openDialog("picker", surface.screen.name, surface.renderDialogWindows, surface.stash.dialogGroup)
               surface.stash.dialogDestination = "original"
             }
           }
         }
-        StashButton { text: "All stashed windows"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
+        StashButton { animations:surface.animations; text: "All stashed windows"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }
-        StashButton { id: settingsButton; text: "Settings"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
+        StashButton { animations:surface.animations; id: settingsButton; text: "Settings"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.openDialog("settings", surface.screen.name, [], null) }
       }
       ColumnLayout {
-        visible: surface.stash.dialogKind === "settings"
+        visible: surface.renderDialogKind === "settings"
         Layout.fillWidth: true; spacing: surface.metrics.panelGap
         Repeater {
           id: settingRows
           model: [
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
               labels:["Static dock","Floating bubbles","Floating dock"]},
+            {key:"animations", label:"Animations", values:["full","reduced","off"], labels:["Full","Reduced","Off"]},
             {key:"iconFrame", label:"Icon border/background", values:["shown","hidden"], labels:["Shown","Hidden (larger icons)"]},
             {key:"dockFrame", label:"Dock border/background", values:["shown","hidden"], labels:["Shown","Hidden"]},
             {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
@@ -519,7 +612,7 @@ PanelWindow {
           font.family: surface.fonts.family
           font.pixelSize: surface.fonts.caption
         }
-        StashButton { text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
+        StashButton { animations:surface.animations; text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }
       }
     }

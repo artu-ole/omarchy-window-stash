@@ -115,7 +115,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown"))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full"))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")
@@ -171,6 +171,15 @@ class ControllerTests(unittest.TestCase):
         self.settings(iconFrame=False, dockFrame="invalid")
         self.assertEqual(self.stash.settings()["iconFrame"], "shown")
         self.assertEqual(self.stash.settings()["dockFrame"], "shown")
+
+    def test_animation_modes_default_and_validation(self):
+        self.assertEqual(self.stash.settings()["animations"], "full")
+        for mode in ("full", "reduced", "off"):
+            self.settings(animations=mode, presentation="floating", iconFrame="hidden")
+            self.assertEqual(self.stash.settings()["animations"], mode)
+            self.assertEqual(self.stash.settings()["iconFrame"], "hidden")
+        self.settings(animations="invalid")
+        self.assertEqual(self.stash.settings()["animations"], "full")
 
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]

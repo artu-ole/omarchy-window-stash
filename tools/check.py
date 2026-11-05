@@ -22,6 +22,7 @@ print('Publishing metadata and documents passed',flush=True)
 
 run('python3','-m','unittest','discover','-s','tests','-v')
 run('node','tests/model.test.cjs')
+run('python3','tests/collection_model.py')
 run('omarchy','plugin','validate',str(ROOT))
 with tempfile.TemporaryDirectory(prefix='window-stash-qml-') as directory:
     qs=Path(directory)/'qs';qs.mkdir()

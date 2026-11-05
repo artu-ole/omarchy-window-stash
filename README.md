@@ -94,9 +94,19 @@ directly, and grabbing an item during its glide stops the animation. Switching t
 items anywhere. Dragged resting positions are remembered per monitor. The
 setting also applies to older configurations, which default to edge snapping.
 
-Opening and closing use eased reveal/fade motion while icons stay at their
-natural size. Changes to the list animate without recreating unchanged icons
-or resetting scroll position. Artwork is centered on the display's pixel grid;
+**Animations** offers **Full** (the default), **Reduced**, and **Off** in settings.
+Full uses short eased fades and subtle settling for arriving/departing icons,
+smooth list reflow and dock resizing, stack artwork crossfades, count badges,
+and dialog opening/closing. Hover and press feedback follow the same setting.
+Reduced keeps short fades and color feedback without movement or scaling;
+Off makes the plugin's transitions immediate. Dragging follows the pointer in
+all modes; edge placement still applies when animations are disabled.
+
+Unchanged icons retain their identity during refreshes and reordering. A quick
+reversal can bring back an outgoing icon without rebuilding it. Restoring a
+window releases its icon's input immediately while the visual finishes fading;
+the final icon also fades before the empty overlay disappears. Switching modes
+settles motion already in progress. Artwork is centered on the display's pixel grid;
 borders and count badges stay inside their tiles. Counts above 99 show `99+`.
 Both docks use compact outer padding and tight icon spacing. App artwork fills
 more of each tile while keeping clearance from rounded and circular borders.
@@ -279,7 +289,8 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "dockCorners": "theme",
   "dockCornerRadius": 12,
   "iconFrame": "shown",
-  "dockFrame": "shown"
+  "dockFrame": "shown",
+  "animations": "full"
 }
 ```
 
@@ -297,6 +308,7 @@ floating dock. The static dock keeps its separate side setting.
 integer from 0 to 64 (default 12), applied in custom mode.
 `iconFrame` and `dockFrame` each accept `shown` (default) or `hidden`. Icon frames
 apply to all presentations; dock frames apply to the static and floating docks.
+`animations` accepts `full` (default), `reduced`, or `off`.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
@@ -310,6 +322,7 @@ omarchy-shell window-stash configure dockCorners custom
 omarchy-shell window-stash configure dockCornerRadius 12
 omarchy-shell window-stash configure iconFrame hidden
 omarchy-shell window-stash configure dockFrame hidden
+omarchy-shell window-stash configure animations reduced
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -359,19 +372,23 @@ python3 tests/floating_placement.py
 python3 tests/dock_corners.py
 python3 tests/frame_visibility.py
 python3 tests/hover_feedback.py
+python3 tests/animation_modes.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
 introspection (`python-gobject` and `gtk4` on Arch), `wtype`, `notify-send`
 (`libnotify` on Arch), `grim` for the
 themed UI screenshot, and the installed plugin. The non-graphical checks need
-Node.js, Qt6 `qmllint`, and Omarchy's validator (which uses `jq`). They use disposable Wayland
-and XWayland windows, temporary virtual outputs, and restore the original focus
-and settings in cleanup. Run them with an empty stash. The keyboard test
+Node.js, Qt6 `qmllint`, `qs` for an offscreen native collection test, and
+Omarchy's validator (which uses `jq`). The offscreen test creates no desktop
+windows and verifies delegate identity, revival, and timed cleanup.
+
+Live suites use disposable Wayland and XWayland windows and temporary virtual
+outputs, and restore the original focus and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width, floating-dock, static-dock-side, floating-placement, dock-corner, and
-frame-visibility and hover-feedback regressions use isolated workspaces and
+The scrolling-width, floating-dock, static-dock-side, floating-placement,
+dock-corner, frame-visibility, hover-feedback, and animation-mode regressions use isolated workspaces and
 temporary virtual outputs and preserve existing stash entries. The dock-side
 test also uses `qs` to create a temporary bar on its virtual output. The width test
 checks the source controller by default;

@@ -11,6 +11,7 @@ Ui.CursorSurface {
   readonly property var popupColors: Commons.Color.popups
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
+  property string animations:"full"
   required property var windowData
   signal activated()
   signal contextRequested()
@@ -20,7 +21,7 @@ Ui.CursorSurface {
   layer.enabled: true
   layer.smooth: true
   layer.effect: StashHoverEffect { feedback:interaction }
-  StashFeedback { id:interaction; hot:row.hasCursor || row.current; down:pointer.pressed; pressDepth:0.02 }
+  StashFeedback { id:interaction; animations:row.animations; hot:row.hasCursor || row.current; down:pointer.pressed; pressDepth:0.02 }
 
   RowLayout {
     anchors.fill: parent

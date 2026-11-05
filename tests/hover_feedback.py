@@ -54,7 +54,7 @@ def main():
 
     try:
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial snapshot missing')
-        configure('scope','workspace');configure('grouping','window');configure('presentation','dock')
+        configure('animations','full');configure('scope','workspace');configure('grouping','window');configure('presentation','dock')
         configure('dockSide','bottom');configure('dockFrame','hidden');configure('iconShape','square')
         h.dispatch('focus',workspace=str(workspace))
         windows=[spawn(app) for app in ('org.gnome.Nautilus','org.gnome.Nautilus','org.chromium.Chromium')]
@@ -63,7 +63,7 @@ def main():
         def icon():return surface()['shelf']['icons'][0]
         for mode in ('shown','hidden'):
             configure('iconFrame',mode);away()
-            wait(lambda:icon()['appearance']['feedback']['hover']<.001,'Idle hover did not clear')
+            wait(lambda:icon()['appearance']['presence']>.999 and not surface()['motion']['shelfBusy'] and icon()['appearance']['feedback']['hover']<.001,'Idle hover did not clear')
             time.sleep(.15)
             r=icon();idle=capture(r,mode+'-idle');initial=geom(r);art=r['appearance']['artwork']
             hover(r)

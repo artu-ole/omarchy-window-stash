@@ -209,3 +209,18 @@ function dockRadius(mode, custom, theme, width, height) {
     ? custom : theme
   return Math.max(0,Math.min(radius,width/2,height/2))
 }
+
+// Preserve retiring slots while merging new keys and ordering the active ones.
+function reconcileKeys(previous, desired) {
+  var result=previous.slice()
+  desired.forEach(function(key,index) {
+    if (result.indexOf(key)>=0) return
+    var slots=[]
+    result.forEach(function(old,i) { if (desired.indexOf(old)>=0) slots.push(i) })
+    result.splice(index<slots.length ? slots[index] : slots.length ? result.length : 0,0,key)
+  })
+  var active=[]
+  result.forEach(function(key,i) { if (desired.indexOf(key)>=0) active.push(i) })
+  active.forEach(function(at,i) { result[at]=desired[i] })
+  return result
+}

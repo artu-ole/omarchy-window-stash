@@ -5,6 +5,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
 import "Model.js" as Model
+import "Motion.js" as Motion
 
 Ui.BorderSurface {
   id: icon
@@ -12,6 +13,15 @@ Ui.BorderSurface {
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   required property var group
+  property string animations:"full"
+  property real presence:1
+  property bool retiring:false
+  property int presenceFrames:0
+  readonly property bool artworkAnimating:image.animating
+  onPresenceChanged:if (presence>0 && presence<1) presenceFrames++
+  onAnimationsChanged:if (animations==="off") {
+    frameColorAnimation.complete(); artworkScaleAnimation.complete(); badgeRevealAnimation.complete()
+  }
   property bool frameVisible: true
   readonly property string inputShape: frameVisible ? iconShape : "square"
   property bool bubble: false
@@ -37,7 +47,7 @@ Ui.BorderSurface {
   layer.enabled: true
   layer.smooth: true
   layer.effect: StashHoverEffect { feedback:interaction }
-  StashFeedback { id:interaction; hot:icon.hot; down:icon.down }
+  StashFeedback { id:interaction; hot:icon.hot; down:icon.down; presence:icon.presence; animations:icon.animations }
   property color frameColor: !frameVisible ? "transparent" : down ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
     : hot ? Style.hoverFillFor(icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? icon.popupColors.background : "transparent"
@@ -50,14 +60,14 @@ Ui.BorderSurface {
     Border.right(normalBorder), Border.top(normalBorder), Border.bottom(normalBorder),
     Border.left(hoverBorder), Border.right(hoverBorder), Border.top(hoverBorder), Border.bottom(hoverBorder)))
   function appearance() {
-    return {width:width,height:height,frameVisible:frameVisible,background:String(frameColor),feedback:interaction.details(),
+    return {width:width,height:height,frameVisible:frameVisible,enabled:enabled,background:String(frameColor),presence:presence,retiring:retiring,presenceFrames:presenceFrames,feedback:interaction.details(),
       borderWidth:Math.max(Border.left(frameBorder),Border.right(frameBorder),Border.top(frameBorder),Border.bottom(frameBorder)),
-      artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale},
+      artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale,animating:image.animating,blend:image.mix},
       badge:{visible:badge.visible,x:badge.x,y:badge.y,width:badge.width,height:badge.height}}
   }
   color: iconShape === "squircle" ? "transparent" : frameColor
   borderSpec: iconShape === "squircle" ? Border.none() : frameBorder
-  Behavior on frameColor { ColorAnimation { duration: 120 } }
+  Behavior on frameColor { ColorAnimation { id:frameColorAnimation; duration: Motion.duration(icon.animations,120,90) } }
   Loader {
     anchors.fill: parent
     active: icon.frameVisible && icon.iconShape === "squircle"
@@ -68,17 +78,17 @@ Ui.BorderSurface {
   }
   readonly property var desktop: DesktopEntries.heuristicLookup(String(group.app || ""))
   readonly property string appIcon: desktop && desktop.icon ? String(desktop.icon) : "application-x-executable"
-  Image {
+  StashArtwork {
     id: image
+    animations:icon.animations
     anchors.centerIn: parent
     width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio, !icon.frameVisible)
     height: width
-    scale: !icon.frameVisible && icon.hot ? 1.04 : 1
-    Behavior on scale { NumberAnimation { duration:140; easing.type:Easing.OutCubic } }
+    scale: Motion.full(icon.animations) && !icon.frameVisible && icon.hot ? 1.04 : 1
+    Behavior on scale { NumberAnimation { id:artworkScaleAnimation; duration:Motion.move(icon.animations); easing.type:Easing.OutCubic } }
     source: Quickshell.iconPath(icon.appIcon, true)
     sourceSize.width: Math.round(width * Screen.devicePixelRatio)
     sourceSize.height: Math.round(height * Screen.devicePixelRatio)
-    fillMode: Image.PreserveAspectFit
   }
   Text {
     anchors.centerIn: parent
@@ -90,7 +100,14 @@ Ui.BorderSurface {
   }
   Rectangle {
     id:badge
-    visible: icon.group.windows.length > 1
+    readonly property int actualCount:icon.group.windows.length
+    property int shownCount:actualCount>1 ? actualCount : 2
+    onActualCountChanged:if (actualCount>1) shownCount=actualCount
+    property real reveal:actualCount>1 ? 1 : 0
+    visible:reveal>0
+    opacity:reveal
+    scale:Motion.full(icon.animations) ? 0.8+reveal*0.2 : 1
+    Behavior on reveal { NumberAnimation { id:badgeRevealAnimation; duration:Motion.duration(icon.animations,160,100); easing.type:Easing.OutCubic } }
     width: Math.min(icon.width - inset * 2, Math.max(Style.space(18), countText.implicitWidth + icon.metrics.sm * 2))
     height: Math.min(icon.height - inset * 2, Math.max(Style.space(18), icon.fonts.caption + icon.metrics.xxs * 2))
     readonly property real inset: icon.hitRadius >= icon.width / 2 ? Math.ceil(icon.width * 0.12) : 2
@@ -107,7 +124,7 @@ Ui.BorderSurface {
       verticalAlignment:Text.AlignVCenter
       fontSizeMode:Text.Fit
       minimumPixelSize:5
-      text: icon.group.windows.length > 99 ? "99+" : icon.group.windows.length
+      text: badge.shownCount > 99 ? "99+" : badge.shownCount
       textFormat: Text.PlainText
       color: Commons.Color.background
       font.family: icon.fonts.family

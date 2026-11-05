@@ -62,6 +62,7 @@ def main():
             raise
 
     try:
+        configure("animations","full")
         configure("floatingPlacement","free")
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial controller snapshot did not load')
         configure('floatingDirection','vertical')
@@ -81,7 +82,7 @@ def main():
         configure('iconShape','squircle')
         h.dispatch('focus',workspace=str(workspace))
         one=spawn('Stash floating one %s'%os.getpid());park(one)
-        wait(lambda:dock()['active'] and dock()['windows']==1,'Single floating icon missing')
+        wait(lambda:dock()['active'] and dock()['windows']==1 and not dock()['animating'] and not dock()['snapping'],'Single floating icon missing')
         assert not dock()['expanded'] and not surface()['bubbles']
         click(dock()['handle'])
         wait(lambda:not any(w['address']==one for w in command('list')['windows']),'Single icon did not restore immediately')

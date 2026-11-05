@@ -70,7 +70,9 @@ def main():
         print('PASS two independent native frame selectors and larger centered frameless artwork',flush=True)
 
         for side in ('bottom','left'):
-            configure('dockSide',side);configure('dockFrame','shown');p=surface()['shelf'];shown=rect(p)
+            configure('dockSide',side);configure('dockFrame','shown')
+            wait(lambda:not surface()['shelf']['animating'],'Static dock did not settle')
+            p=surface()['shelf'];shown=rect(p)
             configure('dockFrame','hidden');assert rect(surface()['shelf'])==shown,'Hiding dock frame moved icons'
             hidden_panel(surface()['shelf'])
             for icons in ('shown','hidden'):
@@ -78,7 +80,7 @@ def main():
                 if icons=='hidden':
                     for icon in surface()['shelf']['icons']:bare(icon['appearance'])
             click(surface()['shelf']['more']);wait(lambda:shell('status')['dialog']=='menu','Frameless dock menu failed');shell('dismiss')
-        configure('dockSide','bottom');screenshot(surface()['shelf'],'/tmp/stash-frameless-static.png')
+        configure('dockSide','bottom');wait(lambda:not surface()['shelf']['animating'],'Bottom dock did not settle');screenshot(surface()['shelf'],'/tmp/stash-frameless-static.png')
         click(surface()['shelf']['icons'][0]);wait(lambda:surface()['groups']==2,'Frameless static icon did not restore');park(windows[-1],3)
         print('PASS independent icon/dock frames, unchanged static positions, menu and restore',flush=True)
 

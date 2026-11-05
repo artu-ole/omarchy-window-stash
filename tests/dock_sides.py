@@ -39,8 +39,9 @@ def main():
         addresses.append(c['address']);return c['address']
     def park(address,count):
         command('minimize','--address',address)
-        wait(lambda:surface()['groups']==count,'Dock group count did not settle')
+        wait(lambda:surface()['groups']==count and not surface()['shelf']['animating'] and not surface()['motion']['shelfBusy'],'Dock group count did not settle')
     def bounds(side):
+        wait(lambda:not surface()['shelf']['animating'],'Dock resize did not settle')
         s=surface();p=s['shelf'];a=s['usableArea']
         assert p['side']==side
         assert p['x']>=a['x'] and p['y']>=a['y'],s
