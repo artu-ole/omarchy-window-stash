@@ -110,7 +110,9 @@ omarchy-shell window-stash configure animations reduced
 | `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
 
 Frames can be hidden independently. Automatic shapes and theme corners follow
-the desktop; custom choices persist when their frames are hidden. Placement
+the desktop; custom choices persist when their frames are hidden. Rounded docks
+reserve space at their ends so large radii keep icons intact without increasing
+dock thickness. Placement
 still applies with animations off. Changes take effect without a shell restart.
 
 ## Restoration contract

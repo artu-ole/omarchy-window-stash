@@ -139,6 +139,7 @@ PanelWindow {
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
         borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
+        insets:{left:shelf.insetLeft,right:shelf.insetRight,top:shelf.insetTop,bottom:shelf.insetBottom},
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
         icons:shelfIcons(false),exitingIcons:shelfIcons(true),progress:shelf.reveal,
@@ -207,14 +208,23 @@ PanelWindow {
     readonly property real frameRight: Border.right(frameSpec)
     readonly property real frameTop: Border.top(frameSpec)
     readonly property real frameBottom: Border.bottom(frameSpec)
+    readonly property real crossInset:surface.metrics.xxs + (surface.verticalDock ? Math.min(frameLeft,frameRight) : Math.min(frameTop,frameBottom))
+    readonly property real thickness:44 + surface.metrics.xxs*2 + (surface.verticalDock ? frameLeft+frameRight : frameTop+frameBottom)
+    readonly property real targetRadius:Model.dockRadius(surface.config.dockCorners,surface.config.dockCornerRadius,Style.cornerRadius,thickness,thickness)
+    readonly property real endInset:Model.dockEndInset(targetRadius,crossInset,Math.max(frameLeft,frameRight,frameTop,frameBottom))
+    // Retain these insets when the frame is hidden so toggling it keeps positions.
+    readonly property real insetLeft:Math.max(surface.metrics.xxs+frameLeft,surface.verticalDock ? 0 : endInset)
+    readonly property real insetRight:Math.max(surface.metrics.xxs+frameRight,surface.verticalDock ? 0 : endInset)
+    readonly property real insetTop:Math.max(surface.metrics.xxs+frameTop,surface.verticalDock ? endInset : 0)
+    readonly property real insetBottom:Math.max(surface.metrics.xxs+frameBottom,surface.verticalDock ? endInset : 0)
     property real reveal:surface.config.presentation==="dock" && surface.groups.length>0 ? 1 : 0
     visible:shelfModel.count>0 || reveal>0
     enabled:surface.config.presentation==="dock" && surface.groups.length>0
     opacity:reveal
     Behavior on reveal { NumberAnimation { id:shelfRevealAnimation; duration:Motion.duration(surface.animations,180,100); easing.type:Easing.OutCubic } }
     readonly property var geometry: Model.staticDockRect(surface.usableArea, surface.dockSide,
-      dockRow.implicitWidth + surface.metrics.xxs * 2 + frameLeft + frameRight,
-      dockRow.implicitHeight + surface.metrics.xxs * 2 + frameTop + frameBottom,
+      dockRow.implicitWidth + insetLeft + insetRight,
+      dockRow.implicitHeight + insetTop + insetBottom,
       Math.max(Style.gapsOut, surface.metrics.lg), surface.metrics.popupPadding)
     width: geometry.width
     height: geometry.height
@@ -236,10 +246,10 @@ PanelWindow {
       Flickable {
         id: dockViewport
         anchors.fill: parent
-        anchors.leftMargin: surface.metrics.xxs + shelf.frameLeft
-        anchors.rightMargin: surface.metrics.xxs + shelf.frameRight
-        anchors.topMargin: surface.metrics.xxs + shelf.frameTop
-        anchors.bottomMargin: surface.metrics.xxs + shelf.frameBottom
+        anchors.leftMargin: shelf.insetLeft
+        anchors.rightMargin: shelf.insetRight
+        anchors.topMargin: shelf.insetTop
+        anchors.bottomMargin: shelf.insetBottom
         contentWidth: surface.verticalDock ? width : dockRow.implicitWidth
         contentHeight: surface.verticalDock ? dockRow.implicitHeight : height
         clip: true

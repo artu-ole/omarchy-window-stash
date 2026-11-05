@@ -49,6 +49,9 @@ Item {
   readonly property real gap: metrics.sm
   readonly property real inset: metrics.xxs + Math.max(Border.left(panelBorder), Border.right(panelBorder),
     Border.top(panelBorder), Border.bottom(panelBorder))
+  readonly property real targetRadius:Model.dockRadius(config.dockCorners,config.dockCornerRadius,Style.cornerRadius,44+inset*2+6,44+inset*2+6)
+  readonly property real endInset:Math.max(inset,Model.dockEndInset(targetRadius,inset,
+    Math.max(Border.left(panelBorder),Border.right(panelBorder),Border.top(panelBorder),Border.bottom(panelBorder))))
   readonly property int stackDepth: Math.min(3, displayWindows.length)
   readonly property int tail: Math.max(0, stackDepth - 1) * 4
   property real stackTail: tail
@@ -60,7 +63,7 @@ Item {
   readonly property var frontGroup: ({app:displayWindows.length ? displayWindows[0].app : "", windows:displayWindows,
     title:displayWindows.length === 1 ? displayWindows[0].title : displayWindows.length + " stashed windows · Click to expand"})
   readonly property var geometry: Model.floatingPanel(anchorX, anchorY, handle.height, width, height,
-    displayGroups.length, inset, gap, 44, horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight), expansionDirection, horizontal)
+    displayGroups.length, inset, gap, 44, horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight), expansionDirection, horizontal, endInset)
   property real panelExtent: horizontal ? geometry.width : geometry.height
   visible: present
   focus: open
@@ -146,7 +149,7 @@ Item {
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
       handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
-        borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
+        borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.down,right:geometry.right},
       footer:{x:footerPoint.x,y:footerPoint.y,width:footer.width,height:footer.height,feedback:footer.feedbackDetails()},
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons,exitingIcons:exiting}
@@ -188,7 +191,7 @@ Item {
       openingFrames=0
       syncGroups()
       expansionDirection=Model.floatingPanel(anchorX,anchorY,handle.height,width,height,
-        displayGroups.length,inset,gap,44,horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight),undefined,horizontal).forward
+        displayGroups.length,inset,gap,44,horizontal ? Math.ceil(footer.implicitWidth) : Math.ceil(footer.implicitHeight),undefined,horizontal,endInset).forward
       grabDelay.restart()
       Qt.callLater(function() { if (dock.open) dock.forceActiveFocus() })
     } else closingFrames=0
@@ -312,10 +315,10 @@ Item {
       border.width:dock.dockFrameVisible ? Math.max(Border.left(dock.panelBorder),Border.right(dock.panelBorder),Border.top(dock.panelBorder),Border.bottom(dock.panelBorder)) : 0
       GridLayout {
         columns:dock.horizontal ? 2 : 1
-        x:dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent+dock.inset : dock.inset
-        y:!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent+dock.inset : dock.inset
-        width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-dock.inset*2)
-        height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-dock.inset*2)
+        x:(dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent : 0)+(dock.horizontal ? dock.endInset : dock.inset)
+        y:(!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent : 0)+(dock.horizontal ? dock.inset : dock.endInset)
+        width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-(dock.horizontal ? dock.endInset : dock.inset)*2)
+        height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-(dock.horizontal ? dock.inset : dock.endInset)*2)
         rowSpacing:dock.gap
         columnSpacing:dock.gap
         ListView {

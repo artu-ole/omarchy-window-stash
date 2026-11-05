@@ -59,6 +59,7 @@ def main():
     try:
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot did not load')
         configure('presentation','dock');configure('scope','workspace');configure('grouping','window');configure('dockSide','bottom')
+        configure('dockFrame','shown');configure('dockCorners','custom');configure('dockCornerRadius',64)
         shell('settings')
         def control():return next(c for c in surface()['settingControls'] if c['key']=='dockSide')
         def ready():

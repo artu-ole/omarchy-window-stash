@@ -108,9 +108,10 @@ function floatingAnchor(saved, width, height) {
   return [Math.max(8, Math.min(width - 56, x)), Math.max(32, Math.min(height - 64, y))]
 }
 
-function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown, horizontal) {
+function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, buttonHeight, preferredDown, horizontal, endPadding) {
   var margin = 8, panelWidth = rowHeight + padding * 2 + 6
-  var desired = count * rowHeight + Math.max(0, count - 1) * gap + gap + buttonHeight + padding * 2
+  var ends = typeof endPadding === "number" ? Math.max(padding,endPadding) : padding
+  var desired = count * rowHeight + Math.max(0, count - 1) * gap + gap + buttonHeight + ends * 2
   if (horizontal) {
     var right = Math.max(0, width - margin - x - 48 - gap)
     var left = Math.max(0, x - gap - margin)
@@ -208,6 +209,14 @@ function dockRadius(mode, custom, theme, width, height) {
   var radius=mode === "custom" && typeof custom === "number" && isFinite(custom) && custom >= 0 && custom <= 64
     ? custom : theme
   return Math.max(0,Math.min(radius,width/2,height/2))
+}
+
+// Distance along a rounded end at the content's nearest cross-axis edge.
+// Keep the entire rectangular icon/button inside the border's inner arc.
+function dockEndInset(radius, crossInset, border) {
+  var inner=Math.max(0,radius-border)
+  var offset=Math.max(0,Math.min(inner,radius-crossInset))
+  return Math.ceil(border+inner-Math.sqrt(Math.max(0,inner*inner-offset*offset)))
 }
 
 // Preserve retiring slots while merging new keys and ordering the active ones.

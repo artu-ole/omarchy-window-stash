@@ -38,6 +38,17 @@ def main():
     def park(address,count):
         command('minimize','--address',address)
         wait(lambda:surface()['groups']==count,'Dock count did not settle')
+    def settled_static():
+        return wait(lambda:surface()['shelf'] if not surface()['shelf']['animating'] and not surface()['motion']['shelfBusy'] else None,'Static dock did not settle')
+    def inside(panel,rect):
+        border=panel['borderWidth'];r=max(0,panel['radius']-border)
+        left=panel['x']+border;top=panel['y']+border
+        right=panel['x']+panel['width']-border;bottom=panel['y']+panel['height']-border
+        for x in (rect['x'],rect['x']+rect['width']):
+            for y in (rect['y'],rect['y']+rect['height']):
+                assert left-.01<=x<=right+.01 and top-.01<=y<=bottom+.01,(panel,rect)
+                cx=max(left+r,min(right-r,x));cy=max(top+r,min(bottom-r,y))
+                assert (x-cx)**2+(y-cy)**2<=r*r+.05,('Rounded border cuts a tile',panel,rect)
     def radius(rect,value):
         assert abs(rect['radius']-min(value,rect['width']/2,rect['height']/2))<.01,rect
     def screenshot(rect,name):
@@ -46,12 +57,12 @@ def main():
     try:
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial snapshot missing')
         configure('presentation','dock');configure('dockSide','bottom');configure('scope','workspace');configure('grouping','window')
-        configure('dockFrame','shown');configure('iconFrame','shown')
+        configure('animations','full');configure('dockFrame','shown');configure('iconFrame','shown');configure('iconShape','square')
         configure('dockCorners','theme');configure('dockCornerRadius',12)
         h.dispatch('focus',workspace=str(workspace))
         windows=[spawn() for _ in range(3)]
         for i,address in enumerate(windows):park(address,i+1)
-        theme=surface()['theme']['radius'];radius(surface()['shelf'],theme)
+        theme=surface()['theme']['radius'];radius(settled_static(),theme)
         shell('settings')
         def control():return next(c for c in surface()['settingControls'] if c['key']=='dockCorners')
         def ready():
@@ -70,9 +81,18 @@ def main():
 
         for side in ('bottom','top','left','right'):
             configure('dockSide',side)
-            for value in (0,7,64):
-                configure('dockCornerRadius',value);radius(surface()['shelf'],value)
-        configure('dockSide','bottom');p=surface()['shelf']
+            thickness=None
+            for value in (0,7,24,64):
+                configure('dockCornerRadius',value);p=settled_static();radius(p,value)
+                minor=p['width'] if side in ('left','right') else p['height']
+                if thickness is None:thickness=minor
+                assert abs(minor-thickness)<.01,'Corner clearance thickened the static dock'
+                for frame in ('shown','hidden'):
+                    configure('iconFrame',frame)
+                    for icon in surface()['shelf']['icons']:inside(p,icon)
+                    inside(p,surface()['shelf']['more'])
+            configure('iconFrame','shown')
+        configure('dockSide','bottom');p=settled_static()
         screenshot(p,'/tmp/stash-custom-corners-static.png')
         under=spawn();target='address:'+under
         h.dispatch('window.float',window=target,action='on');h.dispatch('window.resize',window=target,x=640,y=420,relative=False)
@@ -83,7 +103,7 @@ def main():
         wait(lambda:h.client(under)['title'].endswith(' clicked'),'Rounded dock corner swallowed outside input')
         click(surface()['shelf']['icons'][0]);wait(lambda:surface()['groups']==2,'Rounded static dock icon did not restore')
         park(windows[-1],3)
-        print('PASS all static sides, square/custom/maximum radii, rounded corner passthrough and icon restore',flush=True)
+        print('PASS all static sides, square/frameless tile clearance, unchanged thickness, rounded corner passthrough and restore',flush=True)
 
         configure('presentation','floating')
         wait(lambda:dock()['active'] and dock()['handle']['opacity']>.99 and not dock()['snapping'] and not dock()['animating'],'Floating dock did not settle')
@@ -94,13 +114,18 @@ def main():
                 click(dock()['handle'])
                 d=wait(lambda:dock() if dock()['expanded'] and not dock()['animating'] else None,'Floating dock did not expand')
                 radius(d['panel'],value)
+                for frame in ('shown','hidden'):
+                    configure('iconFrame',frame)
+                    for icon in dock()['icons']:inside(d['panel'],icon)
+                    inside(d['panel'],dock()['footer'])
+                configure('iconFrame','shown')
                 if value==64:screenshot(d['panel'],'/tmp/stash-custom-corners-'+direction+'.png')
                 subprocess.run(['wtype','-k','Escape'],check=True)
                 wait(lambda:not dock()['expanded'] and not dock()['animating'],'Dock did not collapse')
         click(dock()['handle']);wait(lambda:dock()['expanded'] and not dock()['animating'],'Dock did not reopen')
         click(dock()['icons'][0]);wait(lambda:surface()['groups']==2,'Rounded floating dock icon did not restore')
         park(windows[-1],3)
-        print('PASS both floating directions, rounded content clipping, radius limits and icon restore',flush=True)
+        print('PASS both floating directions, full square/frameless tile clearance at maximum radius, and icon restore',flush=True)
 
         configure('presentation','dock');configure('dockCornerRadius',7)
         subprocess.run(['omarchy','restart','shell'],check=True)
@@ -112,8 +137,8 @@ def main():
         wait(loaded,'Custom dock radius did not persist after restart',timeout=15)
         h.dispatch('focus',monitor=monitor['name']);h.dispatch('focus',workspace=str(workspace))
         wait(lambda:surface()['groups']==3 and surface()['width']>100,'Restored dock did not map')
-        radius(surface()['shelf'],7)
-        configure('dockCorners','theme');radius(surface()['shelf'],surface()['theme']['radius'])
+        radius(settled_static(),7)
+        configure('dockCorners','theme');radius(settled_static(),surface()['theme']['radius'])
         assert shell('status')['settings']['dockCornerRadius']==7,'Theme mode discarded custom radius'
         assert not shell('status')['error'],shell('status')['error']
         print('PASS saved radius after restart and Follow desktop restores theme while retaining custom value',flush=True)

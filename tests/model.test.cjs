@@ -178,3 +178,26 @@ for(const [old,next] of [
 }
 assert.equal(ctx.reconcileKeys(['a','b','c'],['a','c']).join(','),'a,b,c')
 console.log('Model: stable keyed arrivals, retiring slots, reorder and revival passed')
+
+// Rectangular tiles must fit inside the inner rounded border at both ends.
+for (const thickness of [44,50,56,62]) for (const border of [0,1,2]) {
+  for (const crossInset of [border+1,border+2,border+3.5,8]) for (const requested of [0,7,12,24,64]) {
+    const radius=ctx.dockRadius('custom',requested,0,thickness,200)
+    const end=Math.max(crossInset,ctx.dockEndInset(radius,crossInset,border))
+    const inner=Math.max(0,radius-border),offset=Math.max(0,radius-crossInset)
+    const along=Math.max(0,radius-end)
+    assert.ok(offset*offset+along*along<=inner*inner+1e-6,
+      `Tile clips its rounded end: thickness=${thickness}, radius=${radius}, inset=${crossInset}`)
+    assert.ok(Number.isInteger(ctx.dockEndInset(radius,crossInset,border)))
+    if (radius<=crossInset) assert.equal(end,crossInset,'Small corners must keep compact spacing')
+  }
+}
+for (const horizontal of [false,true]) for (const count of [2,30]) {
+  const base=ctx.floatingPanel(300,300,56,1000,800,count,3,4,44,33,undefined,horizontal)
+  const inset=ctx.dockEndInset(28,3,1)
+  const safe=ctx.floatingPanel(300,300,56,1000,800,count,3,4,44,33,undefined,horizontal,inset)
+  assert.equal(horizontal?safe.height:safe.width,horizontal?base.height:base.width,'Rounded ends must not thicken the dock')
+  if (count===2) assert.equal(horizontal?safe.width-base.width:safe.height-base.height,(inset-3)*2)
+  assert.ok(safe.x>=8 && safe.y>=8 && safe.x+safe.width<=992 && safe.y+safe.height<=792)
+}
+console.log('Model: radius-aware end clearance protects square tiles without thickening docks or breaking overflow bounds')
