@@ -19,6 +19,7 @@ Item {
   required property var groups
   required property var windows
   property var savedPosition
+  signal inputChanged()
   property bool active: false
   property bool expanded: false
   property bool grabReady: false
@@ -121,10 +122,14 @@ Item {
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons}
   }
+  onAnchorXChanged: inputChanged()
+  onAnchorYChanged: inputChanged()
+  onStackTailChanged: inputChanged()
   onSavedPositionChanged: place()
   onWidthChanged: place()
   onHeightChanged: place()
   onActiveChanged: {
+    inputChanged()
     if (!active) close()
     if (open || reveal === 0) syncGroups()
   }
@@ -135,6 +140,7 @@ Item {
   onGroupsChanged: if (open || reveal === 0) syncGroups()
   onRequestedHorizontalChanged: { close(); if (reveal === 0) horizontal=requestedHorizontal }
   onRevealChanged: {
+    inputChanged()
     if (reveal > 0 && reveal < 1) {
       if (open) openingFrames++
       else closingFrames++
@@ -155,9 +161,8 @@ Item {
   Timer { id:grabDelay; interval:100; onTriggered:dock.grabReady=dock.open }
   Component.onCompleted: { horizontal=requestedHorizontal; place(); if (windows.length) displayWindows=windows.slice(); syncGroups() }
 
-  readonly property Region inputRegion: Region {
-    regions: !dock.active ? [] : dock.open ? [frontRegion, middleRegion, backRegion, panelRegion] : [frontRegion, middleRegion, backRegion]
-  }
+  readonly property var inputRegions: !active ? [] : open
+    ? [frontRegion, middleRegion, backRegion, panelRegion] : [frontRegion, middleRegion, backRegion]
   StashIconRegion { id: frontRegion; originX: dock.anchorX; originY: dock.anchorY
     size:48; cornerRadius:front.hitRadius; iconShape:front.iconShape }
   StashIconRegion { id: middleRegion; originX: dock.anchorX; originY: dock.anchorY + Math.min(4,dock.stackTail)

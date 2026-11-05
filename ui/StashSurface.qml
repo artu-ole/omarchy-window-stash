@@ -30,6 +30,12 @@ PanelWindow {
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
   property var bubbleRegions: []
   property bool focusPrimed: false
+  // Explicitly invalidate the composed mask after animated geometry changes.
+  // https://quickshell.org/docs/v0.3.0/types/Quickshell/Region/#sig.changed
+  function refreshInputMask() { inputUpdate.restart() }
+  Timer { id:inputUpdate; interval:0; onTriggered:inputMask.changed() }
+  onWidthChanged: refreshInputMask()
+  onHeightChanged: refreshInputMask()
   function itemRect(item) {
     var point = item.mapToItem(surface.contentItem, 0, 0)
     return {x:point.x, y:point.y, width:item.width, height:item.height}
@@ -102,7 +108,7 @@ PanelWindow {
   visible: groups.length > 0 || dialogOpen || (floatingMode && floatingDock.present)
   mask: Region {
     id: inputMask
-    regions: surface.dialogOpen ? [dialogRegion] : surface.floatingMode ? [floatingDock.inputRegion]
+    regions: surface.dialogOpen ? [dialogRegion] : surface.floatingMode ? floatingDock.inputRegions
       : surface.bubbleMode ? surface.bubbleRegions : [shelfRegion]
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
@@ -207,6 +213,7 @@ PanelWindow {
 
   StashFloatingDock {
     id:floatingDock
+    onInputChanged: surface.refreshInputMask()
     anchors.fill:parent
     stash:surface.stash
     hostWindow:surface
