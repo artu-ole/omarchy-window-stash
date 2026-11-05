@@ -18,7 +18,7 @@ class DesktopTestCountdownTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             with desktop_test('Test'):
                 events.append('desktop input')
-        self.assertEqual(events, ['notice', 1, 1, 1, 'desktop input', 'finished'])
+        self.assertEqual(events, ['notice', 1, 1, 1, 1, 1, 'desktop input', 'finished'])
 
     def test_missing_notification_aborts_before_desktop_actions(self):
         with patch('desktop_test.subprocess.run', side_effect=subprocess.CalledProcessError(1, 'notify-send')), \

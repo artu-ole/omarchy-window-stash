@@ -21,7 +21,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Dock motion and alignment | Live intermediate expansion/collapse frames, unchanged delegate count across refreshes, centered artwork and icon rows, bounded count badges, and exact content/viewport height for fully visible borders; pixel-grid centering checks at 1×, 1.25×, 1.5× and 2× |
 | Input regions | A click outside bubbles reaches a GTK window underneath |
 | Icon shapes | Live native dropdown, all five bubble shapes, corner input, squircle dragging, dock restore and saved choice after shell restart; model checks cover exact squircle input pixels and legacy setting defaults |
-| Desktop test notice | All eight desktop suites notify before a three-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
+| Desktop test notice | All eight desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
 | App grouping and chooser | Group two windows, open chooser by mouse, search by keyboard and restore with Enter |
 | Restore destination | Live original/current destination checks and original-workspace context action |
 | Global/workspace scope | Live one-, two-, and three-output checks in dock and bubble modes |

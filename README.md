@@ -290,7 +290,7 @@ temporary virtual outputs and preserve existing stash entries. The width test
 checks the source controller by default;
 pass `--installed` to check the installed copy.
 
-Every desktop test sends a notification asking you to pause input, waits three
+Every desktop test sends a notification asking you to pause input, waits five
 seconds before taking focus or injecting input, and notifies you after cleanup.
 The shared `tests/desktop_test.py` wrapper aborts before desktop actions if the
 initial notification cannot be sent. Unit tests and linting do not take over

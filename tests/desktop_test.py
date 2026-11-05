@@ -6,11 +6,11 @@ import time
 
 @contextmanager
 def desktop_test(name):
-    subprocess.run(['notify-send', '--app-name=Window Stash tests', '--expire-time=3000',
-                    'Desktop test starts in 3 seconds',
+    subprocess.run(['notify-send', '--app-name=Window Stash tests', '--expire-time=5000',
+                    'Desktop test starts in 5 seconds',
                     name + ': please pause mouse and keyboard input until the completion notification.'],
                    check=True, timeout=5)
-    for remaining in (3, 2, 1):
+    for remaining in (5, 4, 3, 2, 1):
         print(f'{name}: desktop automation starts in {remaining}…', flush=True)
         time.sleep(1)
     failed = False
