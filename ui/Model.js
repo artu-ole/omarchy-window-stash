@@ -152,3 +152,53 @@ function staticDockRect(area, side, desiredWidth, desiredHeight, gap, longMargin
   else y = area.y + area.height - marginY - height
   return {x:x, y:y, width:width, height:height}
 }
+
+function edgeTargets(point, area, width, height) {
+  var minX=area.x+Math.min(8,area.width/2), minY=area.y+Math.min(8,area.height/2)
+  var maxX=Math.max(minX,area.x+area.width-8-width), maxY=Math.max(minY,area.y+area.height-8-height)
+  var x=Math.max(minX,Math.min(maxX,point[0])), y=Math.max(minY,Math.min(maxY,point[1]))
+  return [{point:[minX,y],vertical:true}, {point:[maxX,y],vertical:true},
+    {point:[x,minY],vertical:false}, {point:[x,maxY],vertical:false}]
+    .sort(function(a,b) {
+      function distance(p) { return Math.pow(p[0]-point[0],2)+Math.pow(p[1]-point[1],2) }
+      return distance(a.point)-distance(b.point)
+    })
+}
+
+function floatingPosition(saved, width, height, area, snap, itemHeight) {
+  var point=floatingAnchor(saved,width,height)
+  return snap ? edgeTargets(point,area,48,itemHeight)[0].point : point
+}
+
+function bubbleLayout(keys, saved, drafts, width, height, area, snap, compact) {
+  var placed=[], size=48, gap=4, crowded=false
+  keys.forEach(function(key,index) {
+    var point=bubblePosition(drafts[key] || saved[key],index,width,height,keys.length)
+    if (!snap) { placed.push(point); return }
+    var edges=edgeTargets(point,area,size,size), chosen=null
+    for (var i=0;i<edges.length && !chosen;i++) {
+      var edge=edges[i], axis=edge.vertical ? 1 : 0
+      var low=axis ? area.y+8 : area.x+8
+      var high=Math.max(low,(axis ? area.y+area.height : area.x+area.width)-8-size)
+      var slots=[edge.point[axis],low,high]
+      placed.forEach(function(p) { slots.push(p[axis]-size-gap,p[axis]+size+gap) })
+      if (compact) {
+        slots=[]
+        for (var slot=low;slot<=high;slot+=size+gap) slots.push(slot)
+      }
+      slots=slots.map(function(value) { return Math.max(low,Math.min(high,value)) })
+        .sort(function(a,b) { return Math.abs(a-point[axis])-Math.abs(b-point[axis]) })
+      for (var j=0;j<slots.length;j++) {
+        var candidate=edge.point.slice(); candidate[axis]=slots[j]
+        if (placed.every(function(p) { return candidate[0]>=p[0]+size+gap || candidate[0]+size+gap<=p[0]
+          || candidate[1]>=p[1]+size+gap || candidate[1]+size+gap<=p[1] })) { chosen=candidate; break }
+      }
+    }
+    if (!chosen) crowded=true
+    placed.push(chosen || edges[0].point)
+  })
+  // Repack fragmented gaps before treating a perimeter as full. With more
+  // icons than fit on every edge, retain all icons at their nearest edge.
+  if (crowded && !compact) return bubbleLayout(keys,saved,drafts,width,height,area,snap,true)
+  return placed
+}

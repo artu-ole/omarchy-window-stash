@@ -18,7 +18,8 @@ PanelWindow {
   readonly property var monitor: stash.screenMonitor(screen.name)
   readonly property var config: stash.snapshot.settings
   property var windows: []
-  readonly property var groups: Model.groups(windows, config.grouping)
+  readonly property string groupingMode: config.grouping || "window"
+  readonly property var groups: Model.groups(windows, groupingMode)
   property bool dialogOpen: false
   readonly property string dockSide: config.dockSide || "bottom"
   readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
@@ -28,6 +29,26 @@ PanelWindow {
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
+  readonly property bool snapFloating: config.floatingPlacement !== "free"
+  property var bubbleDrafts: ({})
+  readonly property var bubbleTargets: Model.bubbleLayout(groups.map(function(g) { return g.key }),
+    savedPositions, bubbleDrafts, width, height, usableArea, snapFloating)
+  onSavedPositionsChanged: {
+    var next=Object.assign({},bubbleDrafts)
+    Object.keys(next).forEach(function(key) {
+      if (JSON.stringify(next[key]) === JSON.stringify(savedPositions[key])) delete next[key]
+    })
+    if (JSON.stringify(next) !== JSON.stringify(bubbleDrafts)) bubbleDrafts=next
+  }
+  function finishBubbleMove(key, index, x, y) {
+    var next=Object.assign({},bubbleDrafts)
+    next[key]=[x,y]; bubbleDrafts=next
+    var point=bubbleTargets[index].map(Math.round)
+    next=Object.assign({},bubbleDrafts); next[key]=point; bubbleDrafts=next
+    stash.recordPosition(monitor,key,point[0],point[1])
+  }
+  property bool bubbleHeld: false
+  property int createdBubbles: 0
   property var bubbleRegions: []
   property bool focusPrimed: false
   // Explicitly invalidate the composed mask after animated geometry changes.
@@ -65,7 +86,7 @@ PanelWindow {
     for (var i = 0; i < bubbles.count; i++) {
       var b = bubbles.itemAt(i) as StashIcon
       if (b) points.push({key:b.group.key, x:b.x, y:b.y, width:b.width, height:b.height,
-        shape:b.iconShape, radius:b.hitRadius})
+        shape:b.iconShape, radius:b.hitRadius,animating:b.positionAnimating,held:b.positionHeld})
     }
     var controls = []
     for (var j = 0; j < settingRows.count; j++) {
@@ -77,7 +98,7 @@ PanelWindow {
       // qmllint enable missing-property
     }
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
-      groups:groups.length, visible:visible, bubbles:points,
+      groups:groups.length, visible:visible, bubbles:points,createdBubbles:createdBubbles,
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
@@ -96,7 +117,15 @@ PanelWindow {
     focusPrimed = false
     if (keyboardOpen) primeFocus.restart()
   }
-  onDialogOpenChanged: if (dialogOpen) floatingDock.close()
+  onDialogOpenChanged: {
+    if (dialogOpen) floatingDock.close()
+    else for (var i=0;i<settingRows.count;i++) {
+      var row=settingRows.itemAt(i)
+      // qmllint disable missing-property
+      if (row) row.selector.close()
+      // qmllint enable missing-property
+    }
+  }
   Timer { id: primeFocus; interval: 70; onTriggered: surface.focusPrimed = true }
   color: "transparent"
   anchors { top: true; left: true; bottom: true; right: true }
@@ -108,7 +137,9 @@ PanelWindow {
   visible: groups.length > 0 || dialogOpen || (floatingMode && floatingDock.present)
   mask: Region {
     id: inputMask
-    regions: surface.dialogOpen ? [dialogRegion] : surface.floatingMode ? floatingDock.inputRegions
+    // Keep motion on this surface during a drag, including the gaps between
+    // small animated regions. Restore click-through immediately on release.
+    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held ? [dialogRegion] : surface.floatingMode ? floatingDock.inputRegions
       : surface.bubbleMode ? surface.bubbleRegions : [shelfRegion]
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
@@ -177,36 +208,55 @@ PanelWindow {
     id: bubbles
     model: surface.bubbleMode ? surface.groups : []
     delegate: StashIcon {
-      id: bubble
+      id: bubbleIcon
       required property var modelData
       required property int index
       group: modelData
       bubble: true
       iconShape: surface.config.iconShape || "auto"
-      readonly property var saved: surface.savedPositions[group.key]
+      property bool held: false
+      property bool motionReady: false
+      onXChanged: surface.refreshInputMask()
+      onYChanged: surface.refreshInputMask()
+      positionHeld: held
+      positionAnimating: bubbleXAnimation.running || bubbleYAnimation.running
+      Behavior on x { enabled:bubbleIcon.motionReady && !bubbleIcon.held
+        NumberAnimation { id:bubbleXAnimation; duration:240; easing.type:Easing.OutCubic } }
+      Behavior on y { enabled:bubbleIcon.motionReady && !bubbleIcon.held
+        NumberAnimation { id:bubbleYAnimation; duration:240; easing.type:Easing.OutCubic } }
       property Region hitRegion: StashIconRegion {
-        originX:bubble.x; originY:bubble.y; size:bubble.width
-        cornerRadius:bubble.hitRadius; iconShape:bubble.iconShape
+        originX:bubbleIcon.x; originY:bubbleIcon.y; size:bubbleIcon.width
+        cornerRadius:bubbleIcon.hitRadius; iconShape:bubbleIcon.iconShape
       }
       function place() {
-        var position = Model.bubblePosition(saved, index, surface.width, surface.height, surface.groups.length)
+        if (held || !surface.bubbleTargets[index]) return
+        var position = surface.bubbleTargets[index]
         x = position[0]; y = position[1]
       }
-      onSavedChanged: place()
+      onDragHeld: function(pressed) {
+        surface.bubbleHeld=pressed
+        held=pressed
+        if (held) { bubbleXAnimation.stop(); bubbleYAnimation.stop() }
+        else Qt.callLater(place)
+      }
       onActivated: surface.stash.selectGroup(group, surface.screen.name)
       onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
       onMoved: function(dx, dy) { x = Math.max(0, Math.min(surface.width - width, x + dx)); y = Math.max(24, Math.min(surface.height - height, y + dy)) }
-      onDragFinished: surface.stash.recordPosition(surface.monitor, group.key, x, y)
+      onDragFinished: surface.finishBubbleMove(group.key,index,x,y)
       Component.onCompleted: {
-        place()
+        surface.createdBubbles++
+        var initial=Model.bubblePosition(surface.savedPositions[group.key],index,surface.width,surface.height,surface.groups.length)
+        x=initial[0]; y=initial[1]
+        Qt.callLater(function() { bubbleIcon.motionReady=true; bubbleIcon.place() })
         var next = surface.bubbleRegions.slice(); next.push(hitRegion); surface.bubbleRegions = next
       }
-      Component.onDestruction: surface.bubbleRegions = surface.bubbleRegions.filter(function(r) { return r !== hitRegion })
+      Component.onDestruction: {
+        if (held) surface.bubbleHeld=false
+        surface.bubbleRegions = surface.bubbleRegions.filter(function(r) { return r !== hitRegion })
+      }
       Connections {
         target: surface
-        function onWidthChanged() { bubble.place() }
-        function onHeightChanged() { bubble.place() }
-        function onGroupsChanged() { bubble.place() }
+        function onBubbleTargetsChanged() { bubbleIcon.place() }
       }
     }
   }
@@ -374,6 +424,7 @@ PanelWindow {
           model: [
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
               labels:["Static dock","Floating bubbles","Floating dock"]},
+            {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
             {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
             {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
@@ -388,6 +439,7 @@ PanelWindow {
             readonly property alias selector: settingDropdown
             visible:(modelData.key !== "floatingDirection" || surface.floatingMode)
               && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
+              && (modelData.key !== "floatingPlacement" || surface.bubbleMode || surface.floatingMode)
             Layout.fillWidth: true
             Text {
               text: settingRow.modelData.label

@@ -25,6 +25,11 @@ Item {
   property bool grabReady: false
   readonly property bool requestedHorizontal: config.floatingDirection === "horizontal"
   property bool horizontal: false
+  readonly property bool snapEdges: config.floatingPlacement !== "free"
+  readonly property var usableArea: Model.usableArea(width,height,monitor ? monitor.reserved : [])
+  property var pendingPosition: null
+  property bool motionReady: false
+  property bool held: false
   property real anchorX: 0
   property real anchorY: 0
   property var displayWindows: []
@@ -68,6 +73,10 @@ Item {
     enabled:dock.open && dock.reveal > 0.99
     NumberAnimation { id:extentAnimation; duration:180; easing.type:Easing.OutCubic }
   }
+  Behavior on anchorX { enabled:dock.motionReady && !dock.held
+    NumberAnimation { id:snapXAnimation; duration:240; easing.type:Easing.OutCubic } }
+  Behavior on anchorY { enabled:dock.motionReady && !dock.held
+    NumberAnimation { id:snapYAnimation; duration:240; easing.type:Easing.OutCubic } }
   ListModel { id:iconModel }
 
   // Keep delegate objects and scroll position through ordinary IPC refreshes.
@@ -89,8 +98,10 @@ Item {
   }
 
   function place() {
-    var point = Model.floatingAnchor(savedPosition, width, height)
-    anchorX = point[0]; anchorY = point[1]
+    if (held) return
+    var point = Model.floatingPosition(pendingPosition || savedPosition,width,height,usableArea,snapEdges,48+tail)
+    if (Math.abs(anchorX-point[0])>0.01) anchorX=point[0]
+    if (Math.abs(anchorY-point[1])>0.01) anchorY=point[1]
   }
   function close() { expanded = false }
   function preview(index) {
@@ -116,8 +127,8 @@ Item {
       }
     }
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,createdIcons:createdIcons,currentIndex:list.currentIndex,
-      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,windows:windows.length,groups:groups.length,
-      handle:{x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
+      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
+      handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,visible:panel.visible,down:geometry.down,right:geometry.right},
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons}
@@ -125,7 +136,13 @@ Item {
   onAnchorXChanged: inputChanged()
   onAnchorYChanged: inputChanged()
   onStackTailChanged: inputChanged()
-  onSavedPositionChanged: place()
+  onSavedPositionChanged: {
+    if (pendingPosition && JSON.stringify(pendingPosition) === JSON.stringify(savedPosition)) pendingPosition=null
+    place()
+  }
+  onSnapEdgesChanged: { close(); place() }
+  onUsableAreaChanged: place()
+  onTailChanged: place()
   onWidthChanged: place()
   onHeightChanged: place()
   onActiveChanged: {
@@ -159,7 +176,7 @@ Item {
     } else closingFrames=0
   }
   Timer { id:grabDelay; interval:100; onTriggered:dock.grabReady=dock.open }
-  Component.onCompleted: { horizontal=requestedHorizontal; place(); if (windows.length) displayWindows=windows.slice(); syncGroups() }
+  Component.onCompleted: { horizontal=requestedHorizontal; place(); Qt.callLater(function() { dock.motionReady=true }); if (windows.length) displayWindows=windows.slice(); syncGroups() }
 
   readonly property var inputRegions: !active ? [] : open
     ? [frontRegion, middleRegion, backRegion, panelRegion] : [frontRegion, middleRegion, backRegion]
@@ -210,10 +227,14 @@ Item {
       anchors.fill: parent
       acceptedButtons: Qt.LeftButton | Qt.RightButton
       hoverEnabled:true
+      preventStealing:true
       cursorShape:Qt.PointingHandCursor
       property point start
       property bool dragging:false
-      onPressed: function(mouse) { start=Qt.point(mouse.x,mouse.y); dragging=false }
+      onPressed: function(mouse) {
+        start=Qt.point(mouse.x,mouse.y); dragging=false
+        if (mouse.button === Qt.LeftButton) { dock.held=true; snapXAnimation.stop(); snapYAnimation.stop() }
+      }
       onPositionChanged: function(mouse) {
         if (!pressed || pressedButtons !== Qt.LeftButton) return
         var dx=mouse.x-start.x, dy=mouse.y-start.y
@@ -224,8 +245,18 @@ Item {
           dock.anchorX=point[0]; dock.anchorY=point[1]
         }
       }
+      function finishDrag() {
+        dock.held=false
+        var point=Model.floatingPosition([dock.anchorX,dock.anchorY],dock.width,dock.height,dock.usableArea,dock.snapEdges,48+dock.tail).map(Math.round)
+        dock.pendingPosition=point
+        dock.place()
+        dock.stash.recordPosition(dock.monitor,"dock:floating",point[0],point[1])
+      }
+      onCanceled: finishDrag()
       onReleased: function(mouse) {
-        if (dragging) { dock.stash.recordPosition(dock.monitor,"dock:floating",dock.anchorX,dock.anchorY); return }
+        if (dragging) { finishDrag(); return }
+        dock.held=false
+        dock.place()
         if (mouse.button === Qt.RightButton) dock.context(null)
         else if (dock.windows.length === 1) dock.activate(dock.frontGroup)
         else dock.expanded=!dock.expanded

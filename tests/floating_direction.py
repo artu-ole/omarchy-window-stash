@@ -45,6 +45,7 @@ def main():
         wait(lambda:dock()['windows']==expected,'Dock count lagged')
 
     try:
+        configure("floatingPlacement","free")
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial controller snapshot did not load')
         configure('presentation','floating');configure('floatingDirection','vertical')
         configure('scope','workspace');configure('grouping','window')

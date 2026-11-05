@@ -23,6 +23,7 @@ def main():
     original=h.read('activewindow');original_ws=h.read('activeworkspace')['id']
     settings=command('list')['settings'];pointer=None
     try:
+        configure("floatingPlacement","free")
         assert not command('list')['windows']
         first=spawn('Stash UI alpha');second=spawn('Stash UI beta')
         for address in (first,second):

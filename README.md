@@ -34,7 +34,7 @@ Development-only dependencies are listed under Development and verification.
 | Restore a window | Click its dock icon or bubble |
 | Choose between windows grouped by app | Click the icon with a count badge |
 | Choose restore destination, open settings or show every stashed window | Right-click an icon; the dock also has a **⋯** button |
-| Move a bubble | Drag it freely; its position is remembered per monitor |
+| Move a bubble | Drag it; it snaps to an edge by default, with free placement available |
 | Expand/collapse the floating dock | Click its stacked handle; Escape or an outside click also collapses it |
 | Move the floating dock | Drag its handle; one shared position is remembered per monitor |
 | Search the window chooser | Type; use Up/Down and Enter to select; Escape closes |
@@ -42,7 +42,7 @@ Development-only dependencies are listed under Development and verification.
 Default settings: **static dock at the bottom**, **global visibility**,
 **restore here**, **one icon per window**. The UI appears on every connected monitor. Global mode repeats
 the same stash on each screen; workspace mode filters by that screen's active
-workspace. Grouping by app is optional and uses a window chooser when needed.
+workspace. Floating items default to **Snap to edges**. Grouping by app is optional and uses a window chooser when needed.
 
 Open settings or the full recovery chooser even when no dock is visible:
 
@@ -82,6 +82,16 @@ With Floating dock selected, **Floating dock direction** offers **Vertical**
 horizontal docks expand left or right and also support Left/Right keys.
 Scrolling follows the chosen axis. Changing direction first collapses the dock
 smoothly, preserving its anchor and existing grouping and icon-shape choices.
+
+For Floating bubbles and Floating dock, **Floating placement** offers **Snap to
+edges** (the default) and **Free placement**. Edge mode glides to the nearest of
+the four screen edges after you release a drag, staying clear of reserved bar
+space. Separate bubbles choose nearby open slots; crowded edges repack before
+using another edge. If the entire perimeter fills, bubbles can share slots; the
+floating dock handles long lists with scrolling. Dragging follows the pointer
+directly, and grabbing an item during its glide stops the animation. Switching to Free placement lets you leave
+items anywhere. Dragged resting positions are remembered per monitor. The
+setting also applies to older configurations, which default to edge snapping.
 
 Opening and closing use eased reveal/fade motion while icons stay at their
 natural size. Changes to the list animate without recreating unchanged icons
@@ -233,7 +243,8 @@ Settings live on the plugin's entry in `~/.config/omarchy/shell.json`:
   "grouping": "window",
   "iconShape": "auto",
   "floatingDirection": "vertical",
-  "dockSide": "bottom"
+  "dockSide": "bottom",
+  "floatingPlacement": "edges"
 }
 ```
 
@@ -245,6 +256,8 @@ respectively. `iconShape` accepts `auto`, `circle`, `square`,
 floating dock. Older configurations retain the vertical layout.
 `dockSide` accepts `bottom`, `top`, `left`, or `right` and only affects the static
 dock. Older configurations retain the bottom position.
+`floatingPlacement` accepts `edges` (default) or `free`, shared by bubbles and the
+floating dock. The static dock keeps its separate side setting.
 The settings panel writes through the shell's plugin-scoped settings API.
 For automation, the same API is exposed through:
 
@@ -253,6 +266,7 @@ omarchy-shell window-stash configure presentation bubbles
 omarchy-shell window-stash configure presentation floating
 omarchy-shell window-stash configure floatingDirection horizontal
 omarchy-shell window-stash configure dockSide top
+omarchy-shell window-stash configure floatingPlacement free
 omarchy-shell window-stash configure scope workspace
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash status
@@ -298,6 +312,7 @@ python3 tests/icon_shapes.py
 python3 tests/floating_dock.py
 python3 tests/floating_direction.py
 python3 tests/dock_sides.py
+python3 tests/floating_placement.py
 ```
 
 Live tests require an unlocked graphical session, `/usr/bin/python3` with GTK4
@@ -309,8 +324,8 @@ and XWayland windows, temporary virtual outputs, and restore the original focus
 and settings in cleanup. Run them with an empty stash. The keyboard test
 temporarily enables keysym matching for wtype's synthetic keymap and restores
 the original setting afterward; installation leaves input matching unchanged.
-The scrolling-width, floating-dock, and static-dock-side regressions use isolated
-workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
+The scrolling-width, floating-dock, static-dock-side, and floating-placement
+regressions use isolated workspaces and temporary virtual outputs and preserve existing stash entries. The dock-side
 test also uses `qs` to create a temporary bar on its virtual output. The width test
 checks the source controller by default;
 pass `--installed` to check the installed copy.

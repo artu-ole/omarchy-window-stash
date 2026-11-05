@@ -62,6 +62,7 @@ def main():
             raise
 
     try:
+        configure("floatingPlacement","free")
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial controller snapshot did not load')
         configure('floatingDirection','vertical')
         configure('presentation','dock');shell('settings')

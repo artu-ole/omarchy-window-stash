@@ -118,3 +118,32 @@ for(const side of ['bottom','top','left','right']) {
   assert.ok(p.x>=0 && p.y>=0 && p.x+p.width<=5 && p.y+p.height<=5)
 }
 console.log('Model: all four dock sides respect reserved edges, centering, and overflow bounds')
+
+for(const [w,h] of [[320,240],[1920,1080],[600,1000]]) {
+  const area=ctx.usableArea(w,h,[12,34,20,16])
+  for(const p of [[w/2,h/2],[0,h/2],[w,h/2],[w/2,0],[w/2,h]]) {
+    for(const height of [48,56]) {
+      const target=ctx.floatingPosition(p,w,h,area,true,height)
+      const [x,y]=target
+      assert.ok(x>=area.x+8 && x+48<=area.x+area.width-8)
+      assert.ok(y>=area.y+8 && y+height<=area.y+area.height-8)
+      assert.ok(x===area.x+8 || x+48===area.x+area.width-8 || y===area.y+8 || y+height===area.y+area.height-8)
+      assert.equal(ctx.floatingPosition(target,w,h,area,true,height).join(','),target.join(','),'Snap must be stable')
+    }
+    assert.equal(ctx.floatingPosition(p,w,h,area,false,56).join(','),ctx.floatingAnchor(p,w,h).join(','))
+  }
+  const keys=Array.from({length:12},(_,i)=>'window:'+i),saved={}
+  keys.forEach(key=>saved[key]=[w-70,h/2])
+  const positions=ctx.bubbleLayout(keys,saved,{},w,h,area,true)
+  for(let i=0;i<positions.length;i++) {
+    const [x,y]=positions[i]
+    assert.ok(x===area.x+8 || x+48===area.x+area.width-8 || y===area.y+8 || y+48===area.y+area.height-8)
+    for(let j=0;j<i;j++) {
+      const [a,b]=positions[j]
+      assert.ok(x>=a+52 || x+52<=a || y>=b+52 || y+52<=b,'Edge bubbles must remain separate')
+    }
+  }
+  const free=ctx.bubbleLayout(['a'],{a:[w/2,h/2]},{},w,h,area,false)[0]
+  assert.equal(free.join(','),ctx.bubblePosition([w/2,h/2],0,w,h,1).join(','))
+}
+console.log('Model: edge snapping, bar clearance, stable targets, bubble packing and free placement passed')

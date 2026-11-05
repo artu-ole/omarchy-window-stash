@@ -40,6 +40,7 @@ def main():
         return all(w['address'] != target for w in command('list')['windows'])
 
     try:
+        configure("floatingPlacement","free")
         shell('settings')
         configure('iconShape', 'auto')
         def setting_control():
@@ -52,7 +53,7 @@ def main():
         wait(lambda: setting_control()['open'], 'Native shape dropdown did not open')
         subprocess.run(['wtype', *sum((['-k', 'Down'] for _ in range(4)), []), '-k', 'Return'], check=True)
         wait(lambda: shell('status')['settings']['iconShape'] == 'squircle', 'Shape dropdown did not save')
-        assert all(shell('status')['settings'][k] == v for k, v in settings.items() if k != 'iconShape')
+        assert all(shell('status')['settings'][k] == v for k, v in settings.items() if k not in ('iconShape','floatingPlacement'))
         shell('dismiss')
         print('PASS native shape dropdown; other preferences preserved', flush=True)
 

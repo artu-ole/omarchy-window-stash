@@ -15,11 +15,14 @@ Ui.BorderSurface {
   property bool bubble: false
   property string iconShape: "auto"
   property bool hasCursor: false
+  property bool positionAnimating: false
+  property bool positionHeld: false
   readonly property bool hot: pointer.containsMouse || hasCursor
   readonly property real hitRadius: Model.iconRadius(iconShape, width, bubble, Style.cornerRadius)
   signal activated()
   signal contextRequested()
   signal moved(real dx, real dy)
+  signal dragHeld(bool held)
   signal dragFinished()
   signal hovered(bool isHovered)
   width: bubble ? 48 : 44
@@ -106,18 +109,21 @@ Ui.BorderSurface {
     id: pointer
     anchors.fill: parent
     hoverEnabled: true
+    preventStealing: icon.bubble
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
     property point start
     property bool dragging: false
     onContainsMouseChanged: icon.hovered(containsMouse)
-    onPressed: function(mouse) { start = Qt.point(mouse.x, mouse.y); dragging = false }
+    onPressed: function(mouse) { start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.bubble && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
     onPositionChanged: function(mouse) {
       if (!icon.bubble || !pressed || pressedButtons !== Qt.LeftButton) return
       var dx = mouse.x - start.x, dy = mouse.y - start.y
       if (dragging || Math.abs(dx) + Math.abs(dy) > 6) { dragging = true; icon.moved(dx, dy) }
     }
+    onCanceled: { if (icon.bubble) { icon.dragHeld(false); icon.dragFinished() } }
     onReleased: function(mouse) {
+      if (icon.bubble && mouse.button === Qt.LeftButton) icon.dragHeld(false)
       if (dragging) { icon.dragFinished(); return }
       if (mouse.button === Qt.RightButton) icon.contextRequested()
       else icon.activated()

@@ -11,7 +11,7 @@ Item {
   property var shell: null
   readonly property string pluginId: "community.window-stash"
   readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", dockSide: "bottom"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", dockSide: "bottom", floatingPlacement: "edges"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -78,7 +78,7 @@ Item {
     if (!shell) { lastError = "Shell settings are not available"; return }
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
-      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], dockSide:["bottom","top","left","right"]}
+      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"]}
     if (!options[key] || options[key].indexOf(value) < 0) { lastError = "Invalid stash setting"; return }
     // The host replaces the entry with the supplied settings; it does not
     // merge a patch. Keep the other choices intact on every edit.
@@ -108,12 +108,12 @@ Item {
       else root.enqueue(["list"])
     }
   }
-  // Layer-shell reserve changes (including third-party bars appearing) do not
-  // emit a workspace event. Refresh only while a static dock is displayed.
+  // Reserve changes do not emit workspace events. Refresh while a visible
+  // dock or edge-snapped bubble needs to stay clear of bars.
   Timer {
     interval: 1500
     repeat: true
-    running: root.snapshot.settings.presentation === "dock" && root.surfaces.some(function(s) { return s.windows.length > 0 })
+    running: (root.snapshot.settings.presentation === "dock" || root.snapshot.settings.floatingPlacement !== "free") && root.surfaces.some(function(s) { return s.windows.length > 0 })
     onTriggered: root.refresh()
   }
   Process {
