@@ -5,6 +5,7 @@ import qs.Ui as Ui
 Ui.PanelActionButton {
   id: button
   property string animations:"full"
+  opacity:interaction.visualOpacity
   property MouseArea pressArea: null
   layer.enabled: true
   layer.smooth: true

@@ -22,6 +22,7 @@ PanelWindow {
   onActiveWorkspaceIdChanged:if (floatingDock) floatingDock.close()
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
+  readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
   readonly property real canvasWidth:screen ? screen.width : width
   readonly property real canvasHeight:screen ? screen.height : height
   property var windows: []
@@ -133,13 +134,20 @@ PanelWindow {
         open:row.selector.popupOpen, rect:itemRect(row.selector)})
       // qmllint enable missing-property
     }
+    var opacityControls=[]
+    for (var k=0;k<opacityRows.count;k++) {
+      var opacityRow=opacityRows.itemAt(k)
+      // qmllint disable missing-property
+      if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
+      // qmllint enable missing-property
+    }
     return {screen:screen.name, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
       motion:{mode:animations,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal},
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
         borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
-        insets:{left:shelf.insetLeft,right:shelf.insetRight,top:shelf.insetTop,bottom:shelf.insetBottom},
+        insets:{left:shelf.insetLeft,right:shelf.insetRight,top:shelf.insetTop,bottom:shelf.insetBottom},feedback:shelfFeedback.details(),
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
         icons:shelfIcons(false),exitingIcons:shelfIcons(true),progress:shelf.reveal,
@@ -148,6 +156,7 @@ PanelWindow {
       dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialogOpen && dialogReveal>0.999,rendered:dialog.visible,progress:dialogReveal},
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
+      opacityControls:opacityControls,
       cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
       floatingDock:floatingDock.details(),
       actions:{here:itemRect(restoreHereButton),original:itemRect(restoreOriginalButton),settings:itemRect(settingsButton)},
@@ -201,8 +210,16 @@ PanelWindow {
   Region { id: dialogRegion; width: surface.width; height: surface.height }
   Region { id: shelfRegion; item: shelf; radius:shelf.radius }
 
-  Ui.BorderSurface {
+  StashDockSurface {
     id: shelf
+    frameOpacity:shelfFeedback.opacityProgress
+    HoverHandler { id:shelfHover }
+    StashFeedback {
+      id:shelfFeedback
+      animations:surface.animations
+      idleOpacity:(surface.config.dockOpacity === undefined ? 100 : surface.config.dockOpacity)/100
+      hot:shelf.enabled && shelfHover.hovered
+    }
     readonly property var frameSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
     readonly property real frameLeft: Border.left(frameSpec)
     readonly property real frameRight: Border.right(frameSpec)
@@ -280,6 +297,7 @@ PanelWindow {
               Behavior on y { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
               group:shelfModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
               animations:surface.animations
+              idleOpacity:surface.iconIdleOpacity
               onExited:function(frames) { surface.recordExit("dock",groupKey,frames) }
               Component.onCompleted: { surface.createdShelfIcons++; if (liveIndex>=0) lastSlot=liveIndex }
               enabled:!retiring && surface.config.presentation==="dock"
@@ -291,6 +309,7 @@ PanelWindow {
           }
           StashButton { animations:surface.animations;
             id: dockMore
+            idleOpacity:surface.iconIdleOpacity
             x:surface.verticalDock ? 0 : shelfModel.activeKeys.length*dockRow.step
             y:surface.verticalDock ? shelfModel.activeKeys.length*dockRow.step : 0
             Behavior on x { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
@@ -315,6 +334,7 @@ PanelWindow {
       required property int index
       group:bubblesModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
       animations:surface.animations
+      idleOpacity:surface.iconIdleOpacity
       onExited:function(frames) { surface.recordExit("bubbles",groupKey,frames) }
       enabled:!retiring && surface.bubbleMode
       onRetiringChanged: {
@@ -613,6 +633,33 @@ PanelWindow {
             value:surface.config.dockCornerRadius === undefined ? 12 : surface.config.dockCornerRadius
             foreground:surface.popupColors.text
             onModified:function(value) { surface.stash.setting("dockCornerRadius",value) }
+          }
+        }
+        Repeater {
+          id:opacityRows
+          model:[{key:"dockOpacity",label:"Dock opacity (%)"},{key:"iconOpacity",label:"Icon opacity (%)"}]
+          delegate:RowLayout {
+            id:opacityRow
+            required property var modelData
+            readonly property alias numberField:opacityField
+            visible:modelData.key !== "dockOpacity" || (!surface.bubbleMode && surface.dockFrameVisible)
+            Layout.fillWidth:true
+            Text {
+              text:opacityRow.modelData.label
+              color:surface.popupColors.text
+              font.family:surface.fonts.family
+              font.pixelSize:surface.fonts.body
+              Layout.fillWidth:true
+            }
+            Ui.NumberField {
+              id:opacityField
+              Layout.preferredWidth:surface.metrics.dropdownWidth
+              fieldWidth:surface.metrics.dropdownWidth
+              from:0; to:100; stepSize:1
+              value:surface.config[opacityRow.modelData.key] === undefined ? 100 : surface.config[opacityRow.modelData.key]
+              foreground:surface.popupColors.text
+              onModified:function(value) { surface.stash.setting(opacityRow.modelData.key,value) }
+            }
           }
         }
         Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }

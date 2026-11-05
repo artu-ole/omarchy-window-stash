@@ -115,7 +115,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full"))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")
@@ -180,6 +180,19 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(self.stash.settings()["iconFrame"], "hidden")
         self.settings(animations="invalid")
         self.assertEqual(self.stash.settings()["animations"], "full")
+
+    def test_opacity_percentages_are_independent_validated_integers(self):
+        for key in ("dockOpacity", "iconOpacity"):
+            self.settings()
+            self.assertEqual(self.stash.settings()[key], 100)
+            other = "iconOpacity" if key == "dockOpacity" else "dockOpacity"
+            for value in (0, 1, 35, 99, 100):
+                self.settings(**{key: value, other: 72})
+                self.assertEqual(self.stash.settings()[key], value)
+                self.assertEqual(self.stash.settings()[other], 72)
+            for invalid in (-1, 101, 50.0, 3.5, "35", True, False, None):
+                self.settings(**{key: invalid})
+                self.assertEqual(self.stash.settings()[key], 100)
 
     def test_restore_destination_capture(self):
         ident=self.stash.minimize()["id"]

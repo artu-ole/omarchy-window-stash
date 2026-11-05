@@ -5,6 +5,8 @@ import qs.Ui as Ui
 Ui.Button {
   id: button
   property string animations:"full"
+  property real idleOpacity:1
+  opacity:interaction.visualOpacity
   property MouseArea pressArea: null
   layer.enabled: true
   layer.smooth: true
@@ -12,6 +14,7 @@ Ui.Button {
   StashFeedback {
     id: interaction
     animations:button.animations
+    idleOpacity:button.idleOpacity
     hot: button.enabled && (button.hot || button.activeFocus)
     down: button.pressArea ? button.pressArea.pressed : false
     pressDepth: 0.025

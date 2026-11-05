@@ -91,6 +91,8 @@ Settings belong to the `community.window-stash` entry in
 omarchy-shell window-stash configure presentation floating
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash configure animations reduced
+omarchy-shell window-stash configure dockOpacity 60
+omarchy-shell window-stash configure iconOpacity 75
 ```
 
 | Key | Default | Values / meaning |
@@ -105,9 +107,16 @@ omarchy-shell window-stash configure animations reduced
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
 | `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
 | `dockFrame` | `shown` | `shown`, `hidden`; static and expanded floating docks |
+| `dockOpacity` | `100` | Integer `0`–`100`%; dock background and border at rest |
+| `iconOpacity` | `100` | Integer `0`–`100`%; icons, frames and badges at rest, across all presentations |
 | `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |
 | `dockCornerRadius` | `12` | Integer `0`–`64` pixels in custom mode, clamped to panel dimensions |
 | `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
+
+Hover smoothly restores full opacity; pressed and keyboard-selected icons stay
+opaque. Dock and icon opacity are independent. Transparent elements retain their
+normal input regions, including at 0%; menus and settings keep their theme opacity.
+Fades follow the animation setting.
 
 Frames can be hidden independently. Automatic shapes and theme corners follow
 the desktop; custom choices persist when their frames are hidden. Rounded docks
@@ -179,6 +188,7 @@ network requests. App icons resolve from installed desktop entries and themes.
 python3 tools/check.py             # unit/model checks, offscreen Qt, manifest, qmllint
 python3 tests/live.py              # controller + desktop integration
 python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
+python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator

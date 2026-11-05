@@ -12,6 +12,7 @@ Ui.CursorSurface {
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   property string animations:"full"
+  opacity:interaction.visualOpacity
   required property var windowData
   signal activated()
   signal contextRequested()

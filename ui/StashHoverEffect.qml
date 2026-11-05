@@ -9,5 +9,4 @@ MultiEffect {
   colorization: feedback.tint
   brightness: feedback.lightness
   scale: feedback.visualScale
-  opacity: feedback.presence
 }

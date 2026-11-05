@@ -5,6 +5,7 @@ Item {
   id:row
   required property var group
   property string animations:"full"
+  property real idleOpacity:1
   property bool retiring:false
   property bool frameVisible:true
   property string iconShape:"auto"
@@ -22,6 +23,7 @@ Item {
     anchors.verticalCenter:parent.verticalCenter
     group:row.group
     animations:row.animations
+    idleOpacity:row.idleOpacity
     retiring:row.retiring
     frameVisible:row.frameVisible
     iconShape:row.iconShape

@@ -39,6 +39,7 @@ Item {
   property var displayWindows: []
   readonly property var displayGroups:iconModel.entries
   readonly property string animations:config.animations || "full"
+  readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
   property var expansionDirection: null
   property int createdIcons: 0
   property int openingFrames: 0
@@ -149,7 +150,7 @@ Item {
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
       handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
-        borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.down,right:geometry.right},
+        borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.down,right:geometry.right,feedback:panelFeedback.details()},
       footer:{x:footerPoint.x,y:footerPoint.y,width:footer.width,height:footer.height,feedback:footer.feedbackDetails()},
       contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
       contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons,exitingIcons:exiting}
@@ -226,11 +227,13 @@ Item {
         required property int index
         readonly property int layerNumber:2-index
         y:Math.min(layerNumber*4,dock.stackTail)
-        opacity:dock.stackDepth > layerNumber ? 1 : 0
-        visible:opacity > 0
-        Behavior on opacity { NumberAnimation { duration:Motion.duration(dock.animations,140,100); easing.type:Easing.OutCubic } }
+        property real layerPresence:dock.stackDepth > layerNumber ? 1 : 0
+        opacity:layerPresence*visualOpacity
+        visible:layerPresence > 0
+        Behavior on layerPresence { NumberAnimation { duration:Motion.duration(dock.animations,140,100); easing.type:Easing.OutCubic } }
         group:dock.preview(layerNumber-1)
         animations:dock.animations
+        idleOpacity:dock.iconIdleOpacity
         presence:dock.handleOpacity
         bubble:true; frameVisible:dock.config.iconFrame !== "hidden"; iconShape:front.iconShape; enabled:false
         hasCursor:drag.containsMouse || dock.open
@@ -241,6 +244,7 @@ Item {
       id: front
       group:dock.frontGroup
       animations:dock.animations
+      idleOpacity:dock.iconIdleOpacity
       presence:dock.handleOpacity
       frameVisible:dock.config.iconFrame !== "hidden"
       onFrameVisibleChanged:dock.inputChanged()
@@ -292,8 +296,16 @@ Item {
       }
     }
   }
-  Ui.BorderSurface {
+  StashDockSurface {
     id: panel
+    frameOpacity:panelFeedback.opacityProgress
+    HoverHandler { id:panelHover }
+    StashFeedback {
+      id:panelFeedback
+      animations:dock.animations
+      idleOpacity:(dock.config.dockOpacity === undefined ? 100 : dock.config.dockOpacity)/100
+      hot:dock.open && panelHover.hovered
+    }
     visible:dock.reveal > 0
     enabled:dock.open
     clip:true
@@ -336,6 +348,7 @@ Item {
             required property string groupKey
             required retiring
             animations:dock.animations
+            idleOpacity:dock.iconIdleOpacity
             required property int index
             readonly property var liveGroup:iconModel.dataByKey[groupKey] || null
             property var lastGroup:({key:groupKey,app:"",title:"",windows:[]})
@@ -382,6 +395,7 @@ Item {
         StashButton {
           animations:dock.animations
           id:footer
+          idleOpacity:dock.iconIdleOpacity
           Layout.fillWidth:!dock.horizontal
           Layout.alignment:Qt.AlignCenter
           Layout.preferredWidth:Math.ceil(implicitWidth)

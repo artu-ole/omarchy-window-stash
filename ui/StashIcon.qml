@@ -15,9 +15,12 @@ Ui.BorderSurface {
   required property var group
   property string animations:"full"
   property real presence:1
+  property real idleOpacity:1
   property bool retiring:false
   property int presenceFrames:0
   readonly property bool artworkAnimating:image.animating
+  readonly property real visualOpacity:interaction.visualOpacity
+  opacity:visualOpacity
   onPresenceChanged:if (presence>0 && presence<1) presenceFrames++
   onAnimationsChanged:if (animations==="off") {
     frameColorAnimation.complete(); artworkScaleAnimation.complete(); badgeRevealAnimation.complete()
@@ -47,7 +50,7 @@ Ui.BorderSurface {
   layer.enabled: true
   layer.smooth: true
   layer.effect: StashHoverEffect { feedback:interaction }
-  StashFeedback { id:interaction; hot:icon.hot; down:icon.down; presence:icon.presence; animations:icon.animations }
+  StashFeedback { id:interaction; hot:icon.hot; down:icon.down; presence:icon.presence; animations:icon.animations; idleOpacity:icon.idleOpacity }
   property color frameColor: !frameVisible ? "transparent" : down ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
     : hot ? Style.hoverFillFor(icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? icon.popupColors.background : "transparent"
