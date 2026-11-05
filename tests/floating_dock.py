@@ -163,8 +163,8 @@ def main():
         moved=wait(lambda:dock()['handle'] if abs(dock()['handle']['x']-before['x'])>50 else None,'Stack drag did not move')
         expanded=expand()
         assert not expanded['panel']['down'] and expanded['panel']['y']>=0
-        click(expanded['handle'])
-        wait(lambda:not dock()['expanded'],'Clicking stack again did not collapse')
+        subprocess.run(['wtype','-k','Escape'],check=True)
+        wait(lambda:not dock()['expanded'],'Escape did not collapse the fan')
         configure('presentation','bubbles');configure('presentation','floating')
         wait(lambda:abs(dock()['handle']['x']-moved['x'])<2,'Dock position changed across mode switch')
         h.dispatch('focus',workspace=str(workspace+1))
@@ -198,7 +198,7 @@ def main():
         assert expanded['contentHeight']>expanded['viewportHeight']
         x=p['x']+p['width']/2;y=p['y']+min(expanded['viewportHeight']/2+6,30)
         pointer.move(*point(x,y));pointer.button(True)
-        for step in range(1,7):pointer.move(*point(x,max(1,y-step*12)));time.sleep(.04)
+        for step in range(1,7):pointer.move(*point(x,max(1,min(surface()['height']-1,y-expanded['fan']['sign']*step*12))));time.sleep(.04)
         pointer.button(False)
         wait(lambda:dock()['contentY']>10,'Floating dock could not scroll')
         configure('scope','global')

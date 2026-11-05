@@ -28,6 +28,7 @@ Ui.BorderSurface {
   property bool frameVisible: true
   readonly property string inputShape: frameVisible ? iconShape : "square"
   property bool bubble: false
+  property bool draggable:bubble
   property string iconShape: "auto"
   property bool hasCursor: false
   property bool cursorManaged: false
@@ -143,21 +144,21 @@ Ui.BorderSurface {
     id: pointer
     anchors.fill: parent
     hoverEnabled: true
-    preventStealing: icon.bubble
+    preventStealing: icon.draggable
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
     property point start
     property bool dragging: false
     onContainsMouseChanged: icon.hovered(containsMouse)
-    onPressed: function(mouse) { start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.bubble && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
+    onPressed: function(mouse) { start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
     onPositionChanged: function(mouse) {
-      if (!icon.bubble || !pressed || pressedButtons !== Qt.LeftButton) return
+      if (!icon.draggable || !pressed || pressedButtons !== Qt.LeftButton) return
       var dx = mouse.x - start.x, dy = mouse.y - start.y
       if (dragging || Math.abs(dx) + Math.abs(dy) > 6) { dragging = true; icon.moved(dx, dy) }
     }
-    onCanceled: { if (icon.bubble) { icon.dragHeld(false); icon.dragFinished() } }
+    onCanceled: { if (icon.draggable) { icon.dragHeld(false); icon.dragFinished() } }
     onReleased: function(mouse) {
-      if (icon.bubble && mouse.button === Qt.LeftButton) icon.dragHeld(false)
+      if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(false)
       if (dragging) { icon.dragFinished(); return }
       if (mouse.button === Qt.RightButton) icon.contextRequested()
       else icon.activated()

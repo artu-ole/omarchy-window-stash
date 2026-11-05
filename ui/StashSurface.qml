@@ -401,7 +401,7 @@ PanelWindow {
     groups:surface.groups
     windows:surface.windows
     savedPosition:surface.savedPositions["dock:floating"]
-    active:surface.floatingMode && surface.groups.length > 0 && !surface.dialogOpen
+    active:surface.floatingMode && surface.groups.length > 0
   }
 
   MouseArea {

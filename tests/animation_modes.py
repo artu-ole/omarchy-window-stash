@@ -115,22 +115,30 @@ def main():
         for a in windows:park(a)
         wait(lambda:dock()['active'] and dock()['windows']==3 and not dock()['animating'] and not dock()['snapping'],'Floating stack did not settle')
         assert dock()['handle']['appearance']['presenceFrames']>=2
-        transitions=dock()['handle']['appearance']['artwork']['transitions']
+        before={a['key'] for a in dock()['actors']};created=dock()['createdIcons']
         restore(windows[2])
-        wait(lambda:dock()['handle']['appearance']['artwork']['transitions']>transitions,'Front artwork did not change')
-        wait(lambda:not dock()['animating'],'Artwork crossfade did not finish')
-        assert dock()['handle']['appearance']['artwork']['frames']>=2,'Front artwork changed without a crossfade'
-        assert dock()['handle']['appearance']['presence']>.999,'New artwork replayed the whole stack'
+        wait(lambda:dock()['windows']==2 and not dock()['animating'],'Stack reorder did not settle')
+        assert dock()['createdIcons']==created and {a['key'] for a in dock()['actors']}<before,'Surviving stack actors were recreated'
+        assert dock()['handle']['appearance']['presence']>.999,'Stack reorder replayed surviving icons'
         park(windows[2]);wait(lambda:not dock()['animating'],'Stack did not settle after stash')
-        click(dock()['handle']);wait(lambda:dock()['expanded'] and not dock()['animating'],'Floating dock did not expand')
-        subprocess.run(['wtype',*(['-k','Up']*3),'-k','Down'],check=True)
-        wait(lambda:dock()['currentIndex']==1,'Middle row was not selected')
+        click(dock()['handle'])
+        try:wait(lambda:dock()['expanded'] and not dock()['animating'],'Floating dock did not expand')
+        except AssertionError:
+            print('Fan expansion diagnostics:',json.dumps(dock()),flush=True)
+            raise
+        back='Up' if dock()['fan']['sign']>0 else 'Down'
+        forward='Down' if dock()['fan']['sign']>0 else 'Up'
+        subprocess.run(['wtype',*(['-k',back]*3),'-k',forward],check=True)
+        try:wait(lambda:dock()['currentIndex']==1,'Middle row was not selected')
+        except AssertionError:
+            print('Fan keyboard diagnostics:',json.dumps({'back':back,'forward':forward,'dock':dock()}),flush=True)
+            raise
         created=dock()['createdIcons'];removed=restore_animated(windows[1],'floating')
         assert dock()['currentKey']!=removed,'Keyboard cursor stayed on a retiring row'
         wait(lambda:not dock()['animating'] and not dock()['exitingIcons'],'Floating row removal did not settle')
         assert dock()['createdIcons']==created,'Removing a row recreated surviving rows'
         restore(windows[0]);restore(windows[2]);empty()
-        print('PASS floating stack entry/exit, artwork crossfade and stable expanded-row reflow',flush=True)
+        print('PASS floating stack entry/exit, preserved actors and stable fan reflow',flush=True)
 
         configure('presentation','dock');configure('animations','reduced');park(windows[0]);s=stable_static(1)
         assert s['shelf']['icons'][0]['appearance']['feedback']['scale']==1,'Reduced mode scaled an icon'

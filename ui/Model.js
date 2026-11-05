@@ -112,28 +112,6 @@ function dockLength(count, size, gap) {
   return count > 0 ? count * size + (count - 1) * gap : 0
 }
 
-function floatingPanel(x, y, handleHeight, width, height, count, padding, gap, rowHeight, preferredDown, horizontal, endPadding) {
-  var margin = 8, panelWidth = rowHeight + padding * 2
-  var ends = typeof endPadding === "number" ? Math.max(padding,endPadding) : padding
-  var desired = dockLength(count,rowHeight,gap) + ends * 2
-  if (horizontal) {
-    var right = Math.max(0, width - margin - x - 48 - gap)
-    var left = Math.max(0, x - gap - margin)
-    var forward = typeof preferredDown === "boolean" ? preferredDown : right >= desired || right >= left
-    var extent = Math.min(desired, forward ? right : left)
-    return {x:forward ? x + 48 + gap : x - gap - extent,
-      y:Math.max(margin, Math.min(height - margin - panelWidth, y + (48 - panelWidth) / 2)),
-      width:extent,height:panelWidth,forward:forward,right:forward,down:false,horizontal:true}
-  }
-  var below = Math.max(0, height - margin - y - handleHeight - gap)
-  var above = Math.max(0, y - gap - margin)
-  var down = typeof preferredDown === "boolean" ? preferredDown : below >= desired || below >= above
-  var panelHeight = Math.min(desired, down ? below : above)
-  return {x:Math.max(margin, Math.min(width - margin - panelWidth, x + (48 - panelWidth) / 2)),
-    y:down ? y + handleHeight + gap : y - gap - panelHeight,
-    width:panelWidth, height:panelHeight, down:down,forward:down,right:false,horizontal:false}
-}
-
 // Hyprland reserved edges are logical pixels in left/top/right/bottom order.
 function usableArea(width, height, reserved) {
   reserved = reserved || []
@@ -236,4 +214,60 @@ function reconcileKeys(previous, desired) {
   result.forEach(function(key,i) { if (desired.indexOf(key)>=0) active.push(i) })
   active.forEach(function(at,i) { result[at]=desired[i] })
   return result
+}
+
+// Keep the newest tile under the invocation point; fan toward available space.
+function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, preferredSign, preferredCurve) {
+  var padX=horizontal ? endInset : inset, padY=horizontal ? inset : endInset
+  var x=Math.max(area.x+padX,Math.min(area.x+area.width-size-padX,px-size/2))
+  var y=Math.max(area.y+padY,Math.min(area.y+area.height-size-padY,py-size/2))
+  // Near an edge, cursor coverage takes precedence over symmetric padding.
+  x=Math.max(area.x,Math.min(area.x+Math.max(0,area.width-size),Math.min(px,Math.max(px-size+1,x))))
+  y=Math.max(area.y,Math.min(area.y+Math.max(0,area.height-size),Math.min(py,Math.max(py-size+1,y))))
+  var step=size+gap
+  var ahead=horizontal ? area.x+area.width-padX-x-size : area.y+area.height-padY-y-size
+  var behind=horizontal ? x-area.x-padX : y-area.y-padY
+  var sign=preferredSign===1 || preferredSign===-1 ? preferredSign
+    : ahead >= dockLength(count,size,gap)-size || ahead >= behind ? 1 : -1
+  var capacity=count ? Math.min(count,Math.max(1,1+Math.floor(Math.max(0,sign>0 ? ahead : behind)/step))) : 0
+  var crossBefore=horizontal ? y-area.y : x-area.x
+  var crossAfter=horizontal ? area.y+area.height-y-size : area.x+area.width-x-size
+  return {x:Math.round(x),y:Math.round(y),horizontal:horizontal,sign:sign,forward:sign>0,
+    capacity:capacity,step:step,size:size,span:dockLength(capacity,size,gap),
+    curveSign:preferredCurve===1 || preferredCurve===-1 ? preferredCurve : crossBefore>=crossAfter ? -1 : 1,
+    curveLimit:Math.max(0,Math.min(18,Math.max(crossBefore,crossAfter)-inset))}
+}
+
+function fanSlot(layout, index, first) {
+  var slot=Math.max(0,Math.min(Math.max(0,layout.capacity-1),index-first))
+  return {x:layout.x+(layout.horizontal ? layout.sign*slot*layout.step : 0),
+    y:layout.y+(layout.horizontal ? 0 : layout.sign*slot*layout.step),
+    shown:index>=first && index<first+layout.capacity}
+}
+
+function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area) {
+  var bend=Math.sin(Math.PI*Math.max(0,Math.min(1,progress)))*Math.min(layout.curveLimit,8+Math.max(0,ordinal)*3)
+  return {x:Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*progress+(layout.horizontal ? 0 : bend*layout.curveSign))),
+    y:Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*progress+(layout.horizontal ? bend*layout.curveSign : 0))),bend:bend}
+}
+
+function fanBounds(rects, inset, endInset, horizontal, area) {
+  if (!rects.length) return {x:area.x,y:area.y,width:0,height:0}
+  var left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity
+  rects.forEach(function(r) { left=Math.min(left,r.x); top=Math.min(top,r.y); right=Math.max(right,r.x+r.width); bottom=Math.max(bottom,r.y+r.height) })
+  left=Math.max(area.x,left-(horizontal ? endInset : inset)); top=Math.max(area.y,top-(horizontal ? inset : endInset))
+  right=Math.min(area.x+area.width,right+(horizontal ? endInset : inset)); bottom=Math.min(area.y+area.height,bottom+(horizontal ? inset : endInset))
+  return {x:Math.floor(left),y:Math.floor(top),width:Math.ceil(right)-Math.floor(left),height:Math.ceil(bottom)-Math.floor(top)}
+}
+
+function fanRadius(frame, rects, desired, border) {
+  var radius=Math.min(desired,frame.width/2,frame.height/2)
+  rects.forEach(function(r) {
+    var xs=[r.x-frame.x,frame.x+frame.width-r.x-r.width],ys=[r.y-frame.y,frame.y+frame.height-r.y-r.height]
+    xs.forEach(function(x) { ys.forEach(function(y) {
+      var a=Math.max(0,x-border),b=Math.max(0,y-border)
+      radius=Math.min(radius,Math.max(0,a+b+border+Math.sqrt(2*a*b)))
+    }) })
+  })
+  return Math.max(0,radius)
 }

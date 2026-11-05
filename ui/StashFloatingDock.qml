@@ -1,8 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Controls as Controls
+import QtQuick.Window
 import Quickshell
-import Quickshell.Widgets as Widgets
 import Quickshell.Hyprland
 import qs.Commons
 import qs.Commons as Commons
@@ -11,7 +10,7 @@ import "Model.js" as Model
 import "Motion.js" as Motion
 
 Item {
-  id: dock
+  id:dock
   required property var stash
   required property var hostWindow
   required property var monitor
@@ -20,256 +19,329 @@ Item {
   required property var groups
   required property var windows
   property var savedPosition
-  signal inputChanged()
-  signal iconExited(string key,int frames)
-  property bool active: false
-  property bool expanded: false
-  property bool grabReady: false
-  readonly property bool requestedHorizontal: config.floatingDirection === "horizontal"
-  property bool horizontal: false
-  readonly property bool dockFrameVisible: config.dockFrame !== "hidden"
-  readonly property bool snapEdges: config.floatingPlacement !== "free"
-  readonly property var usableArea: Model.usableArea(width,height,monitor ? monitor.reserved : [])
-  property var pendingPosition: null
-  property bool motionReady: false
-  property bool held: false
-  property real anchorX: 0
-  property real anchorY: 0
-  property var displayWindows: []
-  readonly property var displayGroups:iconModel.entries
+  property bool active:false
+  property bool expanded:false
+  property bool grabReady:false
+  property bool held:false
+  property bool motionReady:false
+  property bool closeForPlacement:false
+  property bool placementPending:false
+  property string lastDismissal:""
+  property var pendingPosition:null
+  property real anchorX:0
+  property real anchorY:0
+  property real pivotX:anchorX+24
+  property real pivotY:anchorY+24
+  property int fanSign:0
+  property int fanCurve:0
+  property int firstIndex:0
+  property string selectedKey:""
+  property bool horizontal:false
+  property int createdIcons:0
+  property int openingFrames:0
+  property int closingFrames:0
+  property var actorRegions:[]
   readonly property string animations:config.animations || "full"
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
-  property var expansionDirection: null
-  property int createdIcons: 0
-  property int openingFrames: 0
-  property int closingFrames: 0
-  readonly property var popupColors: Commons.Color.popups
-  readonly property var metrics: Style.spacing
-  readonly property var panelBorder: Border.surfaceSpec("popups","border",popupColors.border,Style.normalBorderWidth)
-  readonly property real gap: metrics.sm
-  readonly property real inset: metrics.xxs + Math.max(Border.left(panelBorder), Border.right(panelBorder),
-    Border.top(panelBorder), Border.bottom(panelBorder))
-  readonly property real targetRadius:Model.dockRadius(config.dockCorners,config.dockCornerRadius,Style.cornerRadius,44+inset*2,44+inset*2)
-  readonly property real endInset:Math.max(inset,Model.dockEndInset(targetRadius,inset,
-    Math.max(Border.left(panelBorder),Border.right(panelBorder),Border.top(panelBorder),Border.bottom(panelBorder))))
-  readonly property int stackDepth: Math.min(3, displayWindows.length)
-  readonly property int tail: Math.max(0, stackDepth - 1) * 4
-  property real stackTail: tail
-  property real handleOpacity: active ? 1 : 0
-  property real reveal: open ? 1 : 0
-  readonly property bool open: active && expanded && windows.length > 1
-  readonly property bool present: active || handleOpacity > 0 || reveal > 0
-  readonly property bool animating: revealAnimation.running || handleAnimation.running || tailAnimation.running || extentAnimation.running || iconModel.busy || front.artworkAnimating
-  readonly property var frontGroup: ({app:displayWindows.length ? displayWindows[0].app : "", windows:displayWindows,
-    title:displayWindows.length === 1 ? displayWindows[0].title : displayWindows.length + " stashed windows · Click to expand"})
-  readonly property var geometry: Model.floatingPanel(anchorX, anchorY, handle.height, width, height,
-    displayGroups.length, inset, gap, 44, expansionDirection, horizontal, endInset)
-  property real panelExtent: horizontal ? geometry.width : geometry.height
-  visible: present
-  focus: open
-  Keys.onEscapePressed: close()
-  Keys.onDownPressed: navigate(1)
-  Keys.onUpPressed: navigate(-1)
-  Keys.onRightPressed:function(event) { if (horizontal) navigate(1); else event.accepted=false }
-  Keys.onLeftPressed:function(event) { if (horizontal) navigate(-1); else event.accepted=false }
-  Keys.onReturnPressed: if (open && list.currentIndex >= 0 && list.currentIndex < displayGroups.length)
-    activate(displayGroups[list.currentIndex])
+  readonly property bool requestedHorizontal:config.floatingDirection === "horizontal"
+  readonly property bool snapEdges:config.floatingPlacement !== "free"
+  readonly property bool dockFrameVisible:config.dockFrame !== "hidden"
+  readonly property var usableArea:Model.usableArea(width,height,monitor ? monitor.reserved : [])
+  // Monitor snapshots replace reserved arrays even when their values match.
+  readonly property string areaKey:JSON.stringify(usableArea)
+  readonly property var popupColors:Commons.Color.popups
+  readonly property var metrics:Style.spacing
+  readonly property var panelBorder:Border.surfaceSpec("popups","border",popupColors.border,Style.normalBorderWidth)
+  readonly property real borderWidth:Math.max(Border.left(panelBorder),Border.right(panelBorder),Border.top(panelBorder),Border.bottom(panelBorder))
+  readonly property real gap:metrics.sm
+  readonly property real tileSize:48
+  readonly property real inset:metrics.xxs+borderWidth
+  readonly property real targetRadius:Model.dockRadius(config.dockCorners,config.dockCornerRadius,Style.cornerRadius,tileSize+inset*2,tileSize+inset*2)
+  readonly property real endInset:Math.max(inset,Model.dockEndInset(targetRadius,inset,borderWidth))
+  readonly property int groupCount:iconModel.activeKeys.length
+  readonly property int tail:Math.max(0,Math.min(3,groupCount)-1)*4
+  property real stackTail:tail
+  property real handleOpacity:active ? 1 : 0
+  property real reveal:open ? 1 : 0
+  readonly property bool open:active && expanded && windows.length>1
+  readonly property int currentIndex:iconModel.activeKeys.indexOf(selectedKey)
+  readonly property var geometry:Model.fanLayout(pivotX,pivotY,usableArea,groupCount || iconModel.count,horizontal,tileSize,gap,inset,endInset,fanSign,fanCurve)
+  readonly property int maxFirst:Math.max(0,groupCount-geometry.capacity)
+  readonly property bool overflow:maxFirst>0
+  property bool actorsMoving:false
+  readonly property bool windowActive:Window.active
+  readonly property bool animating:actorsMoving || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
+  readonly property bool present:active || handleOpacity>0 || reveal>0 || actorsMoving
+  readonly property var currentRects:actorRects(false)
+  readonly property var finalRects:actorRects(true)
+  readonly property var bounds:Model.fanBounds(currentRects,inset,endInset,horizontal,usableArea)
+  readonly property var finalBounds:Model.fanBounds(finalRects,inset,endInset,horizontal,usableArea)
+  signal inputChanged()
+  signal iconExited(string key,int frames)
+  visible:present
+  focus:open
+  HoverHandler { id:fanHover }
+  Keys.onEscapePressed:close("escape")
+  Keys.onReturnPressed:if (open && currentIndex>=0) activate(iconModel.dataByKey[selectedKey])
+  // Navigation follows the physical direction of the fan.
+  Keys.onDownPressed:navigate(geometry.sign)
+  Keys.onUpPressed:navigate(-geometry.sign)
+  Keys.onRightPressed:function(event) { if (horizontal) navigate(geometry.sign); else event.accepted=false }
+  Keys.onLeftPressed:function(event) { if (horizontal) navigate(-geometry.sign); else event.accepted=false }
   Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:Motion.duration(dock.animations,180,0); easing.type:Easing.OutCubic } }
   Behavior on handleOpacity { NumberAnimation { id:handleAnimation; duration:Motion.duration(dock.animations,180,100); easing.type:Easing.OutCubic } }
-  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,dock.open ? 200 : 160,100); easing.type:Easing.OutCubic } }
-  Behavior on panelExtent {
-    enabled:dock.open && dock.reveal > 0.99
-    NumberAnimation { id:extentAnimation; duration:Motion.move(dock.animations); easing.type:Easing.OutCubic }
-  }
+  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,dock.open ? 360 : 320,100); easing.type:Easing.OutCubic } }
   Behavior on anchorX { enabled:Motion.full(dock.animations) && dock.motionReady && !dock.held
     NumberAnimation { id:snapXAnimation; duration:240; easing.type:Easing.OutCubic } }
   Behavior on anchorY { enabled:Motion.full(dock.animations) && dock.motionReady && !dock.held
     NumberAnimation { id:snapYAnimation; duration:240; easing.type:Easing.OutCubic } }
+
   StashCollection {
     id:iconModel
-    sourceGroups:dock.active ? dock.groups : []
-    animations:dock.open && dock.reveal>.99 ? dock.animations : "off"
-    hold:!dock.open && dock.reveal>0
+    sourceGroups:dock.config.presentation==="floating" ? dock.groups : []
+    animations:dock.animations
+    hold:!dock.open && (dock.reveal>0 || dock.actorsMoving)
     onReconciled:dock.repairSelection()
   }
-  function syncGroups() { if (iconModel) iconModel.reconcile() }
-  function repairSelection() {
-    if (!list || !iconModel) return
-    if (!iconModel.count) { list.currentIndex=-1; return }
-    var at=Math.max(0,Math.min(list.currentIndex,iconModel.count-1))
-    if (!iconModel.get(at).retiring) { list.currentIndex=at; return }
-    for (var i=at+1;i<iconModel.count;i++) if (!iconModel.get(i).retiring) { list.currentIndex=i; return }
-    for (var j=at-1;j>=0;j--) if (!iconModel.get(j).retiring) { list.currentIndex=j; return }
-    list.currentIndex=-1
+  function hasMovingActors() {
+    for (var i=0;i<actors.count;i++) { var actor=actors.itemAt(i) as StashFanIcon; if (actor && actor.moving) return true }
+    return false
   }
-  function navigate(delta) {
-    var next=list.currentIndex+delta
-    while (next>=0 && next<iconModel.count) {
-      if (!iconModel.get(next).retiring) { list.currentIndex=next; return }
-      next+=delta
+  function actorRects(finalPose) {
+    var result=[]
+    for (var i=0;i<actors.count;i++) {
+      var actor=actors.itemAt(i) as StashFanIcon
+      if (!actor || actor.retiring || (finalPose ? !actor.slotVisible : actor.drawWeight<.01)) continue
+      result.push({x:finalPose ? actor.destinationX : actor.x,y:finalPose ? actor.destinationY : actor.y,width:tileSize,height:tileSize})
+    }
+    return result
+  }
+  function frontActor() {
+    for (var i=0;i<actors.count;i++) {
+      var actor=actors.itemAt(i) as StashFanIcon
+      if (actor && actor.ordinal===0 && !actor.retiring) return actor
+    }
+    return null
+  }
+  function repairSelection() {
+    firstIndex=Math.max(0,Math.min(firstIndex,maxFirst))
+    if (groupCount && currentIndex<0) selectedKey=iconModel.activeKeys[Math.min(firstIndex,groupCount-1)]
+    else if (!groupCount) selectedKey=""
+  }
+  function selectIndex(index) {
+    if (index<0 || index>=groupCount) return
+    selectedKey=iconModel.activeKeys[index]
+    if (index<firstIndex) firstIndex=index
+    else if (index>=firstIndex+geometry.capacity) firstIndex=Math.min(maxFirst,index-geometry.capacity+1)
+  }
+  function navigate(delta) { if (open) selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))) }
+  function setFirst(index) {
+    firstIndex=Math.max(0,Math.min(maxFirst,index))
+    if (currentIndex<firstIndex || currentIndex>=firstIndex+geometry.capacity) selectedKey=iconModel.activeKeys[firstIndex] || ""
+  }
+  function unfoldAt(x,y) {
+    snapXAnimation.stop(); snapYAnimation.stop(); placementPending=true
+    var reversing=(actorsMoving || reveal>0) && horizontal===requestedHorizontal
+    if (!reversing) { horizontal=requestedHorizontal; fanSign=0; fanCurve=0 }
+    pivotX=x; pivotY=y; firstIndex=0
+    selectedKey=iconModel.activeKeys[0] || ""
+    fanSign=geometry.sign; fanCurve=geometry.curveSign
+    expanded=true
+  }
+  function close(reason) { if (expanded) lastDismissal=reason || "dismiss"; expanded=false }
+  function finishClose() {
+    if (!open && !actorsMoving && reveal===0) {
+      horizontal=requestedHorizontal; fanSign=0; fanCurve=0; firstIndex=0
+      if (placementPending) positionUpdate.restart()
     }
   }
-  onAnimationsChanged:if (!Motion.full(animations)) {
-    snapXAnimation.complete(); snapYAnimation.complete(); tailAnimation.complete(); extentAnimation.complete()
-    if (animations==="off") { revealAnimation.complete(); handleAnimation.complete() }
-  }
-
   function place() {
-    if (held) return
-    var point = Model.floatingPosition(pendingPosition || savedPosition,width,height,usableArea,snapEdges,48+tail)
-    if (Math.abs(anchorX-point[0])>0.01) anchorX=point[0]
-    if (Math.abs(anchorY-point[1])>0.01) anchorY=point[1]
+    if (held || open || actorsMoving) { placementPending=true; return }
+    placementPending=false
+    var point=Model.floatingPosition(pendingPosition || savedPosition,width,height,usableArea,snapEdges,tileSize+tail)
+    if (Math.abs(anchorX-point[0])>.01) anchorX=point[0]
+    if (Math.abs(anchorY-point[1])>.01) anchorY=point[1]
   }
-  function close() { expanded = false }
-  function preview(index) {
-    var window = displayWindows[Math.min(displayWindows.length - 1, index + 1)]
-    return {app:window ? window.app : "",title:"",windows:window ? [window] : []}
+  function schedulePlacement(closeFan) { placementPending=true; closeForPlacement=closeForPlacement || closeFan; positionUpdate.restart() }
+  Timer {
+    id:positionUpdate; interval:0
+    onTriggered: { if (dock.closeForPlacement) dock.close("geometry"); dock.closeForPlacement=false; dock.place() }
   }
   function activate(group) {
     if (!group || !groups.some(function(g) { return g.key===group.key })) return
-    close()
-    stash.selectGroup(group, screenName)
+    close("restore"); stash.selectGroup(group,screenName)
   }
-  function context(group) {
-    close()
-    stash.openDialog("menu", screenName, group ? group.windows : windows, group)
-  }
+  function context(group) { close("menu"); stash.openDialog("menu",screenName,group ? group.windows : windows,group) }
   function details() {
-    var icons = [], exiting=[]
-    for (var i = 0; i < list.count; i++) {
-      var row = list.itemAtIndex(i) as StashDockRow
-      var item = row ? row.icon : null
-      if (item) {
-        var point = item.mapToItem(dock, 0, 0);
-        (item.retiring ? exiting : icons).push({key:item.group.key,x:point.x,y:point.y,width:item.width,height:item.height,appearance:item.appearance()})
-      }
+    var icons=[],exiting=[],states=[]
+    for (var i=0;i<actors.count;i++) {
+      var actor=actors.itemAt(i) as StashFanIcon
+      if (!actor) continue
+      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.progress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,slotVisible:actor.slotVisible}
+      states.push(record)
+      if ((open || reveal>0) && actor.slotVisible && actor.drawWeight>.01) (actor.retiring ? exiting : icons).push(record)
     }
-    return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,createdIcons:createdIcons,currentIndex:list.currentIndex,currentKey:list.currentIndex>=0 && list.currentIndex<iconModel.count ? iconModel.get(list.currentIndex).groupKey : "",
-      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:grab.active,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
-      handle:{held:held,x:handle.x,y:handle.y,width:handle.width,height:handle.height,opacity:handleOpacity,appearance:front.appearance()},
+    icons.sort(function(a,b) { return iconModel.activeKeys.indexOf(a.key)-iconModel.activeKeys.indexOf(b.key) })
+    var front=frontActor()
+    return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,
+      createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
+      pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
+      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
+      handle:{held:held,x:anchorX,y:anchorY,width:tileSize,height:tileSize+stackTail,opacity:handleOpacity,appearance:front ? front.icon.appearance() : null},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
-        borderWidth:Math.max(panel.borderLeft,panel.borderRight,panel.borderTop,panel.borderBottom),targetHeight:geometry.height,targetWidth:geometry.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.down,right:geometry.right,feedback:panelFeedback.details()},
-      contentHeight:list.contentHeight,viewportHeight:list.height,contentY:list.contentY,
-      contentWidth:list.contentWidth,viewportWidth:list.width,contentX:list.contentX,icons:icons,exitingIcons:exiting}
+        borderWidth:dockFrameVisible ? borderWidth : 0,targetHeight:finalBounds.height,targetWidth:finalBounds.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.forward && !horizontal,right:geometry.forward && horizontal,feedback:panelFeedback.details()},
+      contentHeight:horizontal ? tileSize : Model.dockLength(groupCount,tileSize,gap),viewportHeight:horizontal ? tileSize : geometry.span,contentY:horizontal ? 0 : firstIndex*geometry.step,
+      contentWidth:horizontal ? Model.dockLength(groupCount,tileSize,gap) : tileSize,viewportWidth:horizontal ? geometry.span : tileSize,contentX:horizontal ? firstIndex*geometry.step : 0,icons:icons,exitingIcons:exiting}
   }
-  onAnchorXChanged: inputChanged()
-  onAnchorYChanged: inputChanged()
-  onStackTailChanged: inputChanged()
+  onAnchorXChanged:inputChanged()
+  onAnchorYChanged:inputChanged()
+  onStackTailChanged:inputChanged()
+  onWindowActiveChanged:if (open && grabReady && !windowActive) close("focus")
+  Timer { id:motionUpdate; interval:0; onTriggered: { dock.actorsMoving=dock.hasMovingActors(); dock.finishClose() } }
   onSavedPositionChanged: {
-    if (pendingPosition && JSON.stringify(pendingPosition) === JSON.stringify(savedPosition)) pendingPosition=null
-    place()
+    if (pendingPosition && JSON.stringify(pendingPosition)===JSON.stringify(savedPosition)) pendingPosition=null
+    schedulePlacement(false)
   }
-  onSnapEdgesChanged: { close(); place() }
-  onUsableAreaChanged: place()
-  onTailChanged: place()
-  onWidthChanged: place()
-  onHeightChanged: place()
-  onActiveChanged: {
-    inputChanged()
-    if (!active) close()
-    if (open || reveal === 0) syncGroups()
+  onSnapEdgesChanged:schedulePlacement(true)
+  onAreaKeyChanged:schedulePlacement(true)
+  onTailChanged:schedulePlacement(false)
+  onWidthChanged:schedulePlacement(true)
+  onHeightChanged:schedulePlacement(true)
+  onRequestedHorizontalChanged: { close(); motionUpdate.restart() }
+  onActiveChanged: { inputChanged(); if (!active) close() }
+  onWindowsChanged:if (windows.length<=1) close()
+  onAnimationsChanged:if (!Motion.full(animations)) {
+    snapXAnimation.complete(); snapYAnimation.complete(); tailAnimation.complete()
+    if (animations==="off") { revealAnimation.complete(); handleAnimation.complete() }
   }
-  onWindowsChanged: {
-    if (windows.length) displayWindows=windows.slice()
-    if (windows.length <= 1) close()
-  }
-  onGroupsChanged: if (open || reveal === 0) syncGroups()
-  onRequestedHorizontalChanged: { close(); if (reveal === 0) horizontal=requestedHorizontal }
   onRevealChanged: {
     inputChanged()
-    if (reveal > 0 && reveal < 1) {
-      if (open) openingFrames++
-      else closingFrames++
-    }
-    if (!open && reveal === 0) { expansionDirection=null; horizontal=requestedHorizontal; syncGroups() }
+    if (reveal>0 && reveal<1) { if (open) openingFrames++; else closingFrames++ }
+    motionUpdate.restart()
   }
   onOpenChanged: {
-    grabReady=false
+    inputChanged(); grabReady=false
     if (open) {
-      openingFrames=0
-      syncGroups()
-      expansionDirection=Model.floatingPanel(anchorX,anchorY,handle.height,width,height,
-        displayGroups.length,inset,gap,44,undefined,horizontal,endInset).forward
-      grabDelay.restart()
+      openingFrames=0; grabDelay.restart()
       Qt.callLater(function() { if (dock.open) dock.forceActiveFocus() })
     } else closingFrames=0
   }
   Timer { id:grabDelay; interval:100; onTriggered:dock.grabReady=dock.open }
-  Component.onCompleted: { horizontal=requestedHorizontal; place(); Qt.callLater(function() { dock.motionReady=true }); if (windows.length) displayWindows=windows.slice(); syncGroups() }
-
-  readonly property var inputRegions: !active ? [] : open
-    ? [frontRegion, middleRegion, backRegion, panelRegion] : [frontRegion, middleRegion, backRegion]
-  StashIconRegion { id: frontRegion; originX: dock.anchorX; originY: dock.anchorY
-    size:48; cornerRadius:front.hitRadius; iconShape:front.inputShape }
-  StashIconRegion { id: middleRegion; originX: dock.anchorX; originY: dock.anchorY + Math.min(4,dock.stackTail)
-    size:dock.stackTail > 0 ? 48 : 0; cornerRadius:front.hitRadius; iconShape:front.inputShape }
-  StashIconRegion { id: backRegion; originX: dock.anchorX; originY: dock.anchorY + Math.min(8,dock.stackTail)
-    size:dock.stackTail > 4 ? 48 : 0; cornerRadius:front.hitRadius; iconShape:front.inputShape }
-  Region { id: panelRegion; item: panel; radius: panel.radius }
-  HyprlandFocusGrab {
-    id:grab
-    windows: [dock.hostWindow]
-    active: dock.open && dock.grabReady
-    onCleared: dock.close()
+  Component.onCompleted: { horizontal=requestedHorizontal; schedulePlacement(false); Qt.callLater(function() { dock.motionReady=true }) }
+  Connections {
+    target:Hyprland
+    function onRawEvent(event) {
+      if (!dock.open || !event) return
+      if ((event.name==="activewindowv2" && String(event.data || "").length>0)
+          || event.name==="focusedmon" || event.name==="workspace" || event.name==="workspacev2") dock.close(event.name)
+    }
   }
 
-  Item {
-    id: handle
-    x: dock.anchorX; y: dock.anchorY
-    width:48; height:48 + dock.stackTail
-    enabled:dock.active
-    Repeater {
-      model: dock.active || dock.handleOpacity > 0 ? 2 : 0
-      delegate: StashIcon {
-        required property int index
-        readonly property int layerNumber:2-index
-        y:Math.min(layerNumber*4,dock.stackTail)
-        property real layerPresence:dock.stackDepth > layerNumber ? 1 : 0
-        opacity:layerPresence*visualOpacity
-        visible:layerPresence > 0
-        Behavior on layerPresence { NumberAnimation { duration:Motion.duration(dock.animations,140,100); easing.type:Easing.OutCubic } }
-        group:dock.preview(layerNumber-1)
-        animations:dock.animations
-        idleOpacity:dock.iconIdleOpacity
-        presence:dock.handleOpacity
-        bubble:true; frameVisible:dock.config.iconFrame !== "hidden"; iconShape:front.iconShape; enabled:false
-        hasCursor:drag.containsMouse || dock.open
-        externalPressed:drag.pressed
-      }
+  readonly property var inputRegions:!active ? [] : open ? actorRegions.concat([panelRegion]) : [frontRegion,middleRegion,backRegion]
+  StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:48; iconShape:dock.config.iconFrame==="hidden" ? "square" : dock.config.iconShape || "auto"
+    cornerRadius:dock.config.iconFrame==="hidden" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",48,true,Style.cornerRadius) }
+  StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(4,dock.stackTail); size:dock.stackTail>0 ? 48 : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
+  StashIconRegion { id:backRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(8,dock.stackTail); size:dock.stackTail>4 ? 48 : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
+  Region { id:panelRegion; item:panel; radius:panel.radius }
+  StashDockSurface {
+    id:panel
+    z:-1
+    x:dock.bounds.x; y:dock.bounds.y; width:dock.bounds.width; height:dock.bounds.height
+    visible:dock.reveal>0
+    opacity:dock.reveal
+    frameOpacity:panelFeedback.opacityProgress
+    radius:dock.dockFrameVisible ? Model.fanRadius(dock.bounds,dock.currentRects,dock.targetRadius,dock.borderWidth) : 0
+    color:dock.dockFrameVisible ? dock.popupColors.background : "transparent"
+    borderSpec:dock.dockFrameVisible ? dock.panelBorder : Border.none()
+    onXChanged:dock.inputChanged()
+    onYChanged:dock.inputChanged()
+    onWidthChanged:dock.inputChanged()
+    onHeightChanged:dock.inputChanged()
+    onRadiusChanged:dock.inputChanged()
+    StashFeedback { id:panelFeedback; animations:dock.animations; idleOpacity:(dock.config.dockOpacity===undefined ? 100 : dock.config.dockOpacity)/100; hot:dock.open && fanHover.hovered }
+  }
+  WheelHandler {
+    enabled:dock.open && dock.overflow
+    target:null
+    onWheel:function(event) {
+      var delta=dock.horizontal ? (event.angleDelta.x || event.angleDelta.y) : event.angleDelta.y
+      if (delta) dock.setFirst(dock.firstIndex+(delta>0 ? -1 : 1))
+      event.accepted=true
     }
-    StashIcon {
-      id: front
-      group:dock.frontGroup
+  }
+  DragHandler {
+    id:pan
+    enabled:dock.open && dock.overflow
+    target:null
+    acceptedButtons:Qt.LeftButton
+    property int beganAt:0
+    onActiveChanged:if (active) beganAt=dock.firstIndex
+    onActiveTranslationChanged:if (active) {
+      var delta=dock.horizontal ? activeTranslation.x : activeTranslation.y
+      dock.setFirst(beganAt-Math.round(delta/(dock.geometry.step*dock.geometry.sign)))
+    }
+  }
+  Repeater {
+    id:actors
+    model:iconModel
+    delegate:StashFanIcon {
+      id:actor
+      required property string groupKey
+      required retiring
+      readonly property int liveIndex:iconModel.activeKeys.indexOf(groupKey)
+      property int lastIndex:Math.max(0,liveIndex)
+      onLiveIndexChanged:if (liveIndex>=0) lastIndex=liveIndex
+      ordinal:liveIndex>=0 ? liveIndex : lastIndex
+      group:iconModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
+      displayGroup:ordinal===0 && !dock.open ? {key:group.key,app:group.app,windows:dock.windows.length ? dock.windows : group.windows,title:dock.windows.length===1 ? group.title : dock.windows.length+" stashed windows · Click to expand"} : group
+      geometry:dock.geometry
+      area:dock.usableArea
+      readonly property var slot:Model.fanSlot(dock.geometry,ordinal,dock.firstIndex)
+      destinationX:slot.x; destinationY:slot.y
+      slotVisible:slot.shown
+      stackX:dock.anchorX; stackY:dock.anchorY+Math.min(ordinal,2)*4
+      expanded:dock.open
+      globalPresence:dock.handleOpacity
       animations:dock.animations
       idleOpacity:dock.iconIdleOpacity
-      presence:dock.handleOpacity
-      frameVisible:dock.config.iconFrame !== "hidden"
-      onFrameVisibleChanged:dock.inputChanged()
-      bubble:true
+      frameVisible:dock.config.iconFrame!=="hidden"
       iconShape:dock.config.iconShape || "auto"
-      hasCursor:drag.containsMouse || dock.open
-      externalPressed:drag.pressed
-      enabled:false
+      hasCursor:dock.open ? dock.selectedKey===groupKey : stackHover.hovered
+      externalPressed:!dock.open && drag.pressed
+      onActivated:dock.activate(group)
+      onContextRequested:dock.context(group)
+      onHovered:function(value) { if (value && actor.interactive && !pan.active && !actor.moving) dock.selectIndex(actor.ordinal) }
+      onInputChanged: { dock.inputChanged(); motionUpdate.restart() }
+      onExited:function(frames) { dock.iconExited(groupKey,frames) }
+      property Region hitRegion:StashIconRegion { originX:actor.x; originY:actor.y; size:actor.interactive ? 48 : 0; iconShape:actor.icon.inputShape; cornerRadius:actor.icon.hitRadius }
+      Component.onCompleted: { dock.createdIcons++; var next=dock.actorRegions.slice(); next.push(hitRegion); dock.actorRegions=next }
+      Component.onDestruction:dock.actorRegions=dock.actorRegions.filter(function(region) { return region!==hitRegion })
     }
-    Ui.PanelToolTip { visible: drag.containsMouse && !drag.pressed && !dock.open; text:dock.frontGroup.title }
+  }
+  Item {
+    id:handle
+    z:20000
+    x:dock.anchorX; y:dock.anchorY; width:48; height:48+dock.stackTail
+    enabled:dock.active && !dock.open
+    HoverHandler { id:stackHover }
+    Ui.PanelToolTip { visible:stackHover.hovered && !drag.pressed && !dock.open; text:dock.windows.length===1 ? dock.windows[0].title : dock.windows.length+" stashed windows · Click to expand" }
     MouseArea {
-      id: drag
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      id:drag
+      anchors.fill:parent
+      acceptedButtons:Qt.LeftButton | Qt.RightButton
       hoverEnabled:true
       preventStealing:true
       cursorShape:Qt.PointingHandCursor
       property point start
       property bool dragging:false
-      onPressed: function(mouse) {
+      onPressed:function(mouse) {
         start=Qt.point(mouse.x,mouse.y); dragging=false
-        if (mouse.button === Qt.LeftButton) { dock.held=true; snapXAnimation.stop(); snapYAnimation.stop() }
+        if (mouse.button===Qt.LeftButton) { dock.held=true; snapXAnimation.stop(); snapYAnimation.stop() }
       }
-      onPositionChanged: function(mouse) {
-        if (!pressed || pressedButtons !== Qt.LeftButton) return
-        var dx=mouse.x-start.x, dy=mouse.y-start.y
+      onPositionChanged:function(mouse) {
+        if (!pressed || pressedButtons!==Qt.LeftButton) return
+        var dx=mouse.x-start.x,dy=mouse.y-start.y
         if (dragging || Math.abs(dx)+Math.abs(dy)>6) {
-          if (!dragging) dock.close()
           dragging=true
           var point=Model.floatingAnchor([dock.anchorX+dx,dock.anchorY+dy],dock.width,dock.height)
           dock.anchorX=point[0]; dock.anchorY=point[1]
@@ -278,113 +350,16 @@ Item {
       function finishDrag() {
         dock.held=false
         var point=Model.floatingPosition([dock.anchorX,dock.anchorY],dock.width,dock.height,dock.usableArea,dock.snapEdges,48+dock.tail).map(Math.round)
-        dock.pendingPosition=point
-        dock.place()
+        dock.pendingPosition=point; dock.place()
         dock.stash.recordPosition(dock.monitor,"dock:floating",point[0],point[1])
       }
-      onCanceled: finishDrag()
-      onReleased: function(mouse) {
+      onCanceled:if (dock.held) finishDrag()
+      onReleased:function(mouse) {
         if (dragging) { finishDrag(); return }
         dock.held=false
-        dock.place()
-        if (mouse.button === Qt.RightButton) dock.context(null)
-        else if (dock.windows.length === 1) dock.activate(dock.groups[0])
-        else dock.expanded=!dock.expanded
-      }
-    }
-  }
-  StashDockSurface {
-    id: panel
-    frameOpacity:panelFeedback.opacityProgress
-    HoverHandler { id:panelHover }
-    StashFeedback {
-      id:panelFeedback
-      animations:dock.animations
-      idleOpacity:(dock.config.dockOpacity === undefined ? 100 : dock.config.dockOpacity)/100
-      hot:dock.open && panelHover.hovered
-    }
-    visible:dock.reveal > 0
-    enabled:dock.open
-    clip:true
-    opacity:Motion.full(dock.animations) ? Math.min(1,dock.reveal*2) : dock.reveal
-    x:Math.round(dock.horizontal ? (dock.geometry.forward ? dock.anchorX+48+dock.gap : dock.anchorX-dock.gap-width) : dock.geometry.x)
-    y:Math.round(dock.horizontal ? dock.geometry.y : (dock.geometry.forward ? dock.anchorY+handle.height+dock.gap : dock.anchorY-dock.gap-height))
-    width:dock.horizontal ? Math.round(dock.panelExtent*(Motion.full(dock.animations) ? dock.reveal : 1)) : dock.geometry.width
-    height:dock.horizontal ? dock.geometry.height : Math.round(dock.panelExtent*(Motion.full(dock.animations) ? dock.reveal : 1))
-    radius:!dock.dockFrameVisible ? 0 : Model.dockRadius(dock.config.dockCorners,dock.config.dockCornerRadius,Style.cornerRadius,width,height)
-    onRadiusChanged:dock.inputChanged()
-    color:dock.dockFrameVisible ? dock.popupColors.background : "transparent"
-    borderSpec:dock.dockFrameVisible ? dock.panelBorder : Border.none()
-    Widgets.ClippingRectangle {
-      anchors.fill:parent
-      radius:panel.radius
-      color:"transparent"
-      contentInsideBorder:false
-      border.color:"transparent"
-      border.width:dock.dockFrameVisible ? Math.max(Border.left(dock.panelBorder),Border.right(dock.panelBorder),Border.top(dock.panelBorder),Border.bottom(dock.panelBorder)) : 0
-      Item {
-        x:(dock.horizontal && !dock.geometry.forward ? panel.width-dock.panelExtent : 0)+(dock.horizontal ? dock.endInset : dock.inset)
-        y:(!dock.horizontal && !dock.geometry.forward ? panel.height-dock.panelExtent : 0)+(dock.horizontal ? dock.inset : dock.endInset)
-        width:Math.max(0,(dock.horizontal ? dock.panelExtent : panel.width)-(dock.horizontal ? dock.endInset : dock.inset)*2)
-        height:Math.max(0,(dock.horizontal ? panel.height : dock.panelExtent)-(dock.horizontal ? dock.inset : dock.endInset)*2)
-        ListView {
-          id:list
-          anchors.fill:parent
-          spacing:dock.gap
-          clip:true
-          boundsBehavior:Flickable.StopAtBounds
-          orientation:dock.horizontal ? ListView.Horizontal : ListView.Vertical
-          model:iconModel
-          currentIndex:0
-          delegate:StashDockRow {
-            id:entry
-            required property string groupKey
-            required retiring
-            animations:dock.animations
-            idleOpacity:dock.iconIdleOpacity
-            required property int index
-            readonly property var liveGroup:iconModel.dataByKey[groupKey] || null
-            property var lastGroup:({key:groupKey,app:"",title:"",windows:[]})
-            onLiveGroupChanged:if (liveGroup) lastGroup=liveGroup
-            Component.onCompleted: { dock.createdIcons++; if (liveGroup) lastGroup=liveGroup }
-            group:lastGroup
-            onExited:function(frames) { dock.iconExited(groupKey,frames) }
-            enabled:index >= 0 && dock.open && !retiring
-            width:dock.horizontal ? 44 : list.width
-            height:dock.horizontal ? list.height : 44
-            frameVisible:dock.config.iconFrame !== "hidden"
-            iconShape:dock.config.iconShape || "auto"
-            hasCursor:ListView.isCurrentItem
-            onHovered: function(isHovered) { if (isHovered) list.currentIndex=index }
-            onActivated:dock.activate(group)
-            onContextRequested:dock.context(group)
-          }
-          displaced:Transition { NumberAnimation { properties:"x,y"; duration:Motion.move(dock.animations); easing.type:Easing.OutCubic } }
-          Controls.ScrollBar.vertical:Controls.ScrollBar {
-            id:scrollbar
-            policy:dock.horizontal ? Controls.ScrollBar.AlwaysOff : Controls.ScrollBar.AsNeeded
-            padding:0
-            contentItem:Rectangle {
-              implicitWidth:dock.metrics.xxs
-              radius:Style.cornerRadius
-              color:Commons.Color.accent
-              opacity:scrollbar.active ? 0.6 : 0
-            }
-            background:Item {}
-          }
-          Controls.ScrollBar.horizontal:Controls.ScrollBar {
-            id:horizontalScrollbar
-            policy:dock.horizontal ? Controls.ScrollBar.AsNeeded : Controls.ScrollBar.AlwaysOff
-            padding:0
-            contentItem:Rectangle {
-              implicitHeight:dock.metrics.xxs
-              radius:Style.cornerRadius
-              color:Commons.Color.accent
-              opacity:horizontalScrollbar.active ? 0.6 : 0
-            }
-            background:Item {}
-          }
-        }
+        if (mouse.button===Qt.RightButton) dock.context(null)
+        else if (dock.windows.length===1) dock.activate(dock.groups[0])
+        else dock.unfoldAt(dock.anchorX+mouse.x,dock.anchorY+mouse.y)
       }
     }
   }

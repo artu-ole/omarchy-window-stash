@@ -69,9 +69,11 @@ def main():
             assert icon['x']>=p['x']+p['inset'] and icon['x']+icon['width']<=p['x']+p['width']-p['inset']
         subprocess.run(['grim','-g','%d,%d %dx%d'%(monitor['x']+p['x']-4,monitor['y']+p['y']-4,p['width']+8,p['height']+8),
                         '/tmp/stash-horizontal-dock.png'],check=True)
-        subprocess.run(['wtype',*(['-k','Left']*len(windows))],check=True)
+        back='Left' if d['fan']['sign']>0 else 'Right'
+        forward='Right' if d['fan']['sign']>0 else 'Left'
+        subprocess.run(['wtype',*(['-k',back]*len(windows))],check=True)
         wait(lambda:dock()['currentIndex']==0,'Left arrow did not select first icon')
-        subprocess.run(['wtype','-k','Right'],check=True)
+        subprocess.run(['wtype','-k',forward],check=True)
         wait(lambda:dock()['currentIndex']==1,'Right arrow did not select next icon')
         subprocess.run(['wtype','-k','Return'],check=True)
         wait(lambda:all(w['address']!=windows[1] for w in command('list')['windows']),'Horizontal keyboard restore failed')
@@ -88,7 +90,7 @@ def main():
         command('position',monitor_identity(monitor),'dock:floating',12,handle['y'])
         shell('refresh')
         wait(lambda:dock()['handle']['x']<20,'Saved left-edge anchor did not apply')
-        d=expand();assert d['panel']['right'] and d['panel']['x']>=d['handle']['x']+48
+        d=expand();first=d['icons'][0];assert first['x']<=d['pointer']['x']<=first['x']+48 and first['y']<=d['pointer']['y']<=first['y']+48
         saved=(d['handle']['x'],d['handle']['y'])
         configure('floatingDirection','vertical')
         wait(lambda:not dock()['expanded'] and dock()['orientation']=='vertical' and not dock()['animating'],'Orientation change did not collapse first')
@@ -120,7 +122,7 @@ def main():
         assert d['contentWidth']-d['viewportWidth']>60
         x=p['x']+p['inset']+d['viewportWidth']/2;y=p['y']+p['height']/2
         pointer.move(*point(x,y));pointer.button(True)
-        for step in range(1,7):pointer.move(*point(max(1,x-step*15),y));time.sleep(.04)
+        for step in range(1,7):pointer.move(*point(max(1,min(surface()['width']-1,x-d['fan']['sign']*step*15)),y));time.sleep(.04)
         pointer.button(False)
         wait(lambda:dock()['contentX']>10,'Horizontal dock could not scroll')
         assert len(command('list')['windows'])==len(baseline)+10,'Scrolling restored a window'

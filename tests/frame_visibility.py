@@ -115,7 +115,8 @@ def main():
                 subprocess.run(['wtype','-k','Escape'],check=True)
                 wait(lambda:not dock()['expanded'] and not dock()['animating'],'Floating dock did not collapse')
         click(dock()['handle']);wait(lambda:dock()['expanded'] and not dock()['animating'],'Dock did not reopen')
-        subprocess.run(['wtype',*(['-k','Left']*3),'-k','Return'],check=True)
+        back='Left' if dock()['fan']['sign']>0 else 'Right'
+        subprocess.run(['wtype',*(['-k',back]*3),'-k','Return'],check=True)
         wait(lambda:surface()['groups']==2,'Frameless keyboard selection did not restore');park(windows[-1],3)
         print('PASS frameless stack, both floating directions, unchanged positions, keyboard selection and restore',flush=True)
 

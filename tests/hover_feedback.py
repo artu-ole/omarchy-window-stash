@@ -113,7 +113,8 @@ def main():
         # pointer still resting on the row selected by the mouse.
         hover(dock()['icons'][1])
         wait(lambda:dock()['currentIndex']==1,'Pointer did not select row')
-        subprocess.run(['wtype','-k','Left'],check=True)
+        back='Left' if dock()['fan']['sign']>0 else 'Right'
+        subprocess.run(['wtype','-k',back],check=True)
         wait(lambda:dock()['currentIndex']==0 and dock()['icons'][0]['appearance']['feedback']['hover']>.999
              and dock()['icons'][1]['appearance']['feedback']['hover']<.001,'Mouse and keyboard highlights diverged')
         subprocess.run(['wtype','-k','Return'],check=True)

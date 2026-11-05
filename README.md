@@ -10,7 +10,15 @@ controller; no compiled compositor plugin or additional daemon.
 |---|---|
 | **Static dock** | A slim dock on any screen edge. Respects bar reservations; long lists scroll. |
 | **Floating bubbles** | Separate draggable icons, starting at the middle right. Snap to edges or place freely. |
-| **Floating dock** | One draggable stack. A single window restores directly; multiple windows expand into a horizontal or vertical dock. |
+| **Floating dock** | One draggable stack. A single window restores directly; multiple windows fan into a row or column, newest under the pointer. |
+
+Click the floating stack to fan out the same icons beneath the pointer. The
+newest window is immediately under the cursor; older icons follow the configured
+axis toward available screen space. Full animations use curved, staggered motion
+and a restrained settling curve. Dismissal folds the icons back to their saved
+stack position. Outside clicks reach the underlying window; focus or workspace
+changes also collapse the fan. Scroll or drag along the fan to reach overflow;
+arrow keys follow its physical direction. Reduced uses fades; Off is immediate.
 
 Uses Omarchy's theme and shared controls. Configure grouping, visibility, icon
 shapes, frames, corners, placement, and motion. Empty stashes occupy no screen
@@ -69,7 +77,7 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Restore destination, settings, all windows | Right-click an icon or floating stack |
 | Move bubbles / floating dock | Drag the icon / stack handle; positions persist per monitor |
 | Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
-| Collapse floating dock | Click its handle, click outside, or press Escape |
+| Collapse floating dock | Click outside, switch focus/workspace, or press Escape |
 
 Shortcuts are ordinary Hyprland bindings to `window-stash minimize` and
 `window-stash restore-last`; change them in your personal bindings as needed.
@@ -187,6 +195,7 @@ python3 tools/check.py             # unit/model checks, offscreen Qt, manifest, 
 python3 tests/live.py              # controller + desktop integration
 python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
+python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator
