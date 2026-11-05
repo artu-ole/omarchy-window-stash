@@ -1,8 +1,6 @@
 # Window Stash
 
-**Your windows. On your terms.**
-
-![Window Stash: static dock, floating bubbles, and an expandable floating dock, with theme and icon-shape variations. Illustrative artwork.](assets/title.png)
+![Diagram of Window Stash's static dock, floating bubbles, and expandable floating dock, with icon-shape and opacity samples.](assets/title.png)
 
 Window minimization for Omarchy. Park live Hyprland windows, then restore them to
 the current or original workspace. A QML frontend and standard-library Python
@@ -199,4 +197,4 @@ notify **five seconds before taking input**, and restore desktop state in cleanu
 See [tests/](tests/) and [VALIDATION.md](VALIDATION.md) for coverage and commands.
 
 Copyright © 2026 **artu-ole** · [AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md).
-Banner: generated product illustration; [generation prompt](assets/title-prompt.txt).
+Header diagram: [generation prompt](assets/title-prompt.txt).
