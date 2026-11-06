@@ -18,10 +18,38 @@ def main():
         a,_=t.spawn();b,_=t.spawn();ra=t.park(a);rb=t.park(b);t.resting()
         key='window:'+str(rb.get('stableId') or rb['id'])
         def open_menu(rect):
+            if rect.get('key') and rect.get('appearance',{}).get('pointer'):
+                # A saved-position update acknowledges logical geometry before
+                # the next Wayland frame commits its new input region.
+                x=rect['x']+rect['width']/2;y=rect['y']+rect['height']/2
+                motion=[False]
+                def entered():
+                    motion[0]=not motion[0]
+                    t.move(x+(1 if motion[0] else 0),y)
+                    icon=t.icon(rect['key'])
+                    return icon and icon['appearance']['pointer']['hover']
+                wait(entered,'The repositioned context-menu icon never became interactive')
+            before=shell('status');serial=t.menu()['serial'];history=[]
+            def sample():
+                status=shell('status');m=t.menu()
+                state=dict(serial=m['serial'],opened=m['opened'],progress=m['progress'],
+                           observer=status['clickObserverCount'],armed=status['clickObserverActive'],
+                           context=status['context'],surfaceWorkspace=t.surface()['workspaceId'],
+                           activeWorkspace=h.read('activeworkspace')['id'])
+                if not history or history[-1]!=state:
+                    history.append(state)
+                return m if m['serial']>serial and m['visible'] else None
             t.click(rect,273)
-            try:m=wait(lambda:t.menu() if t.menu()['visible'] else None,'Pointer context menu did not open')
+            try:
+                m=wait(sample,'Pointer context menu did not open')
+                if before['clickObserverActive']:
+                    wait(lambda:shell('status')['clickObserverCount']>before['clickObserverCount'],
+                         'The already-armed observer did not report the opening right press')
+                    assert t.menu()['opened'],'The opening right press dismissed its own context menu'
             except AssertionError:
-                print('Menu invocation diagnostics:',shell('status')['context'],t.menu(),flush=True)
+                print('Menu invocation diagnostics:',{'before':before['context'],'observerBefore':before['clickObserverCount'],
+                      'armedBefore':before['clickObserverActive'],'requestedRect':rect,'history':history[:8]+history[-16:],
+                      'cursor':h.read('cursorpos'),'input':t.surface().get('input'),'menu':t.menu()},flush=True)
                 raise
             assert not shell('status')['error'],shell('status')['error']
             return m
@@ -79,6 +107,7 @@ def main():
             dismiss()
             if mode=='floating':
                 t.click(t.dock()['handle']);wait(lambda:t.dock()['expanded'] and not t.dock()['animating'],'Fan did not unfold')
+                wait(lambda:shell('status')['clickObserverActive'],'Expanded fan did not arm the opening-press regression fixture')
                 m=open_menu(t.dock()['icons'][1]);assert m['targetIds']==[ra['id']]
                 dismiss()
         print('PASS static dock, expanded fan, and collapsed front-icon menus',flush=True)

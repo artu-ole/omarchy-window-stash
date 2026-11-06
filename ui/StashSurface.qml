@@ -78,12 +78,28 @@ PanelWindow {
   readonly property bool floatingMode: (config.presentation || "floating") === "floating"
   readonly property bool floatingDockOpen:floatingDock.open
   readonly property bool previewOpen:windowPreview.opened
+  readonly property bool previewPending:windowPreview.pending
   readonly property bool previewsEnabled:(config.hoverPreview || "off")!=="off"
   readonly property string previewLayoutKey:JSON.stringify([config.presentation,config.scope,config.grouping,config.dockSide,config.floatingDirection,config.sizePreset])
   onPreviewLayoutKeyChanged:if (windowPreview) windowPreview.dismiss(true)
   function dismissPreview() { windowPreview.dismiss(true) }
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen
+  property bool pointerFocusHeld:false
+  readonly property bool retainingPointerFocus:pointerFocusHeld && stash.pointerButtonHeld
+  function beginPointerFocusHold() { if (keyboardOpen) pointerFocusHeld=true }
+  Connections {
+    target:surface.stash
+    function onPointerButtonHeldChanged() { if (!surface.stash.pointerButtonHeld) surface.pointerFocusHeld=false }
+  }
+  Item {
+    Shortcut {
+      sequence:"Esc"
+      context:Qt.WindowShortcut
+      enabled:surface.retainingPointerFocus && !surface.keyboardOpen
+      onActivated:surface.stash.resetPointerHold()
+    }
+  }
   onContextMenuOpenChanged: {
     refreshInputMask()
     if (contextMenuOpen) floatingDock.close("menu")
@@ -158,8 +174,17 @@ PanelWindow {
   property bool focusPrimed: false
   // Explicitly invalidate the composed mask after animated geometry changes.
   // https://quickshell.org/docs/v0.3.0/types/Quickshell/Region/#sig.changed
-  function refreshInputMask() { inputUpdate.restart() }
-  Timer { id:inputUpdate; interval:0; onTriggered:inputMask.changed() }
+  function refreshInputMask() { if (!inputUpdate.running) inputUpdate.start() }
+  Timer {
+    id:inputUpdate; interval:0
+    onTriggered: {
+      inputMask.changed()
+      // Region changes queue a polish in Quickshell. A static scene may have
+      // no paint scheduled to flush the updated Wayland input mask.
+      var window=surface.contentItem.Window.window
+      if (window) window.update()
+    }
+  }
   onWidthChanged: refreshInputMask()
   onHeightChanged: refreshInputMask()
   function itemRect(item) {
@@ -452,7 +477,10 @@ PanelWindow {
         visible:number.visible,rect:itemRect(number.numberField.field)})
     }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
-      groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
+      input:{regions:inputMask.regions.map(function(r) { return {x:r.x,y:r.y,width:r.width,height:r.height,radius:r.radius} }),
+        bubbles:surface.bubbleRegions.map(function(r) { return {x:r.x,y:r.y,width:r.width,height:r.height,radius:r.radius} })},
+      groups:groups.length, visible:visible, keyboardOpen:keyboardOpen,retainingPointerFocus:retainingPointerFocus,
+      nativeKeyboardActive:!!surface.contentItem.Window.window && surface.contentItem.Window.window.active,bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
       motion:{mode:animations,speed:animationSpeed,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal,dragWorld:motionWorld.details()},
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
@@ -520,8 +548,9 @@ PanelWindow {
   WlrLayershell.namespace: "omarchy-window-stash"
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
-    ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
-  visible: shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || contextMenu.visible || windowPreview.visible
+    ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
+    : retainingPointerFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+  visible: retainingPointerFocus || shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || contextMenu.visible || windowPreview.visible
   mask: Region {
     id: inputMask
     // Keep motion on this surface during a drag, including the gaps between
@@ -534,10 +563,10 @@ PanelWindow {
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
   // open, its surface owns the screen, just like Omarchy's keyboard panels.
-  Region { id: dialogRegion; width: surface.width; height: surface.height }
-  Region { id: shelfRegion; item: shelf; radius:shelf.radius }
-  Region { id:previewRegion; item:windowPreview; radius:windowPreview.cornerRadius }
-  Region { id: contextRegion; item:contextMenu; radius:contextMenu.radius }
+  Region { id: dialogRegion; width: surface.width; height: surface.height; onChanged:surface.refreshInputMask() }
+  Region { id: shelfRegion; item: shelf; radius:shelf.radius; onChanged:surface.refreshInputMask() }
+  Region { id:previewRegion; item:windowPreview; radius:windowPreview.cornerRadius; onChanged:surface.refreshInputMask() }
+  Region { id: contextRegion; item:contextMenu; radius:contextMenu.radius; onChanged:surface.refreshInputMask() }
 
   StashDockSurface {
     id: shelf
@@ -706,6 +735,7 @@ PanelWindow {
       property Region hitRegion: StashIconRegion {
         originX:bubbleIcon.x; originY:bubbleIcon.y; size:bubbleIcon.retiring ? 0 : bubbleIcon.width
         cornerRadius:bubbleIcon.hitRadius; iconShape:bubbleIcon.inputShape
+        onChanged:surface.refreshInputMask()
       }
       function registerBody() {
         if (registered || retiring || !surface.bubbleMode) return

@@ -23,6 +23,13 @@ Item {
   property var dialogGroup: null
   property string dialogDestination: ""
   property var surfaces: []
+  property var pressedPointerButtons: ({})
+  readonly property bool pointerButtonHeld:Object.keys(pressedPointerButtons).length>0
+  property bool pointerKnown:false
+  property point pointerPosition:Qt.point(0,0)
+  readonly property bool pointerTracking:root.surfaces.some(function(surface) {
+    return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.contextMenuOpen
+  })
   property var previewCompatibilityRequests: ({})
   property var previewCompatibilityStatus: ({state:"idle",ids:[]})
   property string previewCompatibilityError:""
@@ -57,15 +64,28 @@ Item {
   readonly property bool settingsBusy:resetBusy || shortcutsBusy
   onShortcutStampChanged:shortcutSyncDelay.restart()
 
-  signal pointerClicked(real x,real y)
+  signal pointerClicked(real x,real y,int button)
+  signal pointerMoved(real x,real y)
   signal shortcutConfigured(string key,string value)
   signal settingsReset()
   Timer { id:shortcutSyncDelay; interval:0; onTriggered:root.enqueue(["shortcuts-sync"]) }
   StashClickObserver {
     id:clickObserver
-    watching:root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
-    onClicked:function(x,y) { root.pointerClicked(x,y) }
+    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
+    tracking:root.pointerTracking
+    onMoved:function(x,y) { root.pointerPosition=Qt.point(x,y); root.pointerKnown=true; root.pointerMoved(x,y) }
+    onClicked:function(x,y,button) {
+      var held=Object.assign({},root.pressedPointerButtons); held[button]=true
+      root.pressedPointerButtons=held
+      root.surfaces.forEach(function(surface) { surface.beginPointerFocusHold() })
+      root.pointerClicked(x,y,button)
+    }
+    onReleased:function(x,y,button) {
+      var held=Object.assign({},root.pressedPointerButtons); delete held[button]
+      root.pressedPointerButtons=held
+    }
   }
+  function resetPointerHold() { root.pressedPointerButtons={}; clickObserver.resetHeld() }
 
   function refresh() { refreshDelay.restart() }
   function previewCompatibilityRequest(key,id) {
@@ -405,7 +425,10 @@ Item {
     target: Hyprland
     function onRawEvent(event) {
       if (!event) return
-      if (event.name==="configreloaded") shortcutSyncDelay.restart()
+      if (event.name==="configreloaded") {
+        shortcutSyncDelay.restart()
+        root.pointerKnown=false; root.resetPointerHold()
+      }
       if (root.contextOpen && (event.name==="workspace" || event.name==="workspacev2" || event.name==="monitorremoved")) root.closeContext()
       if (event.name === "changeworkspaceid") {
         var parts = String(event.data || "").split(",")
@@ -429,7 +452,8 @@ Item {
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
-        clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,
+        clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,pressedPointerButtons:Object.keys(root.pressedPointerButtons),
+        pointer:{known:root.pointerKnown,tracking:root.pointerTracking,x:root.pointerPosition.x,y:root.pointerPosition.y},
         screens: root.snapshot.monitors.map(function(m) { return m.name }), dialog: root.contextOpen ? "menu" : root.dialogKind, context:{open:root.contextOpen,screen:root.contextScreen,workspace:root.contextWorkspace,ids:root.contextIds}, pendingCloseIds:Object.keys(root.pendingCloseIds), error: root.lastError,
         queueLength: root.queue.length, controllerBusy: worker.running,
         surfaces: root.surfaces.map(function(s) { return s.details() })})

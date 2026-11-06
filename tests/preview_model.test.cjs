@@ -171,3 +171,27 @@ assert.equal(model.contains(rounded,rounded.x+1,rounded.y+1,1000),model.contains
 assert.ok(!model.contains(rounded,rounded.x-.01,rounded.y+30,12))
 assert.ok(!model.contains({x:0,y:0,width:0,height:0},0,0,12))
 console.log('Preview geometry: rounded hit regions match visible corners and clamp oversized radii')
+
+// Native pointer positions override stale item hover independently for the
+// source and the card, including outputs left/above the primary output.
+const sourceBox={x:1258,y:1545,width:44,height:44}
+const cardBox={x:1130,y:1310,width:296,height:227}
+const output={x:-1920,y:-240}
+function contact(x,y,qtSource=true,qtCard=true,known=true,card=cardBox) {
+  return model.hoverContacts(sourceBox,card,known,{x:x+output.x,y:y+output.y},output,qtSource,qtCard,12)
+}
+assert.deepEqual(JSON.parse(JSON.stringify(contact(6,32))),{source:false,card:false,physical:true},
+  'Latched Qt hover kept an unrelated restored-window preview alive')
+assert.equal(contact(1280,1567,false,false).source,true,'A fresh native enter was discarded because Qt had not caught up')
+assert.equal(contact(1280,1567,false,false).card,false)
+assert.equal(contact(1200,1400,true,false).source,false)
+assert.equal(contact(1200,1400,true,false).card,true,'Source-to-preview transfer did not keep the actual hovered card alive')
+assert.equal(contact(cardBox.x,cardBox.y).card,false,'A transparent rounded corner kept the preview open')
+assert.equal(contact(1200,1400,true,true,true,null).card,false,'A closed card retained physical hover')
+assert.equal(contact(6,32,true,false,false).source,true,'Unknown native position lost the Qt fallback')
+assert.equal(contact(6,32,true,false,false).card,false)
+assert.equal(model.hoverContacts(null,null,false,null,null,true,true,12).source,false,'A missing source retained Qt hover')
+assert.equal(model.hoverContacts(null,null,false,null,null,true,true,12).card,false,'A missing card retained Qt hover')
+assert.equal(model.hoverContacts(sourceBox,cardBox,true,{x:NaN,y:1},output,true,true,12).source,false,
+  'Invalid native coordinates fell back to stale Qt hover')
+console.log('Preview hover: native source/card bounds, stale Qt state, negative monitor offsets, rounded corners and unknown-position fallback passed')

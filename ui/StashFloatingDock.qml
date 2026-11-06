@@ -426,10 +426,11 @@ Item {
 
   readonly property var inputRegions:!active ? [] : open ? actorRegions.concat([panelRegion]) : stackFollow.active ? [frontRegion] : [frontRegion,middleRegion,backRegion]
   StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:dock.tileSize; iconShape:dock.config.iconFrame!=="shown" ? "square" : dock.config.iconShape || "auto"
+    onChanged:dock.inputChanged()
     cornerRadius:dock.config.iconFrame!=="shown" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",dock.tileSize,true,Style.cornerRadius) }
-  StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(dock.tailStep,dock.stackTail); size:dock.stackTail>0 ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
-  StashIconRegion { id:backRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(2*dock.tailStep,dock.stackTail); size:dock.stackTail>dock.tailStep ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
-  Region { id:panelRegion; item:panel; radius:panel.radius }
+  StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(dock.tailStep,dock.stackTail); size:dock.stackTail>0 ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius; onChanged:dock.inputChanged() }
+  StashIconRegion { id:backRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(2*dock.tailStep,dock.stackTail); size:dock.stackTail>dock.tailStep ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius; onChanged:dock.inputChanged() }
+  Region { id:panelRegion; item:panel; radius:panel.radius; onChanged:dock.inputChanged() }
   StashDockSurface {
     id:panel
     z:-1
@@ -515,7 +516,7 @@ Item {
       onPointerPressed:if (dock.preview) dock.preview.dismiss(true)
       onInputChanged: { dock.inputChanged(); motionUpdate.restart() }
       onExited:function(frames) { dock.iconExited(groupKey,frames) }
-      property Region hitRegion:StashIconRegion { originX:actor.x; originY:actor.y; size:actor.interactive ? dock.tileSize : 0; iconShape:actor.icon.inputShape; cornerRadius:actor.icon.hitRadius }
+      property Region hitRegion:StashIconRegion { originX:actor.x; originY:actor.y; size:actor.interactive ? dock.tileSize : 0; iconShape:actor.icon.inputShape; cornerRadius:actor.icon.hitRadius; onChanged:dock.inputChanged() }
       Component.onCompleted: { dock.createdIcons++; var next=dock.actorRegions.slice(); next.push(hitRegion); dock.actorRegions=next }
       Component.onDestruction:dock.actorRegions=dock.actorRegions.filter(function(region) { return region!==hitRegion })
     }

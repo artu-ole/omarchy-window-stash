@@ -48,6 +48,18 @@ function contains(rect, x, y, radius) {
   return dx*dx+dy*dy<=radius*radius
 }
 
+// Compositor positions are global logical coordinates; preview rectangles
+// belong to one monitor. Prefer that independent position over latched Qt
+// hover state, while retaining native hover before the first cursor sample.
+function hoverContacts(source, card, known, position, monitor, qtSource, qtCard, radius) {
+  if (!known) return {source:!!source && !!qtSource,card:!!card && !!qtCard,physical:false}
+  if (!position || !monitor || !isFinite(position.x) || !isFinite(position.y)
+      || !isFinite(monitor.x) || !isFinite(monitor.y))
+    return {source:false,card:false,physical:true}
+  var x=position.x-monitor.x,y=position.y-monitor.y
+  return {source:contains(source,x,y),card:contains(card,x,y,radius),physical:true}
+}
+
 function rooms(area, avoid, gap) {
   return {above:clamp(avoid.y-area.y-gap,0,area.height),below:clamp(area.y+area.height-avoid.y-avoid.height-gap,0,area.height),
     left:clamp(avoid.x-area.x-gap,0,area.width),right:clamp(area.x+area.width-avoid.x-avoid.width-gap,0,area.width)}

@@ -19,7 +19,8 @@ Item {
   property string sourceKind:""
   property var sourceRect:({x:0,y:0,width:0,height:0})
   property var avoidRect:null
-  property bool sourceHovered:false
+  property bool qtSourceHovered:false
+  property bool awaitingPointer:false
   property string selectedId:""
   property bool opened:false
   property int createdTiles:0
@@ -30,7 +31,11 @@ Item {
   readonly property bool previewEnabled:mode!=="off"
   readonly property string animations:config.animations || "full"
   readonly property string animationSpeed:config.animationSpeed || "normal"
-  readonly property bool hovered:cardHover.hovered
+  readonly property var hoverContacts:PreviewModel.hoverContacts(sourceItem ? sourceRect : null,
+    opened ? {x:x,y:y,width:width,height:height} : null,stash.pointerKnown,stash.pointerPosition,
+    stash.screenMonitor(screenName),qtSourceHovered,cardHover.hovered,cornerRadius)
+  readonly property bool sourceHovered:hoverContacts.source
+  readonly property bool hovered:hoverContacts.card
   readonly property bool fromFloating:sourceKind==="floating"
   readonly property real cornerRadius:Math.min(Style.cornerRadius,layout.inset*2,width/2,height/2)
   readonly property var records:sourceGroup ? sourceGroup.windows.map(function(w) {
@@ -44,7 +49,7 @@ Item {
   onRowLayoutKeyChanged:reflowDelay.restart()
   readonly property var popupColors:Commons.Color.popups
   readonly property var fonts:Style.font
-  readonly property bool pending:showDelay.running
+  readonly property bool pending:showDelay.running || awaitingPointer
   signal inputChanged()
   signal restoring()
   x:layout.x; y:layout.y; width:layout.width; height:layout.height
@@ -65,6 +70,12 @@ Item {
   onBlockedChanged:if (blocked) dismiss(true)
   onModeChanged:if (!previewEnabled) dismiss(true)
   onHoveredChanged: { if (hovered) hideDelay.stop(); else scheduleHide() }
+  onSourceHoveredChanged: {
+    if (sourceHovered) {
+      hideDelay.stop()
+      if (awaitingPointer) beginShow()
+    } else scheduleHide()
+  }
   onRecordsChanged: {
     if (sourceGroup && !records.length) dismiss(true)
     else if (records.length && !records.some(function(w) { return w.id===selectedId })) selectedId=records[0].id
@@ -87,13 +98,16 @@ Item {
   }
   function request(group,item,value,kind,avoid) {
     if (!value) {
-      if (sourceItem===item) { sourceHovered=false; scheduleHide() }
+      if (sourceItem===item) { qtSourceHovered=false; scheduleHide() }
       return
     }
     if (!previewEnabled || blocked || !group || !group.windows.length || !item) return
     if (sourceItem===item && sourceGroup && sourceGroup.key===group.key) {
       sourceGroup=Object.assign({},group,{windows:group.windows.slice()})
-      sourceHovered=true; hideDelay.stop()
+      qtSourceHovered=true
+      if (sourceHovered) { hideDelay.stop(); if (!opened && !pending) awaitPointer() }
+      else if (opened || showDelay.running) scheduleHide()
+      else awaitPointer()
       return
     }
     dismiss(true)
@@ -102,16 +116,29 @@ Item {
     selectedId=group.windows[0].id; sourceItem=item; sourceKind=kind
     var point=item.mapToItem(coordinateRoot,0,0)
     sourceRect={x:point.x,y:point.y,width:item.width,height:item.height}
-    avoidRect=avoid || sourceRect; sourceHovered=true
-    if (usable()) showDelay.restart()
+    avoidRect=avoid || sourceRect; qtSourceHovered=true
+    if (usable()) awaitPointer()
     else dismiss(true)
   }
+  function beginShow() {
+    if (!sourceHovered || !usable()) return
+    if (!opened && !showDelay.running) showDelay.restart()
+    awaitingPointer=false; candidateCheck.stop(); hideDelay.stop()
+  }
+  function awaitPointer() {
+    // A real enter can precede the shared cursor timer by one frame. Keep
+    // the candidate long enough to receive it, without opening from Qt's
+    // stale hover alone or keeping cursor tracking active indefinitely.
+    if (!usable()) { dismiss(true); return }
+    awaitingPointer=true; candidateCheck.restart()
+  }
   function dismiss(immediate) {
-    showDelay.stop(); hideDelay.stop(); opened=false; sourceHovered=false; sourceItem=null
+    showDelay.stop(); hideDelay.stop(); candidateCheck.stop(); awaitingPointer=false
+    opened=false; qtSourceHovered=false; sourceItem=null
     if (immediate) revealAnimation.complete()
     if (reveal===0) { sourceGroup=null; selectedId="" }
   }
-  function scheduleHide() { if (!sourceHovered && !hovered && (opened || showDelay.running)) hideDelay.restart() }
+  function scheduleHide() { if (!sourceHovered && !hovered && (opened || showDelay.running) && !hideDelay.running) hideDelay.start() }
   function containsPoint(x,y) { return opened && PreviewModel.contains({x:preview.x,y:preview.y,width:width,height:height},x,y,cornerRadius) }
   function windowById(id) { return records.find(function(w) { return w.id===id }) || null }
   function restore(id) {
@@ -148,10 +175,19 @@ Item {
     image.rect=selected ? selected.imageRect : {x:x,y:y,width:0,height:0}
     return {animationSpeed:animationSpeed,fadeDuration:revealAnimation.duration,enabled:previewEnabled,opened:opened,rendered:visible,pending:pending,progress:reveal,
       hovered:hovered,sourceHovered:sourceHovered,groupKey:sourceGroup ? sourceGroup.key : "",recordId:record ? record.id : "",
+      physicalHover:hoverContacts.physical,qtSourceHovered:qtSourceHovered,awaitingPointer:awaitingPointer,
       index:index,count:records.length,rect:{x:x,y:y,width:width,height:height},side:layout.side,sourceRect:sourceRect,
       image:image,imageRect:image.rect,tiles:tiles,createdTiles:createdTiles,viewportRect:rectOf(strip),contentX:strip.contentX,
       contentWidth:strip.contentWidth,overflow:layout.overflow,
       scrolling:{events:wheelEvents,delta:wheelDelta,target:wheelScroll.to,running:wheelScroll.running,dragging:strip.dragging,flicking:strip.flicking}}
+  }
+  Timer {
+    id:candidateCheck; interval:96
+    onTriggered: {
+      if (!preview.awaitingPointer) return
+      if (preview.sourceHovered && preview.usable()) preview.beginShow()
+      else preview.dismiss(true)
+    }
   }
   Timer {
     id:showDelay
@@ -166,7 +202,7 @@ Item {
     onTriggered:if (!preview.sourceHovered && !preview.hovered) preview.dismiss(false)
   }
   Timer {
-    interval:60; repeat:true; running:preview.opened || showDelay.running
+    interval:60; repeat:true; running:preview.opened || preview.pending
     onTriggered: {
       if (!preview.usable()) { preview.dismiss(true); return }
       var p=preview.sourceItem.mapToItem(preview.coordinateRoot,0,0)
@@ -175,6 +211,13 @@ Item {
   }
   Connections {
     target:preview.stash
+    function onPointerMoved() {
+      if (!preview.sourceItem) return
+      if (preview.sourceHovered) {
+        hideDelay.stop()
+        if (preview.awaitingPointer) preview.beginShow()
+      } else preview.scheduleHide()
+    }
     function onPointerClicked(x,y) {
       var monitor=preview.stash.screenMonitor(preview.screenName)
       if (!monitor || !preview.opened) return

@@ -28,6 +28,7 @@ Ui.BorderSurface {
   readonly property var buttons:[hereButton,originalButton,closeButton,allButton,closeAllButton,settingsButton]
   property int currentIndex:0
   property int frames:0
+  property bool openingRightClickPending:false
   property real reveal:opened ? 1 : 0
   visible:reveal>0
   enabled:opened
@@ -52,7 +53,7 @@ Ui.BorderSurface {
   onHeightChanged:inputChanged()
   onOpenedChanged:if (opened) initialize()
   function initialize() {
-    frames=0; currentIndex=0; viewport.contentY=0
+    frames=0; currentIndex=0; viewport.contentY=0; openingRightClickPending=true
     repairSelection()
     Qt.callLater(function() { if (menu.opened) menu.forceActiveFocus() })
   }
@@ -91,8 +92,9 @@ Ui.BorderSurface {
   }
   function details() {
     var ids=["here","original","close","all","closeAll","settings"]
-    return {visible:opened && reveal>.999,opened:opened,rendered:visible,progress:reveal,frames:frames,
-      rect:{x:x,y:y,width:width,height:height},point:{x:stash.contextPoint.x,y:stash.contextPoint.y},
+    return {visible:opened && reveal>.999,opened:opened,rendered:visible,progress:reveal,frames:frames,serial:stash.contextSerial,
+      openingRightClickPending:openingRightClickPending,
+      rect:{x:x,y:y,width:width,height:height},radius:radius,point:{x:stash.contextPoint.x,y:stash.contextPoint.y},
       screen:screenName,workspace:stash.contextWorkspace,caption:caption.text,targetIds:targets.map(function(w) { return w.id }),
       currentIndex:currentIndex,separatorY:separator.mapToItem(host.contentItem,0,0).y,
       actions:ids.map(function(id,index) { return {id:id,text:menu.buttons[index].text,enabled:menu.buttons[index].enabled,rect:menu.actionRect(id)} })}
@@ -113,9 +115,17 @@ Ui.BorderSurface {
     function onContextSerialChanged() { if (menu.opened) menu.initialize() }
     function onPendingCloseIdsChanged() { menu.repairSelection() }
     function onSnapshotChanged() { menu.repairSelection() }
-    function onPointerClicked(px,py) {
+    function onPointerClicked(px,py,button) {
       if (!menu.opened || !menu.host.monitor) return
-      if (!menu.containsPoint(px-menu.host.monitor.x,py-menu.host.monitor.y)) menu.stash.closeContext()
+      var x=px-menu.host.monitor.x,y=py-menu.host.monitor.y
+      // The compositor press can arrive after Qt opens the menu on release.
+      // Its anchor may be in a transparent rounded corner of the new card.
+      // Exempt only that first right press at this invocation's exact anchor.
+      if (menu.openingRightClickPending) {
+        menu.openingRightClickPending=false
+        if (button===273 && Math.abs(x-menu.stash.contextPoint.x)<=2 && Math.abs(y-menu.stash.contextPoint.y)<=2) return
+      }
+      if (!menu.containsPoint(x,y)) menu.stash.closeContext()
     }
   }
   // Card padding is part of this menu; surrounding content keeps its normal mask.

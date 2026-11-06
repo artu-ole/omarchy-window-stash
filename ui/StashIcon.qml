@@ -40,10 +40,10 @@ Ui.BorderSurface {
   property bool previewEnabled:false
   property bool previewSuppressed:false
   readonly property bool previewReady:enabled && !retiring && !positionAnimating && !positionHeld && !down && !previewSuppressed
-  readonly property bool pointerHovered:pointer.containsMouse
-  onPreviewReadyChanged:if (previewEnabled && pointer.containsMouse) hovered(previewReady)
-  onPreviewEnabledChanged:if (previewEnabled && pointer.containsMouse) hovered(previewReady)
-  readonly property bool hot: hasCursor || (!cursorManaged && pointer.containsMouse)
+  readonly property bool pointerHovered:iconHover.hovered
+  onPreviewReadyChanged:if (previewEnabled && pointerHovered) hovered(previewReady)
+  onPreviewEnabledChanged:if (previewEnabled && pointerHovered) hovered(previewReady)
+  readonly property bool hot: hasCursor || (!cursorManaged && pointerHovered)
   readonly property bool down: pointer.pressed || externalPressed
   readonly property real hitRadius: frameVisible ? Model.iconRadius(iconShape, width, bubble, Style.cornerRadius) : 0
   signal activated()
@@ -75,6 +75,7 @@ Ui.BorderSurface {
     Border.left(hoverBorder), Border.right(hoverBorder), Border.top(hoverBorder), Border.bottom(hoverBorder)))
   function appearance() {
     return {width:width,height:height,frameVisible:frameVisible,enabled:enabled,background:String(frameColor),presence:presence,retiring:retiring,presenceFrames:presenceFrames,feedback:interaction.details(),
+      pointer:{hover:iconHover.hovered,mouseAreaHover:pointer.containsMouse,pressed:pointer.pressed},
       borderWidth:Math.max(Border.left(frameBorder),Border.right(frameBorder),Border.top(frameBorder),Border.bottom(frameBorder)),
       artwork:{x:image.x,y:image.y,width:image.width,height:image.height,scale:image.scale,animating:image.animating,blend:image.mix,transitions:image.crossfadeSerial,frames:image.frames},
       badge:{visible:badge.visible,x:badge.x,y:badge.y,width:badge.width,height:badge.height}}
@@ -147,13 +148,21 @@ Ui.BorderSurface {
     }
   }
   Ui.PanelToolTip {
-    visible: !icon.previewEnabled && pointer.containsMouse && !pointer.pressed
+    visible: !icon.previewEnabled && icon.pointerHovered && !pointer.pressed
     text: icon.group.title + (icon.group.windows.length > 1 ? " · " + icon.group.windows.length + " windows" : "")
+  }
+  // Keep hover independent of MouseArea's press/drag state. Its containsMouse
+  // can remain latched across delegate reflow and native focus transitions.
+  HoverHandler {
+    id:iconHover
+    enabled:icon.enabled && !icon.retiring
+    blocking:false
+    cursorShape:Qt.PointingHandCursor
+    onHoveredChanged: { if (!hovered) icon.previewSuppressed=false; icon.hovered(hovered && !icon.previewSuppressed) }
   }
   MouseArea {
     id: pointer
     anchors.fill: parent
-    hoverEnabled: true
     preventStealing: icon.draggable
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
@@ -161,7 +170,6 @@ Ui.BorderSurface {
     property real pressedWidth:0
     property real pressedHeight:0
     property bool dragging: false
-    onContainsMouseChanged: { if (!containsMouse) icon.previewSuppressed=false; icon.hovered(containsMouse && !icon.previewSuppressed) }
     onPressed: function(mouse) { pressedWidth=icon.width;pressedHeight=icon.height;icon.previewSuppressed=true; icon.pointerPressed(mouse.button); start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
     onPositionChanged: function(mouse) {
       if (!icon.draggable || !pressed || pressedButtons !== Qt.LeftButton) return
@@ -173,7 +181,7 @@ Ui.BorderSurface {
       if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(false)
       if (pressedWidth!==icon.width || pressedHeight!==icon.height) { if (icon.draggable) icon.dragFinished();return }
       if (dragging) { icon.dragFinished(); return }
-      if (mouse.button === Qt.MiddleButton) { if (containsMouse) icon.closeRequested() }
+      if (mouse.button === Qt.MiddleButton) { if (icon.pointerHovered) icon.closeRequested() }
       else if (mouse.button === Qt.RightButton) icon.contextRequested(mouse.x,mouse.y)
       else icon.activated()
     }
