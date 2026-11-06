@@ -37,6 +37,9 @@ Item {
   property int firstIndex:0
   property string selectedKey:""
   property bool horizontal:false
+  property string activeAnimation:"arc"
+  readonly property string requestedAnimation:config.floatingAnimation || "arc"
+  readonly property var fanTiming:Motion.fanProfile(activeAnimation)
   property int createdIcons:0
   property int openingFrames:0
   property int closingFrames:0
@@ -110,7 +113,7 @@ Item {
   Keys.onLeftPressed:function(event) { if (horizontal) navigate(-geometry.sign); else event.accepted=false }
   Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:Motion.duration(dock.animations,180,0); easing.type:Easing.OutCubic } }
   Behavior on handleOpacity { NumberAnimation { id:handleAnimation; duration:Motion.duration(dock.animations,180,100); easing.type:Easing.OutCubic } }
-  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,dock.open ? 360 : 320,100); easing.type:Easing.OutCubic } }
+  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,(dock.open ? dock.fanTiming.open : dock.fanTiming.close)+Math.min(dock.fanTiming.limit,Math.max(0,dock.geometry.capacity-1)*dock.fanTiming.stagger),100); easing.type:Easing.OutCubic } }
   Behavior on anchorX { enabled:Motion.full(dock.animations) && dock.motionReady && !dock.held
     NumberAnimation { id:snapXAnimation; duration:240; easing.type:Easing.OutCubic } }
   Behavior on anchorY { enabled:Motion.full(dock.animations) && dock.motionReady && !dock.held
@@ -162,7 +165,7 @@ Item {
   function unfoldAt(x,y) {
     snapXAnimation.stop(); snapYAnimation.stop(); placementPending=true
     var reversing=(actorsMoving || reveal>0) && horizontal===requestedHorizontal
-    if (!reversing) { horizontal=requestedHorizontal; fanSign=0; fanCurve=0 }
+    if (!reversing) { horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0 }
     pivotX=x; pivotY=y; firstIndex=0
     selectedKey=iconModel.activeKeys[0] || ""
     fanSign=geometry.sign; fanCurve=geometry.curveSign
@@ -171,7 +174,7 @@ Item {
   function close(reason) { leaveDelay.stop(); if (expanded) lastDismissal=reason || "dismiss"; expanded=false }
   function finishClose() {
     if (!open && !actorsMoving && reveal===0) {
-      horizontal=requestedHorizontal; fanSign=0; fanCurve=0; firstIndex=0
+      horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0; firstIndex=0
       if (placementPending) positionUpdate.restart()
     }
   }
@@ -197,13 +200,13 @@ Item {
     for (var i=0;i<actors.count;i++) {
       var actor=actors.itemAt(i) as StashFanIcon
       if (!actor) continue
-      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.progress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,slotVisible:actor.slotVisible}
+      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.progress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible}
       states.push(record)
       if ((open || reveal>0) && actor.slotVisible && actor.drawWeight>.01) (actor.retiring ? exiting : icons).push(record)
     }
     icons.sort(function(a,b) { return iconModel.activeKeys.indexOf(a.key)-iconModel.activeKeys.indexOf(b.key) })
     var front=frontActor()
-    return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,
+    return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",style:activeAnimation,animating:animating,progress:reveal,
       createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
       dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
@@ -228,6 +231,7 @@ Item {
   onTailChanged:schedulePlacement(false)
   onWidthChanged:schedulePlacement(true)
   onHeightChanged:schedulePlacement(true)
+  onRequestedAnimationChanged:if (!open && !actorsMoving && reveal===0) activeAnimation=requestedAnimation
   onRequestedHorizontalChanged: { close(); motionUpdate.restart() }
   onActiveChanged: { inputChanged(); if (!active) close() }
   onWindowsChanged:if (windows.length<=1) close()
@@ -324,6 +328,7 @@ Item {
       expanded:dock.open
       globalPresence:dock.handleOpacity
       animations:dock.animations
+      unfoldStyle:dock.activeAnimation
       idleOpacity:dock.iconIdleOpacity
       frameVisible:dock.config.iconFrame!=="hidden"
       iconShape:dock.config.iconShape || "auto"

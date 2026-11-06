@@ -245,10 +245,22 @@ function fanSlot(layout, index, first) {
     shown:index>=first && index<first+layout.capacity}
 }
 
-function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area) {
-  var bend=Math.sin(Math.PI*Math.max(0,Math.min(1,progress)))*Math.min(layout.curveLimit,8+Math.max(0,ordinal)*3)
+function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area, style) {
+  var unit=Math.max(0,Math.min(1,progress)),phase=unit>0 && unit<1 ? Math.sin(Math.PI*unit) : 0
+  var amplitude=8+Math.max(0,ordinal)*3, tilt=0, shrink=.035
+  if (style === "glide") { amplitude=0; shrink=0 }
+  else if (style === "cascade") { amplitude=0; shrink=.07 }
+  else if (style === "spring") { amplitude=4; shrink=.055 }
+  else if (style === "swing") {
+    amplitude=16+Math.max(0,ordinal)*2; shrink=.025
+    tilt=phase*layout.curveSign*Math.min(9,4+Math.max(0,ordinal)*2)
+  }
+  var bend=phase*Math.min(layout.curveLimit,amplitude)
+  // Keep rotated corners within the same square input/work-area envelope.
+  var radians=tilt*Math.PI/180,fit=1/(Math.abs(Math.cos(radians))+Math.abs(Math.sin(radians)))
   return {x:Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*progress+(layout.horizontal ? 0 : bend*layout.curveSign))),
-    y:Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*progress+(layout.horizontal ? bend*layout.curveSign : 0))),bend:bend}
+    y:Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*progress+(layout.horizontal ? bend*layout.curveSign : 0))),
+    bend:bend,tilt:tilt,scale:Math.min(1-shrink*phase,fit)}
 }
 
 function fanBounds(rects, inset, endInset, horizontal, area) {

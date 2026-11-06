@@ -192,3 +192,37 @@ for (const area of [{x:0,y:26,width:2560,height:1574},{x:0,y:40,width:320,height
   }
 }
 console.log('Model: cursor-first fans, both axes, edge bounds, curved paths and safe rounded backgrounds passed')
+
+const motion=vm.createContext({})
+vm.runInContext(fs.readFileSync(__dirname+'/../ui/Motion.js','utf8').replace(/^\.pragma library\s*/,''),motion)
+const styles=['arc','glide','cascade','spring','swing']
+assert.equal(motion.fanProfile('unknown').name,'arc')
+assert.equal(new Set(styles.map(s=>JSON.stringify(motion.fanProfile(s)))).size,5)
+const sampleArea={x:0,y:26,width:1000,height:700}
+const sampleFan=ctx.fanLayout(500,350,sampleArea,3,true,48,4,3,17)
+const samples=styles.map(s=>ctx.fanPose(600,300,500,350,.5,2,sampleFan,sampleArea,s))
+assert.equal(new Set(samples.map(p=>[p.x,p.y,p.scale,p.tilt].join(','))).size,5,'All five paths must be visually distinct')
+for (const style of styles) for (const horizontal of [false,true]) {
+  const profile=motion.fanProfile(style)
+  assert.ok(profile.open+profile.limit<800,'Unfold must finish within the pointer-leave grace period')
+  assert.equal(motion.duration('off',profile.open,100),0)
+  assert.equal(motion.duration('reduced',profile.open,100),100)
+  for (const point of [[12,38],[988,714],[500,350]]) {
+    const fan=ctx.fanLayout(...point,sampleArea,3,horizontal,48,4,3,17)
+    const slot=ctx.fanSlot(fan,2,0)
+    for (const progress of [0,.15,.5,.85,1,1.08]) {
+      const pose=ctx.fanPose(600,300,slot.x,slot.y,progress,2,fan,sampleArea,style)
+      const radians=pose.tilt*Math.PI/180,extent=24*pose.scale*(Math.abs(Math.cos(radians))+Math.abs(Math.sin(radians)))
+      assert.ok(pose.x+24-extent>=sampleArea.x-.001 && pose.x+24+extent<=1000.001)
+      assert.ok(pose.y+24-extent>=sampleArea.y-.001 && pose.y+24+extent<=726.001,'Rotated icon escaped work area')
+      if (progress===0 || progress===1) {
+        assert.equal(pose.scale,1);assert.ok(Math.abs(pose.tilt)<1e-9)
+        assert.ok(Math.abs(pose.x-(progress ? slot.x : 600))<1e-9 && Math.abs(pose.y-(progress ? slot.y : 300))<1e-9)
+      }
+    }
+  }
+}
+const cascade=motion.fanProfile('cascade')
+assert.ok(motion.fanDelay(cascade,2,true,3)>motion.fanDelay(cascade,0,true,3))
+assert.ok(motion.fanDelay(cascade,2,false,3)<motion.fanDelay(cascade,0,false,3))
+console.log('Motion: five distinct fan profiles, stable endpoints, rotated bounds, capped timing and reverse cascade passed')

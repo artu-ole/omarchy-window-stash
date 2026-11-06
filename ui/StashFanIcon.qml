@@ -20,6 +20,8 @@ Item {
   property bool frameVisible:true
   property string iconShape:"auto"
   property string animations:"full"
+  property string unfoldStyle:"arc"
+  readonly property var timing:Motion.fanProfile(unfoldStyle)
   property real idleOpacity:1
   property real globalPresence:1
   property bool hasCursor:false
@@ -27,12 +29,15 @@ Item {
   property real progress:0
   property int motionFrames:0
   property real maxBend:0
+  property real maxTilt:0
+  property real minScale:1
+  property real peakProgress:0
   property bool ready:false
   property real pageWeight:slotVisible ? 1 : 0
   readonly property alias icon:graphic
   readonly property bool moving:spread.running || destinationXAnimation.running || destinationYAnimation.running || pageFade.running
   readonly property real spatialProgress:Motion.full(animations) ? progress : expanded ? 1 : 0
-  readonly property var pose:Model.fanPose(stackX,stackY,destinationX,destinationY,spatialProgress,ordinal,geometry,area)
+  readonly property var pose:Model.fanPose(stackX,stackY,destinationX,destinationY,spatialProgress,ordinal,geometry,area,unfoldStyle)
   readonly property real stackWeight:ordinal<3 ? 1 : 0
   readonly property real drawWeight:Math.max(0,Math.min(1,stackWeight+(pageWeight-stackWeight)*progress))
   readonly property bool interactive:expanded && slotVisible && !retiring && (ordinal===0 || progress>.85)
@@ -40,7 +45,8 @@ Item {
   width:geometry.size; height:width
   z:10000-ordinal
   opacity:drawWeight*globalPresence
-  scale:Motion.full(animations) ? 1-.035*Math.sin(Math.PI*Math.max(0,Math.min(1,progress))) : 1
+  scale:Motion.full(animations) ? pose.scale : 1
+  rotation:Motion.full(animations) ? pose.tilt : 0
   visible:drawWeight>0 || moving
   signal activated()
   signal contextRequested()
@@ -51,8 +57,8 @@ Item {
   onYChanged:inputChanged()
   onInteractiveChanged:inputChanged()
   onMovingChanged:inputChanged()
-  onPoseChanged:if (progress>0 && progress<1) maxBend=Math.max(maxBend,pose.bend)
-  onProgressChanged:if (progress>0 && progress<1) motionFrames++
+  onPoseChanged:if (progress>0 && progress<1) { maxBend=Math.max(maxBend,pose.bend); maxTilt=Math.max(maxTilt,Math.abs(pose.tilt)); minScale=Math.min(minScale,pose.scale) }
+  onProgressChanged: { peakProgress=Math.max(peakProgress,progress); if (progress>0 && progress<1) motionFrames++ }
   Behavior on destinationX { enabled:actor.ready && (actor.expanded || actor.progress>0)
     NumberAnimation { id:destinationXAnimation; duration:Motion.move(actor.animations); easing.type:Easing.OutCubic } }
   Behavior on destinationY { enabled:actor.ready && (actor.expanded || actor.progress>0)
@@ -65,7 +71,7 @@ Item {
     if (animations==="off") { progress=expanded ? 1 : 0; return }
     spread.restart()
   }
-  onExpandedChanged: { motionFrames=0; maxBend=0; if (!expanded) pageFade.complete(); retarget() }
+  onExpandedChanged: { motionFrames=0; maxBend=0; maxTilt=0; minScale=1; peakProgress=0; if (!expanded) pageFade.complete(); retarget() }
   onAnimationsChanged: {
     if (!Motion.full(animations)) { destinationXAnimation.complete(); destinationYAnimation.complete() }
     if (animations==="off") pageFade.complete()
@@ -73,12 +79,12 @@ Item {
   }
   SequentialAnimation {
     id:spread
-    PauseAnimation { duration:Motion.full(actor.animations) ? Math.min(72,Math.max(0,actor.ordinal)*14) : 0 }
+    PauseAnimation { duration:Motion.full(actor.animations) ? Motion.fanDelay(actor.timing,actor.ordinal,actor.expanded,actor.geometry.capacity) : 0 }
     NumberAnimation {
       target:actor; property:"progress"; to:actor.expanded ? 1 : 0
-      duration:Motion.duration(actor.animations,actor.expanded ? 330 : 280,100)
-      easing.type:actor.expanded ? Easing.OutBack : Easing.InOutCubic
-      easing.overshoot:.45
+      duration:Motion.duration(actor.animations,actor.expanded ? actor.timing.open : actor.timing.close,100)
+      easing.type:!actor.expanded ? Easing.InOutCubic : actor.timing.easing==="back" ? Easing.OutBack : actor.timing.easing==="quint" ? Easing.OutQuint : Easing.OutCubic
+      easing.overshoot:actor.timing.overshoot
     }
   }
   StashAnimatedIcon {

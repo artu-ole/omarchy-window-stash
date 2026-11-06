@@ -14,8 +14,10 @@ controller; no compiled compositor plugin or additional daemon.
 
 Click the floating stack to fan out the same icons beneath the pointer. The
 newest window is immediately under the cursor; older icons follow the configured
-axis toward available screen space. Full animations use curved, staggered motion
-and a restrained settling curve. Dismissal folds the icons back to their saved
+axis toward available screen space. Choose an unfold style in Settings: Arc
+(the original curved motion), Glide (a synchronized straight slide), Cascade
+(staggered icons, folding from the far end), Spring (a weighted overshoot), or
+Swing (a wider arc with a small tilt). Dismissal folds the icons back to their saved
 stack position. Leaving the fan starts an 800 ms grace period; returning cancels
 it. Outside clicks fold it immediately and reach the underlying window. Workspace
 changes also collapse the fan. Scroll or drag along the fan to reach overflow;
@@ -114,6 +116,7 @@ omarchy-shell window-stash configure iconOpacity 75
 | `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
 | `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock only |
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
+| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`; unfold/fold style, overridden by Reduced/Off |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
 | `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
 | `dockFrame` | `shown` | `shown`, `hidden`; static and expanded floating docks |

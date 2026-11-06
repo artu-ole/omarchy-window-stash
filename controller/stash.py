@@ -16,11 +16,11 @@ import uuid
 PLUGIN = "community.window-stash"
 SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
-DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown", animations="full", dockOpacity=100, iconOpacity=100)
+DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", floatingAnimation="arc", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown", animations="full", dockOpacity=100, iconOpacity=100)
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
-               floatingDirection=("vertical", "horizontal"), dockSide=("bottom", "top", "left", "right"),
+               floatingDirection=("vertical", "horizontal"), floatingAnimation=("arc", "glide", "cascade", "spring", "swing"), dockSide=("bottom", "top", "left", "right"),
                floatingPlacement=("edges", "free"), dockCorners=("theme", "custom"),
                dockCornerRadius=range(65), iconFrame=("shown", "hidden"), dockFrame=("shown", "hidden"),
                animations=("full", "reduced", "off"), dockOpacity=range(101), iconOpacity=range(101))

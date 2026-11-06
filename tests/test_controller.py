@@ -99,6 +99,16 @@ class ControllerTests(unittest.TestCase):
         self.settings(scope="global")
         self.assertEqual(self.stash.restore_last()["id"],second)
 
+    def test_floating_animation_settings_and_legacy_default(self):
+        self.settings(presentation="floating")
+        self.assertEqual(self.stash.settings()["floatingAnimation"], "arc")
+        for style in ("arc", "glide", "cascade", "spring", "swing"):
+            self.settings(presentation="floating", floatingAnimation=style, animations="reduced")
+            self.assertEqual(self.stash.settings()["floatingAnimation"], style)
+            self.assertEqual(self.stash.settings()["animations"], "reduced")
+        self.settings(floatingAnimation="invalid")
+        self.assertEqual(self.stash.settings()["floatingAnimation"], "arc")
+
     def test_icon_shape_settings_and_legacy_default(self):
         self.settings(presentation="bubbles", scope="workspace")
         self.assertEqual(self.stash.settings()["iconShape"], "auto")
@@ -115,7 +125,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")

@@ -66,12 +66,34 @@ def main():
     try:
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot missing')
         configure('presentation','floating');configure('scope','workspace');configure('grouping','window')
-        configure('floatingPlacement','free');configure('animations','full');configure('iconShape','square')
+        configure('floatingPlacement','free');configure('animations','full');configure('floatingAnimation','arc');configure('iconShape','square')
         configure('iconFrame','shown');configure('dockFrame','shown');configure('dockCorners','custom');configure('dockCornerRadius',64)
         configure('dockOpacity',100);configure('iconOpacity',100)
         h.dispatch('focus',workspace=str(workspace));windows=[spawn() for _ in range(3)]
         for a in windows:park(a)
         w=surface()['usableArea']['width'];ht=surface()['usableArea']['height'];created=dock()['createdIcons']
+        anchor(round(w/2),round(ht/2))
+        for index,style in enumerate(('arc','glide','cascade','spring','swing')):
+            shell('settings')
+            def control():return next(c for c in surface()['settingControls'] if c['key']=='floatingAnimation')
+            wait(lambda:surface()['dialog']['visible'],'Style settings missing')
+            click(control()['rect']);wait(lambda:control()['open'],'Unfold animation dropdown did not open')
+            subprocess.run(['wtype',*(['-k','Up']*5),*(['-k','Down']*index),'-k','Return'],check=True)
+            wait(lambda:shell('status')['settings']['floatingAnimation']==style,'Native style selector did not save '+style)
+            shell('dismiss');settle(False)
+            for direction in ('vertical','horizontal'):
+                configure('floatingDirection',direction);d=expand()
+                assert d['style']==style and d['createdIcons']==created
+                assert all(a['frames']>=2 and a['rotation']==0 and abs(a['scale']-1)<.001 for a in d['actors'])
+                if style in ('glide','cascade'):assert all(a['maxBend']==0 for a in d['actors'])
+                if style=='glide':assert all(abs(a['minScale']-1)<.001 for a in d['actors'])
+                if style=='cascade':assert any(a['minScale']<.95 for a in d['actors'])
+                if style=='spring':assert any(a['peakProgress']>1.03 for a in d['actors'])
+                if style=='swing':assert any(a['maxTilt']>1 and a['minScale']<.95 for a in d['actors'])
+                if style=='arc':assert any(a['maxBend']>1 for a in d['actors'])
+                collapse()
+            print('PASS native '+style+' selection, both axes, distinct motion and complete restacking',flush=True)
+        configure('floatingAnimation','arc')
         for direction in ('vertical','horizontal'):
             configure('floatingDirection',direction)
             for x,y in ((w/2,ht/2),(16,50),(w-70,ht-90)):
@@ -149,6 +171,7 @@ def main():
         h.dispatch('focus',workspace=str(workspace));settle(False)
         print('PASS newest restore, spatial keyboard selection, one-click outside interaction and workspace dismissal',flush=True)
 
+        configure('floatingAnimation','swing')
         subprocess.run(['omarchy','restart','shell'],check=True)
         deadline=time.monotonic()+15
         while True:
@@ -158,15 +181,18 @@ def main():
                 if monitor['name'] in loaded['screens'] and loaded['windows']==len(baseline)+3:break
             if time.monotonic()>deadline:raise AssertionError('Fan stash did not survive restart')
             time.sleep(.1)
-        settle(False);expand();collapse()
+        settle(False);assert expand()['style']=='swing';collapse();configure('floatingAnimation','arc')
         print('PASS saved stack anchor, stash and fan behavior after shell restart',flush=True)
 
         configure('grouping','app');wait(lambda:dock()['groups']==1,'App grouping missing');d=expand();click(d['icons'][0])
         wait(lambda:shell('status')['dialog']=='picker','App group did not open chooser');shell('dismiss');configure('grouping','window');settle(False)
         for mode in ('reduced','off'):
-            configure('animations',mode);d=expand()
-            assert all(a['maxBend']==0 for a in d['actors']),'Reduced/Off still used spatial curves'
-            collapse()
+            configure('animations',mode)
+            for style in ('arc','glide','cascade','spring','swing'):
+                configure('floatingAnimation',style);d=expand()
+                assert all(a['maxBend']==0 and a['maxTilt']==0 and a['scale']==1 for a in d['actors']),'Reduced/Off still used spatial curves or transforms'
+                collapse()
+        configure('floatingAnimation','arc')
         configure('animations','full');configure('iconFrame','hidden');configure('dockFrame','hidden')
         d=expand();assert not d['panel']['frameVisible'] and all(not a['appearance']['frameVisible'] for a in d['icons']);collapse()
         print('PASS app grouping, Reduced/Off, frameless icons and transparent dock background',flush=True)
