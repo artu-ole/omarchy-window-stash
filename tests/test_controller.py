@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
-from stash import Stash, Hyprland, SPECIAL, PLUGIN, atomic_json, eligible, lua, restored_geometry, main
+from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, atomic_json, eligible, lua, restored_geometry, main
 
 
 def monitor(name="eDP-2", ident=0, x=0, width=1920):
@@ -56,7 +56,7 @@ class FakeHypr:
         if (not c or c["pid"] != record["pid"]
                 or (record.get("stableId") and c.get("stableId") != record["stableId"])
                 or record["tag"] not in c.get("tags", [])
-                or (parked and c["workspace"]["name"] != SPECIAL)):
+                or (parked and c["workspace"]["name"] != (SPECIAL if parked is True else parked))):
             raise RuntimeError("Stashed window identity changed")
         self.dispatch(dispatcher, window="address:" + record["address"], **{k:v for k,v in kw.items() if k != "window"})
 
@@ -113,6 +113,189 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.hypr.clients[0]["size"],[640,400])
         self.assertTrue(self.hypr.clients[0]["floating"])
         self.assertEqual(self.stash.state["windows"],[])
+
+    def legacy_record(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients[0]["workspace"] = dict(id=-98, name=LEGACY_SPECIAL)
+        self.hypr.commands.clear()
+        return ident, self.stash.state["windows"][0]
+
+    def test_private_workspace_migration_preserves_metadata_and_native_minimized_windows(self):
+        self.hypr.clients[0].update(floating=True, size=[777, 444], at=[220, 170])
+        ident, record = self.legacy_record()
+        before = copy.deepcopy(record)
+        native = client("0x2", workspace=-98, pid=200)
+        native.update(workspace=dict(id=-98, name=LEGACY_SPECIAL), tags=["omarchy-minimized-from-2"])
+        unrelated = client("0x3", workspace=-98, pid=300)
+        unrelated.update(workspace=dict(id=-98, name=LEGACY_SPECIAL), tags=["window-stash-without-ledger"])
+        untouched = copy.deepcopy([native, unrelated])
+        self.hypr.clients.extend([native, unrelated])
+        snapshot = self.stash.listing()
+        self.assertEqual(snapshot["windows"], [before])
+        self.assertEqual(self.hypr.clients[0]["workspace"]["name"], SPECIAL)
+        self.assertEqual(self.hypr.clients[1:], untouched)
+        self.assertEqual(self.hypr.commands, [("window.move", dict(window="address:0x1", workspace=SPECIAL, follow=False))])
+        self.stash.listing()
+        self.assertEqual(len(self.hypr.commands), 1, "Migration must be idempotent")
+        self.assertEqual(self.stash.restore(ident)["action"], "restored")
+        self.assertEqual(self.hypr.clients[0]["size"], [777, 444])
+        self.assertEqual(self.hypr.clients[0]["at"], [220, 170])
+
+    def test_restore_migrates_legacy_record_before_restoring(self):
+        ident, _ = self.legacy_record()
+        self.assertEqual(self.stash.restore(ident, "current", workspace=3)["action"], "restored")
+        moves = [command[1]["workspace"] for command in self.hypr.commands
+                 if isinstance(command, tuple) and command[0] == "window.move"]
+        self.assertEqual(moves, [SPECIAL, "3"])
+        self.assertEqual(self.stash.state["windows"], [])
+
+    def test_legacy_migration_requires_exact_identity_and_tag(self):
+        for index, change in enumerate(("pid", "stableId", "tag")):
+            with self.subTest(change=change):
+                hypr, stash = self.race_fixture("legacy-unowned-"+str(index))
+                stash.minimize()
+                target = hypr.clients[0]
+                target["workspace"] = dict(id=-98, name=LEGACY_SPECIAL)
+                if change == "pid": target["pid"] += 1
+                elif change == "stableId": target["stableId"] = "0x222"
+                else: target["tags"] = [target["tags"][0]+"-lookalike"]
+                untouched = copy.deepcopy(target)
+                hypr.commands.clear()
+                self.assertEqual(stash.listing()["windows"], [])
+                self.assertEqual(hypr.clients[0], untouched)
+                self.assertEqual(hypr.commands, [])
+
+    def test_legacy_migration_rechecks_identity_atomically_before_move(self):
+        _, record = self.legacy_record()
+        replacement = copy.deepcopy(self.hypr.clients[0])
+        replacement["stableId"] = "0x222"
+        before = copy.deepcopy(replacement)
+        original = self.hypr.dispatch_owned
+        def replace_before_dispatch(*args, **kwargs):
+            self.hypr.clients = [replacement]
+            return original(*args, **kwargs)
+        self.hypr.dispatch_owned = replace_before_dispatch
+        with self.assertRaisesRegex(RuntimeError, "identity changed"):
+            self.stash.listing()
+        self.assertEqual(self.hypr.clients, [before])
+        self.assertEqual(self.hypr.commands, [])
+        self.assertEqual(self.stash.state["windows"][0]["id"], record["id"])
+
+    def test_legacy_migration_failure_keeps_record_retryable(self):
+        _, record = self.legacy_record()
+        before = copy.deepcopy(record)
+        self.hypr.fail = "window.move"
+        with self.assertRaisesRegex(RuntimeError, "Injected IPC failure"):
+            self.stash.listing()
+        retained = self.stash.state["windows"][0]
+        for key in ("id", "origin", "size", "relativePosition", "order", "floating"):
+            self.assertEqual(retained[key], before[key])
+        self.assertEqual(retained["phase"], "restoring")
+        self.assertEqual(json.loads(self.stash.path.read_text())["windows"][0], retained)
+        self.assertEqual(self.hypr.clients[0]["workspace"]["name"], LEGACY_SPECIAL)
+        self.hypr.fail = None
+        self.assertEqual(self.stash.listing()["windows"][0]["phase"], "stashed")
+        self.assertEqual(self.hypr.clients[0]["workspace"]["name"], SPECIAL)
+
+    def test_legacy_migration_guard_checks_source_workspace_inside_dispatch(self):
+        _, record = self.legacy_record()
+        hypr = Hyprland()
+        calls = []
+        hypr.eval = calls.append
+        hypr.dispatch_owned("window.move", record, parked=LEGACY_SPECIAL, workspace=SPECIAL, follow=False)
+        self.assertEqual(len(calls), 1)
+        code = calls[0]
+        self.assertIn('w.workspace.name == "'+LEGACY_SPECIAL+'"', code)
+        self.assertIn('workspace = "'+SPECIAL+'"', code)
+        self.assertLess(code.index('if not owned'), code.index('hl.dispatch'))
+
+    def test_native_floating_workspace_defers_minimize_to_native_dock(self):
+        self.hypr.clients[0]["tags"] = ["omarchy-floating-workspace", "omarchy-mode-floated"]
+        untouched = copy.deepcopy(self.hypr.clients[0])
+        result = self.stash.minimize()
+        self.assertEqual(result["action"], "noop")
+        self.assertIn("Omarchy's dock", result["reason"])
+        self.assertEqual(self.hypr.clients[0], untouched)
+        self.assertEqual(self.stash.state["windows"], [])
+        self.assertEqual(self.hypr.commands, [])
+
+    def test_individual_floating_windows_on_tiled_workspaces_remain_supported(self):
+        self.hypr.clients[0].update(floating=True, tags=["omarchy-floating-workspace-lookalike"])
+        self.assertEqual(self.stash.minimize()["action"], "minimized")
+
+    def test_native_floating_workspace_tag_does_not_block_existing_restore(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients[0]["tags"].append("omarchy-floating-workspace")
+        self.assertEqual(self.stash.restore(ident)["action"], "restored")
+
+    def save_mode(self, workspace, mode):
+        directory = self.stash.positions.parent.parent/"workspace-layouts"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory/(str(workspace)+".lua")
+        fields = 'default = "'+mode+'"' if workspace == "default" else 'workspace = "'+str(workspace)+'", mode = "'+mode+'"'
+        path.write_text('o.workspace_mode({ '+fields+' })\n')
+        return path
+
+    def test_generated_native_mode_files_honor_explicit_layout_and_floating_default(self):
+        self.assertFalse(self.stash.native_floating_workspace("3"))
+        self.save_mode("default", "floating")
+        self.assertTrue(self.stash.native_floating_workspace("3"))
+        for mode in ("dwindle", "scrolling"):
+            self.save_mode(3, mode)
+            self.assertFalse(self.stash.native_floating_workspace("3"))
+        self.save_mode(3, "floating")
+        self.assertTrue(self.stash.native_floating_workspace("3"))
+        for workspace in ("name:3", "special:window-stash", "0", "-1", "2147483648", "3/../default"):
+            self.assertFalse(self.stash.native_floating_workspace(workspace))
+
+    def test_native_mode_file_parser_is_bounded_and_never_evaluates_lua(self):
+        path = self.save_mode(3, "floating")
+        with patch('stash.subprocess.run', side_effect=AssertionError("Mode parsing started a process")):
+            for text in (
+                'o.workspace_mode({ workspace = "4", mode = "floating" })',
+                'o.workspace_mode({ workspace = "3", mode = "floating" }); os.execute("false")',
+                '-- o.workspace_mode({ workspace = "3", mode = "floating" })',
+                'o.workspace_mode({ workspace = "3", mode = "floating" })'+" "*4097,
+                'local mode = "floating"',
+            ):
+                with self.subTest(text=text[:80]):
+                    path.write_text(text)
+                    self.assertFalse(self.stash.native_floating_workspace("3"))
+        path.write_bytes(b'\xff')
+        self.assertFalse(self.stash.native_floating_workspace("3"))
+
+    def test_restore_tiled_window_into_native_floating_mode_skips_scrolling_and_claims_it(self):
+        ident = self.stash.minimize()["id"]
+        self.save_mode(3, "floating")
+        self.hypr.workspaces.append(dict(id=3, name="3", monitor="eDP-2", tiledLayout="scrolling"))
+        before = len(self.hypr.commands)
+        self.assertEqual(self.stash.restore(ident, "current", workspace=3)["action"], "restored")
+        self.assertTrue(self.hypr.clients[0]["floating"])
+        self.assertEqual(self.hypr.clients[0]["workspace"]["id"], 3)
+        self.assertIn("omarchy-mode-floated", self.hypr.clients[0]["tags"])
+        self.assertFalse(any(isinstance(command, str) for command in self.hypr.commands[before:]),
+                         "Native floating restore ran the scrolling reinsertion path")
+
+    def test_restore_individually_floating_window_into_native_mode_preserves_geometry_without_claim(self):
+        self.hypr.clients[0].update(floating=True, at=[240, 170], size=[777, 444])
+        ident = self.stash.minimize()["id"]
+        self.save_mode("default", "floating")
+        self.hypr.clients[0].update(at=[900, 600], size=[300, 200])
+        self.stash.restore(ident, "current", workspace=3)
+        self.assertTrue(self.hypr.clients[0]["floating"])
+        self.assertEqual(self.hypr.clients[0]["at"], [240, 170])
+        self.assertEqual(self.hypr.clients[0]["size"], [777, 444])
+        self.assertNotIn("omarchy-mode-floated", self.hypr.clients[0]["tags"])
+
+    def test_explicit_tiled_destination_overrides_native_floating_default(self):
+        ident = self.stash.minimize()["id"]
+        self.save_mode("default", "floating")
+        self.save_mode(3, "scrolling")
+        before = len(self.hypr.commands)
+        self.stash.restore(ident, "current", workspace=3)
+        self.assertFalse(self.hypr.clients[0]["floating"])
+        self.assertNotIn("omarchy-mode-floated", self.hypr.clients[0]["tags"])
+        self.assertTrue(any(isinstance(command, str) for command in self.hypr.commands[before:]))
 
     def race_fixture(self, name):
         hypr = FakeHypr()
@@ -849,7 +1032,7 @@ class ControllerTests(unittest.TestCase):
         code = calls[0]
         self.assertIn('w.pid == 100', code)
         self.assertIn('w.stable_id == 1', code)
-        self.assertIn('w.workspace.name == "special:minimized"', code)
+        self.assertIn('w.workspace.name == "special:window-stash"', code)
         self.assertIn('window-stash-' + ident, code)
         self.assertIn('hl.dispatch(hl.dsp.window.close({window = w}))', code)
         self.assertNotIn('window.kill', code)

@@ -43,7 +43,7 @@ function matches(record, client) {
   return validRecord(record) && !!client && address(client.address)===address(record.address)
     && client.mapped===true && client.pid===record.pid
     && (!record.stableId || stableId(client.stableId)===stableId(record.stableId))
-    && !!client.workspace && client.workspace.name==="special:minimized"
+    && !!client.workspace && client.workspace.name==="special:window-stash"
     && hasTag(client.tags,record.tag)
 }
 

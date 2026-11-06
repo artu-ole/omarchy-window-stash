@@ -217,7 +217,7 @@ def integration_patches():
         "components/WindowRecords.qml": [
             ('      minimized: toplevel && toplevel.minimized === true',
              '''      // The controller decides ownership; IPC tag snapshots may lag.
-      stashManaged: workspaceName === "special:minimized",
+      stashManaged: workspaceName === "special:window-stash",
       minimized: toplevel && toplevel.minimized === true''')
         ],
         "model/WindowSnapshot.js": [
@@ -231,7 +231,9 @@ def upgrade_integration(text):
         '''      stashManaged: workspaceName === "special:minimized" && Array.isArray(ipc.tags)
         && ipc.tags.some(function(tag) { return String(tag).indexOf("window-stash-") === 0 }),''',
         '''      // The controller decides ownership; IPC tag snapshots may lag.
-      stashManaged: workspaceName === "special:minimized",''')
+      stashManaged: workspaceName === "special:window-stash",''').replace(
+        'stashManaged: workspaceName === "special:minimized",',
+        'stashManaged: workspaceName === "special:window-stash",')
 
 
 def confirm_changes(target, bindings, shell, binary, switcher, uninstall, assume_yes):

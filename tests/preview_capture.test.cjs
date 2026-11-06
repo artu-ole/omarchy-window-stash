@@ -4,7 +4,7 @@ const vm = require('node:vm')
 const capture = vm.createContext({})
 vm.runInContext(fs.readFileSync(__dirname+'/../ui/PreviewCapture.js','utf8').replace(/^\.pragma library\s*/,''),capture)
 const record={id:'owned',tag:'window-stash-owned',address:'0x000ab12',pid:42,stableId:'1800010a',phase:'stashed',app:'test'}
-const client={address:'ab12',pid:42,stableId:'0x1800010A',mapped:true,workspace:{name:'special:minimized'},tags:['other','window-stash-owned']}
+const client={address:'ab12',pid:42,stableId:'0x1800010A',mapped:true,workspace:{name:'special:window-stash'},tags:['other','window-stash-owned']}
 const copy=value=>JSON.parse(JSON.stringify(value))
 
 assert.equal(capture.matches(record,client),true)
@@ -25,7 +25,7 @@ for(const tags of [record.tag,'prefix-'+record.tag,{0:record.tag,length:'1'},
 
 for(const patch of [
   {address:'0xcafe'},{pid:43},{stableId:'1800010b'},{mapped:false},
-  {workspace:{name:'1'}},{workspace:null},{tags:[]},{tags:['window-stash-other']},{tags:null},
+  {workspace:{name:'1'}},{workspace:{name:'special:minimized'}},{workspace:null},{tags:[]},{tags:['window-stash-other']},{tags:null},
 ]) assert.equal(capture.matches(record,{...client,...patch}),false,JSON.stringify(patch))
 for(const patch of [
   {id:''},{tag:'window-stash-other'},{address:''},{pid:0},{pid:'42'},

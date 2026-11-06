@@ -68,7 +68,7 @@ def main():
         wait(lambda:surface()['pickerCount']==1,'Chooser keyboard search failed')
         subprocess.run(['wtype','-k','Return'],check=True)
         wait(lambda:h.client(first)['workspace']['id']==9,'Chooser Enter did not restore selected window')
-        assert h.client(second)['workspace']['name']=='special:minimized'
+        assert h.client(second)['workspace']['name']=='special:window-stash'
         print('PASS grouped icon, keyboard search and chooser restoration',flush=True)
 
         first_id=stash(first)

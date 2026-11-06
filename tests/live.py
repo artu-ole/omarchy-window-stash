@@ -210,7 +210,7 @@ def main():
     try:
         h.eval('hl.config({input={resolve_binds_by_sym=true}})')
         subprocess.run(['wtype','-M','logo','-s','60','-k','a','-s','60','-m','logo'],check=True)
-        wait(lambda:h.client(native)['workspace']['name']=='special:minimized','Super+A did not minimize')
+        wait(lambda:h.client(native)['workspace']['name']=='special:window-stash','Super+A did not minimize')
         subprocess.run(['wtype','-M','logo','-s','60','-k','z','-s','60','-m','logo'],check=True)
         wait(lambda:h.client(native)['workspace']['id']==10,'Super+Z did not restore')
     finally:h.eval('hl.config({input={resolve_binds_by_sym='+matching+'}})')

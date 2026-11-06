@@ -82,7 +82,7 @@ Item {
       nativeIdentity:Capture.matches(record,candidateIpc),verified:!!verifiedClient,eligible:eligible,
       nativeFields:{pid:!!record && !!candidateIpc && candidateIpc.pid===record.pid,
         stable:!!record && !!candidateIpc && Capture.stableId(candidateIpc.stableId)===Capture.stableId(record.stableId),
-        parked:!!candidateIpc && !!candidateIpc.workspace && candidateIpc.workspace.name==="special:minimized",
+        parked:!!candidateIpc && !!candidateIpc.workspace && candidateIpc.workspace.name==="special:window-stash",
         mapped:!!candidateIpc && candidateIpc.mapped===true,
         tags:!!candidateIpc && !!candidateIpc.tags ? candidateIpc.tags.length : 0}}
   }

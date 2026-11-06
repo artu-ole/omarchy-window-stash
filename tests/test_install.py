@@ -148,6 +148,35 @@ class InstallerShortcutTests(unittest.TestCase):
         self.assertEqual(saved['plugins'][1],self.data['plugins'][1])
         self.assertEqual(saved['other'],self.data['other'])
 
+    def test_switcher_integration_upgrades_legacy_workspace_and_uninstalls_cleanly(self):
+        switcher = self.config/'omarchy/plugins/community.window-switcher'
+        originals = {}
+        for name, patches in installer.integration_patches().items():
+            path = switcher/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            original = '\n'.join(before for before, _ in patches)
+            originals[name] = original
+            legacy = original
+            for before, after in patches:
+                legacy = legacy.replace(before, after)
+            path.write_text(legacy.replace('special:window-stash', 'special:minimized'))
+        self.invoke()
+        records = (switcher/'components/WindowRecords.qml').read_text()
+        self.assertIn('stashManaged: workspaceName === "special:window-stash"', records)
+        self.assertNotIn('special:minimized', records)
+        self.assertEqual(installer.upgrade_integration(records), records)
+        self.invoke(uninstall=True)
+        for name, original in originals.items():
+            self.assertEqual((switcher/name).read_text(), original)
+
+    def test_switcher_upgrade_handles_old_tag_filtered_workspace_patch(self):
+        legacy = '''      stashManaged: workspaceName === "special:minimized" && Array.isArray(ipc.tags)
+        && ipc.tags.some(function(tag) { return String(tag).indexOf("window-stash-") === 0 }),'''
+        updated = installer.upgrade_integration(legacy)
+        self.assertIn('stashManaged: workspaceName === "special:window-stash",', updated)
+        self.assertNotIn('special:minimized', updated)
+        self.assertNotIn('Array.isArray', updated)
+
     def test_deleted_legacy_action_stays_disabled(self):
         self.bindings.write_text(self.legacy({'minimizeShortcut':'SUPER + A'}))
         self.invoke(live=[self.live('minimizeShortcut')])

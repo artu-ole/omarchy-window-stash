@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import shortcuts
 
 PLUGIN = "community.window-stash"
-SPECIAL = "special:minimized"
+SPECIAL = "special:window-stash"
+LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
@@ -62,8 +63,9 @@ def window_identity_guard(record):
 
 def owned_window_guard(record, parked=False):
     """Resolve and validate the exact owned toplevel inside one compositor call."""
+    workspace = SPECIAL if parked is True else parked
     return (window_identity_guard(record)
-            + ("if not (w.workspace and w.workspace.name == " + lua(SPECIAL)
+            + ("if not (w.workspace and w.workspace.name == " + lua(workspace)
                + ") then error('Stashed window left the stash') end\n" if parked else "")
             + "local owned = false; for _, tag in ipairs(w.tags) do if tag == " + lua(record["tag"])
             + " then owned = true; break end end\n"
@@ -206,6 +208,23 @@ class Stash:
             if not self.matches(r, c):
                 continue
             tagged = r["tag"] in c.get("tags", [])
+            if tagged and c["workspace"]["name"] == LEGACY_SPECIAL:
+                # Omarchy 4.5's native dock also owns special:minimized. Move
+                # only ledger-backed, identity-checked windows into our own
+                # workspace; native minimized windows are never adopted.
+                try:
+                    self.hypr.dispatch_owned("window.move", r, parked=LEGACY_SPECIAL,
+                                             workspace=SPECIAL, follow=False)
+                    migrated = self.hypr.client(r["address"])
+                    if (not self.matches(r, migrated) or r["tag"] not in migrated.get("tags", [])
+                            or migrated["workspace"]["name"] != SPECIAL):
+                        raise RuntimeError("Legacy stashed window did not reach the private workspace")
+                    c = migrated
+                except Exception as error:
+                    r["phase"] = "restoring"
+                    r["lastError"] = str(error)
+                    self.save()
+                    raise
             parked = c["workspace"]["name"] == SPECIAL
             if parked and tagged:
                 r["phase"] = "stashed"
@@ -235,6 +254,8 @@ class Stash:
             return {"ok": True, "action": "noop", "reason": "No focused application window"}
         if active["workspace"]["name"].startswith("special:"):
             return {"ok": True, "action": "noop", "reason": "Special workspaces are separate from Window Stash"}
+        if "omarchy-floating-workspace" in active.get("tags", []):
+            return {"ok": True, "action": "noop", "reason": "Use Omarchy's dock on floating workspaces"}
         if any(r["address"] == active["address"] for r in self.state["windows"]):
             return {"ok": True, "action": "noop"}
         monitor = next(m for m in monitors if m["id"] == active["monitor"])
@@ -318,6 +339,36 @@ class Stash:
             pass
         return str(bank + record["slot"]), current
 
+    def native_floating_workspace(self, selector):
+        """Read Omarchy's generated mode declarations without evaluating Lua.
+
+        Hyprland reports the retained tiled layout even while Omarchy floats
+        a whole workspace. Only numbered workspaces participate in that mode.
+        """
+        selector = str(selector)
+        if not re.fullmatch(r"[1-9][0-9]{0,9}", selector) or int(selector) > 2147483647:
+            return False
+        directory = self.positions.parent.parent / "workspace-layouts"
+
+        def read_mode(path, fields):
+            try:
+                with path.open(encoding="utf-8") as stream:
+                    text = stream.read(4097)
+            except (OSError, UnicodeError):
+                return None
+            if len(text) > 4096:
+                return None
+            pattern = (r'\s*o\.workspace_mode\(\s*\{\s*' + fields
+                       + r'"(dwindle|scrolling|floating)"\s*,?\s*\}\s*\)\s*;?\s*')
+            match = re.fullmatch(pattern, text)
+            return match[1] if match else None
+
+        mode = read_mode(directory / (selector + ".lua"),
+                         r'workspace\s*=\s*"' + re.escape(selector) + r'"\s*,\s*mode\s*=\s*')
+        if mode is None:
+            mode = read_mode(directory / "default.lua", r'default\s*=\s*')
+        return mode == "floating"
+
     def restore(self, ident, to=None, monitor=None, workspace=None, expected=None):
         clients = self.hypr.read("clients")
         self.reconcile(clients)
@@ -333,6 +384,8 @@ class Stash:
                 return self.hypr.dispatch_owned(dispatcher, expected, **args)
             return self.hypr.dispatch(dispatcher, **args)
         destination, dest_monitor = self.destination(record, to or self.settings()["restoreDestination"], monitor, workspace)
+        native_floating = self.native_floating_workspace(destination)
+        floating = record["floating"] or native_floating
         target = "address:"+record["address"]
         record["phase"] = "restoring"
         self.save()
@@ -340,12 +393,17 @@ class Stash:
             dispatch("focus", monitor=dest_monitor["name"])
             dispatch("focus", workspace=destination)
             dispatch("window.move", window=target, workspace=destination, follow=False)
-            dispatch("window.float", window=target, action="on" if record["floating"] else "off")
+            if native_floating and not record["floating"]:
+                # Let Omarchy tile this originally tiled window again when
+                # its floating mode ends, even if its deferred move handler
+                # runs after the float action below.
+                dispatch("window.tag", window=target, tag="+omarchy-mode-floated")
+            dispatch("window.float", window=target, action="on" if floating else "off")
             if record["floating"]:
                 x, y, width, height = restored_geometry(record, dest_monitor)
                 dispatch("window.resize", window=target, x=width, y=height, relative=False)
                 dispatch("window.move", window=target, x=x, y=y, relative=False)
-            else:
+            elif not native_floating:
                 self.append_scrolling(record["address"], destination, record["size"][0], expected)
             dispatch("focus", window=target)
             pin_state = self.hypr.client(record["address"])
@@ -361,7 +419,7 @@ class Stash:
                 raise RuntimeError("Window identity changed during restoration")
             if self.workspace_selector(after["workspace"]) != destination:
                 raise RuntimeError("The window did not reach the destination workspace")
-            if after["floating"] != record["floating"]:
+            if after["floating"] != floating:
                 raise RuntimeError("A window rule prevented restoration of floating state")
             dispatch("window.tag", window=target, tag="-"+record["tag"])
             self.state["windows"].remove(record)
