@@ -49,6 +49,7 @@ Item {
   rotation:Motion.full(animations) ? pose.tilt : 0
   visible:drawWeight>0 || moving
   signal activated()
+  signal closeRequested()
   signal contextRequested(real x,real y)
   signal hovered(bool value)
   signal inputChanged()
@@ -103,6 +104,7 @@ Item {
     externalPressed:actor.externalPressed
     enabled:actor.interactive
     onActivated:actor.activated()
+    onCloseRequested:actor.closeRequested()
     onContextRequested:function(x,y) { actor.contextRequested(x,y) }
     onHovered:function(value) { actor.hovered(value) }
     onExited:function(frames) { actor.exited(frames) }

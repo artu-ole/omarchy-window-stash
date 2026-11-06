@@ -39,6 +39,7 @@ Ui.BorderSurface {
   readonly property bool down: pointer.pressed || externalPressed
   readonly property real hitRadius: frameVisible ? Model.iconRadius(iconShape, width, bubble, Style.cornerRadius) : 0
   signal activated()
+  signal closeRequested()
   signal contextRequested(real x,real y)
   signal moved(real dx, real dy)
   signal dragHeld(bool held)
@@ -145,7 +146,7 @@ Ui.BorderSurface {
     anchors.fill: parent
     hoverEnabled: true
     preventStealing: icon.draggable
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
     property point start
     property bool dragging: false
@@ -160,7 +161,8 @@ Ui.BorderSurface {
     onReleased: function(mouse) {
       if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(false)
       if (dragging) { icon.dragFinished(); return }
-      if (mouse.button === Qt.RightButton) icon.contextRequested(mouse.x,mouse.y)
+      if (mouse.button === Qt.MiddleButton) { if (containsMouse) icon.closeRequested() }
+      else if (mouse.button === Qt.RightButton) icon.contextRequested(mouse.x,mouse.y)
       else icon.activated()
     }
   }

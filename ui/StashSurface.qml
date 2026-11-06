@@ -316,7 +316,8 @@ PanelWindow {
               frameVisible: surface.config.iconFrame !== "hidden"
               iconShape: surface.config.iconShape || "auto"
               onActivated: surface.stash.selectGroup(group, surface.screen.name)
-              onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,shelfIcon.mapToItem(surface.contentItem,x,y)) }
+              onCloseRequested:surface.stash.closeGroup(group,surface.screen.name)
+      onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,shelfIcon.mapToItem(surface.contentItem,x,y)) }
             }
           }
         }
@@ -372,6 +373,7 @@ PanelWindow {
         else Qt.callLater(place)
       }
       onActivated: surface.stash.selectGroup(group, surface.screen.name)
+      onCloseRequested:surface.stash.closeGroup(group,surface.screen.name)
       onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,bubbleIcon.mapToItem(surface.contentItem,x,y)) }
       onMoved: function(dx, dy) { x = Math.max(0, Math.min(surface.width - width, x + dx)); y = Math.max(24, Math.min(surface.height - height, y + dy)) }
       onDragFinished: surface.finishBubbleMove(group.key,x,y)

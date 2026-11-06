@@ -81,6 +81,7 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Restore last eligible window | **Super+Z**; newest first, obeys visibility scope |
 | Restore / choose a grouped window | Click an icon; app groups open a searchable chooser |
 | Restore destination, close, settings, all windows | Right-click an icon or floating stack |
+| Close represented stashed window(s) | Middle-click an icon; collapsed stacks target their front icon |
 | Move bubbles / floating dock | Drag the icon / stack handle; positions persist per monitor |
 | Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
 | Collapse floating dock | Click outside, switch focus/workspace, or press Escape |

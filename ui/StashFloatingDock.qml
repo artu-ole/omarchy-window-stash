@@ -340,6 +340,7 @@ Item {
       hasCursor:dock.open ? dock.selectedKey===groupKey : stackHover.hovered
       externalPressed:!dock.open && drag.pressed
       onActivated:dock.activate(group)
+      onCloseRequested:dock.stash.closeGroup(group,dock.screenName)
       onContextRequested:function(x,y) { dock.context(group,actor.mapToItem(dock.hostWindow.contentItem,x,y)) }
       onHovered:function(value) { if (value && actor.interactive && !pan.active && !actor.moving) dock.selectIndex(actor.ordinal) }
       onInputChanged: { dock.inputChanged(); motionUpdate.restart() }
@@ -359,7 +360,7 @@ Item {
     MouseArea {
       id:drag
       anchors.fill:parent
-      acceptedButtons:Qt.LeftButton | Qt.RightButton
+      acceptedButtons:Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
       hoverEnabled:true
       preventStealing:true
       cursorShape:Qt.PointingHandCursor
@@ -388,7 +389,8 @@ Item {
       onReleased:function(mouse) {
         if (dragging) { finishDrag(); return }
         dock.held=false
-        if (mouse.button===Qt.RightButton) dock.context(dock.groups[0],dock.mapToItem(dock.hostWindow.contentItem,dock.anchorX+mouse.x,dock.anchorY+mouse.y))
+        if (mouse.button===Qt.MiddleButton) { if (containsMouse) dock.stash.closeGroup(dock.groups[0],dock.screenName) }
+        else if (mouse.button===Qt.RightButton) dock.context(dock.groups[0],dock.mapToItem(dock.hostWindow.contentItem,dock.anchorX+mouse.x,dock.anchorY+mouse.y))
         else if (dock.windows.length===1) dock.activate(dock.groups[0])
         else dock.unfoldAt(dock.anchorX+mouse.x,dock.anchorY+mouse.y)
       }

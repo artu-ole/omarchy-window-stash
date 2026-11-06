@@ -39,6 +39,9 @@ class NativeSession:
         self.move(x-1,y);self.pointer.click(*self.point(x,y),button=button)
     def keys(self,*args):subprocess.run(['wtype',*args],check=True)
     def spawn(self,mode=None,app='org.windowstash.NativeTest',delay=500):
+        wanted=h.read('activeworkspace')['id']
+        if wanted<=0:wanted=self.workspace
+        h.dispatch('focus',workspace=str(wanted))
         title='Stash native %s %s'%(os.getpid(),len(self.addresses))
         args=[title,app] if mode is None else [title,app,mode,str(delay)]
         fixture='test-window.py' if mode is None else 'close-window.py'
@@ -46,7 +49,10 @@ class NativeSession:
             env=dict(os.environ,GDK_BACKEND='wayland',PYTHONDONTWRITEBYTECODE='1'),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         self.processes.append(p)
         c=wait(lambda:next((c for c in h.read('clients') if c['title']==title),None),'Native test window missing')
-        self.addresses.append(c['address']);return c['address'],title
+        self.addresses.append(c['address'])
+        if c['workspace']['id']!=wanted:
+            h.dispatch('window.move',window='address:'+c['address'],workspace=str(wanted),follow=True)
+        return c['address'],title
     def park(self,address):
         ident=command('minimize','--address',address)['id']
         r=wait(lambda:next((w for w in command('list')['windows'] if w['id']==ident),None),'Stash record missing')
