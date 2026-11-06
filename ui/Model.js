@@ -234,10 +234,16 @@ function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, 
   var capacity=count ? Math.min(count,Math.max(1,1+Math.floor(Math.max(0,sign>0 ? ahead : behind)/step))) : 0
   var crossBefore=horizontal ? y-area.y : x-area.x
   var crossAfter=horizontal ? area.y+area.height-y-size : area.x+area.width-x-size
+  // Horizontal hops read as lifting the stack; vertical hops move away from
+  // the nearest edge. Reserve room for the trailing stack's eight-pixel tail.
+  var hopSign=horizontal ? crossBefore>=28+inset || crossBefore>=crossAfter-8 ? -1 : 1
+    : preferredCurve===1 || preferredCurve===-1 ? preferredCurve : crossBefore>=crossAfter ? -1 : 1
+  var hopRoom=hopSign<0 ? crossBefore : crossAfter-(horizontal ? 8 : 0)
   return {x:anchor ? x : Math.round(x),y:anchor ? y : Math.round(y),horizontal:horizontal,sign:sign,forward:sign>0,
     capacity:capacity,step:step,size:size,span:dockLength(capacity,size,gap),
     curveSign:preferredCurve===1 || preferredCurve===-1 ? preferredCurve : crossBefore>=crossAfter ? -1 : 1,
-    curveLimit:Math.max(0,Math.min(18,Math.max(crossBefore,crossAfter)-inset))}
+    curveLimit:Math.max(0,Math.min(18,Math.max(crossBefore,crossAfter)-inset)),
+    hopSign:hopSign,hopLimit:Math.max(0,Math.min(28,hopRoom-inset))}
 }
 
 function fanSlot(layout, index, first) {
@@ -269,6 +275,61 @@ function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area, style) {
   return {x:fixed ? sx : Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*progress+(layout.horizontal ? 0 : bend*layout.curveSign))),
     y:fixed ? sy : Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*progress+(layout.horizontal ? bend*layout.curveSign : 0))),
     bend:bend,tilt:tilt,scale:Math.min(1-shrink*phase,fit)}
+}
+
+// One clock moves the entire remaining stack one slot at a time. At each
+// landing its leading icon stays behind, and the smaller stack moves onward.
+// Reading this same pose function backwards gathers the icons on that path.
+function fanChainPose(sx, sy, tx, ty, progress, ordinal, layout, area, style, firstIndex, chainCount) {
+  var p=Math.max(0,Math.min(1,progress)), first=Math.max(0,firstIndex || 0)
+  var count=Math.max(1,Math.floor(chainCount===undefined ? layout.capacity : chainCount))
+  var hops=count-1,slot=Math.max(0,Math.min(hops,ordinal-first))
+  var raw=p*hops,stage=Math.min(hops,Math.floor(raw)),fraction=raw-stage
+  // A short landing dwell lets the next group visibly separate. Smoothstep's
+  // zero velocity at both ends gives every departure and arrival some weight.
+  var u=Math.min(1,fraction/.86),ease=u*u*(3-2*u)
+  var phase=p>0 && p<1 ? Math.sin(Math.PI*p) : 0
+  var result={x:sx,y:sy,bend:0,tilt:0,scale:1,stage:stage,slot:slot,targetSlot:slot,settled:slot<=stage,groupOffset:0}
+  // At full unfold the destination can keep moving as paging or removal
+  // reflows slots; even a new front icon must follow that animation.
+  if (p===1) { result.x=tx; result.y=ty; return result }
+  if (ordinal===0) { result.scale=1-.008*phase; return result }
+  if (p===0) { result.slot=0; result.groupOffset=Math.min(ordinal,2)*4; return result }
+  var originalOffset=Math.min(Math.max(0,ordinal),2)*4
+  var anchorY=sy-originalOffset
+  if (!hops) {
+    var single=p*p*(3-2*p)
+    result.x=sx+(tx-sx)*single; result.y=sy+(ty-sy)*single
+    result.groupOffset=originalOffset*(1-single)
+    return result
+  }
+  // A fan closed from another page still ends at the original preview stack.
+  // Peel off its global preview offset during the first shared hop.
+  var pageOffset=Math.min(slot,2)*4
+  var pageCorrection=stage===0 ? (originalOffset-pageOffset)*(1-ease) : 0
+  if (slot<=stage) {
+    result.x=tx; result.y=ty+pageCorrection; result.groupOffset=pageCorrection
+    return result
+  }
+  var before=Math.min(slot-stage,2)*4,after=Math.min(slot-stage-1,2)*4
+  var tail=before+(after-before)*ease+pageCorrection
+  var distance=(stage+ease)*layout.sign*layout.step
+  var x=sx+(layout.horizontal ? distance : 0)
+  var y=anchorY+(layout.horizontal ? 0 : distance)+tail
+  var bend=0
+  if (style==="matryoshka-hop") {
+    var sign=layout.hopSign===1 || layout.hopSign===-1 ? layout.hopSign : layout.curveSign
+    var limit=layout.hopLimit===undefined ? Math.min(28,layout.curveLimit) : layout.hopLimit
+    bend=u>0 && u<1 ? Math.sin(Math.PI*u)*limit : 0
+    // The whole remainder uses one safe cross-axis excursion, preserving its
+    // layered silhouette rather than clamping individual icons differently.
+    if (layout.horizontal) y+=bend*sign
+    else x+=bend*sign
+  }
+  result.x=Math.max(area.x,Math.min(area.x+area.width-layout.size,x))
+  result.y=Math.max(area.y,Math.min(area.y+area.height-layout.size,y))
+  result.bend=bend; result.groupOffset=tail; result.slot=stage+ease
+  return result
 }
 
 function fanBounds(rects, inset, endInset, horizontal, area) {

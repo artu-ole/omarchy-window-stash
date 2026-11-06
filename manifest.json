@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "community.window-stash",
   "name": "Window Stash",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "author": "artu-ole",
   "license": "AGPL-3.0-only",
   "description": "Stash windows in an edge dock, floating bubbles, or expandable floating dock, preserving geometry.",

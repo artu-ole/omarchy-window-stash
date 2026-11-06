@@ -633,7 +633,7 @@ PanelWindow {
             {key:"dockCorners", label:"Dock corners", values:["theme","custom"], labels:["Follow desktop","Custom"]},
             {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
             {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
-            {key:"floatingAnimation", label:"Unfold animation", values:["arc","glide","cascade","spring","swing"], labels:["Arc","Glide","Cascade","Spring","Swing"]},
+            {key:"floatingAnimation", label:"Unfold animation", values:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop"], labels:["Arc","Glide","Cascade","Spring","Swing","Matryoshka","Matryoshka hops"]},
             {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
             {key:"restoreDestination", label:"Restore destination", values:["current","original"], labels:["Current workspace","Original workspace"]},
             {key:"grouping", label:"Icon grouping", values:["window","app"], labels:["One per window","One per app"]},

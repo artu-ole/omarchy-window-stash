@@ -117,7 +117,7 @@ omarchy-shell window-stash configure iconOpacity 75
 | `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
 | `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock only |
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
-| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`; unfold/fold style, overridden by Reduced/Off |
+| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`; unfold/fold style, overridden by Reduced/Off |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
 | `dragMotion` | `physics` | `physics`: momentum and gentle collisions; `direct`: direct placement with the existing edge glide |
 | `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
@@ -132,6 +132,12 @@ Hover smoothly restores full opacity; pressed and keyboard-selected icons stay
 opaque. Dock and icon opacity are independent. Transparent elements retain their
 normal input regions, including at 0%; menus and settings keep their theme opacity.
 Fades follow the animation setting.
+
+Matryoshka moves the remaining stack together to each next slot, leaving one
+icon behind at every stop. Matryoshka hops uses the same sequence with an arch
+between stops. The original front icon stays fixed; folding collects the icons
+in reverse. Both follow the floating direction and keep movement inside the
+work area. Reduced/Off use immediate positions instead.
 
 With Physics and Full animations, floating icons and the collapsed stack track
 the pointer directly, then coast after a flick. Icons gently nudge one another;
@@ -226,6 +232,7 @@ python3 tests/live.py              # controller + desktop integration
 python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
+python3 tests/matryoshka.py --small-output # nested-stack stages, inverse folding, both axes and overflow
 python3 tests/close_actions.py     # isolated ledger: closure, scope and native save prompts
 python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-through and scaled output
 python3 tests/middle_close.py      # pending icons, grouped close and cancellation

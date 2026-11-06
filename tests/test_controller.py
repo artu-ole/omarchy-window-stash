@@ -129,7 +129,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_animation_settings_and_legacy_default(self):
         self.settings(presentation="floating")
         self.assertEqual(self.stash.settings()["floatingAnimation"], "arc")
-        for style in ("arc", "glide", "cascade", "spring", "swing"):
+        for style in ("arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop"):
             self.settings(presentation="floating", floatingAnimation=style, animations="reduced")
             self.assertEqual(self.stash.settings()["floatingAnimation"], style)
             self.assertEqual(self.stash.settings()["animations"], "reduced")

@@ -46,6 +46,15 @@ Item {
   property string activeAnimation:"arc"
   readonly property string requestedAnimation:config.floatingAnimation || "arc"
   readonly property var fanTiming:Motion.fanProfile(activeAnimation)
+  readonly property bool chainStyle:Motion.chain(activeAnimation)
+  property real chainProgress:0
+  property int chainCount:1
+  // Source updates wait for a landing so a traveling group keeps its ordinals.
+  property var chainKeys:[]
+  property bool chainRetargeting:false
+  readonly property bool chainHolding:chainStyle && (chainAnimation.running || chainRetargeting)
+  readonly property var presentationKeys:chainHolding ? chainKeys : iconModel.activeKeys
+  property int pendingPage:-1
   property int createdIcons:0
   property int openingFrames:0
   property int closingFrames:0
@@ -67,19 +76,19 @@ Item {
   readonly property real inset:metrics.xxs+borderWidth
   readonly property real targetRadius:Model.dockRadius(config.dockCorners,config.dockCornerRadius,Style.cornerRadius,tileSize+inset*2,tileSize+inset*2)
   readonly property real endInset:Math.max(inset,Model.dockEndInset(targetRadius,inset,borderWidth))
-  readonly property int groupCount:iconModel.activeKeys.length
+  readonly property int groupCount:presentationKeys.length
   readonly property int tail:Math.max(0,Math.min(3,groupCount)-1)*4
   property real stackTail:tail
   property real handleOpacity:active ? 1 : 0
   property real reveal:open ? 1 : 0
   readonly property bool open:active && expanded && windows.length>1
-  readonly property int currentIndex:iconModel.activeKeys.indexOf(selectedKey)
+  readonly property int currentIndex:presentationKeys.indexOf(selectedKey)
   readonly property var geometry:Model.fanLayout(pivotX,pivotY,usableArea,groupCount || iconModel.count,horizontal,tileSize,gap,inset,endInset,fanSign,fanCurve,{x:anchorX,y:anchorY})
   readonly property int maxFirst:Math.max(0,groupCount-geometry.capacity)
   readonly property bool overflow:maxFirst>0
   property bool actorsMoving:false
   readonly property bool windowActive:Window.active
-  readonly property bool animating:actorsMoving || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
+  readonly property bool animating:actorsMoving || chainAnimation.running || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
   readonly property bool present:active || handleOpacity>0 || reveal>0 || actorsMoving
   readonly property var currentRects:actorRects(false)
   readonly property var finalRects:actorRects(true)
@@ -119,7 +128,36 @@ Item {
   Keys.onLeftPressed:function(event) { if (horizontal) navigate(-geometry.sign); else event.accepted=false }
   Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:Motion.duration(dock.animations,180,0); easing.type:Easing.OutCubic } }
   Behavior on handleOpacity { NumberAnimation { id:handleAnimation; duration:Motion.duration(dock.animations,180,100); easing.type:Easing.OutCubic } }
-  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,(dock.open ? dock.fanTiming.open : dock.fanTiming.close)+Math.min(dock.fanTiming.limit,Math.max(0,dock.geometry.capacity-1)*dock.fanTiming.stagger),100); easing.type:Easing.OutCubic } }
+  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,Motion.fanDuration(dock.fanTiming,dock.open,dock.chainStyle ? dock.chainCount : dock.geometry.capacity),100); easing.type:Easing.OutCubic } }
+  function retargetChain() {
+    if (chainStyle && !chainAnimation.running) {
+      chainKeys=iconModel.activeKeys.slice()
+      chainCount=Math.max(1,geometry.capacity)
+    }
+    chainRetargeting=true
+    chainAnimation.stop()
+    var target=open ? 1 : 0
+    if (!chainStyle || !Motion.full(animations) || Math.abs(chainProgress-target)<.000001) {
+      chainProgress=target; chainRetargeting=false; return
+    }
+    chainAnimation.from=chainProgress; chainAnimation.to=target
+    chainAnimation.duration=Math.max(1,Motion.fanDuration(fanTiming,open,chainCount)*Math.abs(target-chainProgress))
+    chainAnimation.restart()
+    chainRetargeting=false
+  }
+  NumberAnimation {
+    id:chainAnimation
+    target:dock; property:"chainProgress"; easing.type:Easing.Linear
+    onRunningChanged: {
+      dock.inputChanged(); motionUpdate.restart()
+      if (!running) Qt.callLater(function() {
+        if (!chainAnimation.running && dock.open && dock.pendingPage>=0) {
+          var page=dock.pendingPage; dock.pendingPage=-1; dock.setFirst(page)
+        }
+      })
+    }
+  }
+  onChainProgressChanged: { inputChanged(); motionUpdate.restart() }
   onMotionFrozenChanged:freezeUpdate.restart()
   Timer { id:freezeUpdate; interval:0; onTriggered:if (dock.dragWorld) dock.dragWorld.freeze(dock.bodyKey,dock.motionFrozen) }
   Connections {
@@ -142,8 +180,12 @@ Item {
     id:iconModel
     sourceGroups:dock.config.presentation==="floating" ? dock.groups : []
     animations:dock.animations
-    hold:!dock.open && (dock.reveal>0 || dock.actorsMoving)
-    onReconciled: { dock.repairSelection(); motionUpdate.restart() }
+    hold:dock.chainHolding || (!dock.open && (dock.reveal>0 || dock.actorsMoving))
+    onReconciled: {
+      dock.repairSelection()
+      if (dock.chainStyle && !dock.chainHolding) dock.chainCount=Math.max(1,dock.geometry.capacity)
+      motionUpdate.restart()
+    }
   }
   function hasMovingActors() {
     for (var i=0;i<actors.count;i++) { var actor=actors.itemAt(i) as StashFanIcon; if (actor && actor.moving) return true }
@@ -167,34 +209,40 @@ Item {
   }
   function repairSelection() {
     firstIndex=Math.max(0,Math.min(firstIndex,maxFirst))
-    if (groupCount && currentIndex<0) selectedKey=iconModel.activeKeys[Math.min(firstIndex,groupCount-1)]
+    if (groupCount && currentIndex<0) selectedKey=presentationKeys[Math.min(firstIndex,groupCount-1)]
     else if (!groupCount) selectedKey=""
   }
   function selectIndex(index) {
     if (index<0 || index>=groupCount) return
-    selectedKey=iconModel.activeKeys[index]
-    if (index<firstIndex) firstIndex=index
-    else if (index>=firstIndex+geometry.capacity) firstIndex=Math.min(maxFirst,index-geometry.capacity+1)
+    selectedKey=presentationKeys[index]
+    if (index<firstIndex) requestPage(index)
+    else if (index>=firstIndex+geometry.capacity) requestPage(Math.min(maxFirst,index-geometry.capacity+1))
   }
   function navigate(delta) { if (open) { selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))); if (!fanHover.hovered) leaveDelay.restart() } }
+  function requestPage(index) {
+    if (chainStyle && chainAnimation.running) pendingPage=Math.max(0,Math.min(maxFirst,index))
+    else firstIndex=Math.max(0,Math.min(maxFirst,index))
+  }
   function setFirst(index) {
+    if (chainStyle && chainAnimation.running) { pendingPage=Math.max(0,Math.min(maxFirst,index)); return }
     firstIndex=Math.max(0,Math.min(maxFirst,index))
-    if (currentIndex<firstIndex || currentIndex>=firstIndex+geometry.capacity) selectedKey=iconModel.activeKeys[firstIndex] || ""
+    if (currentIndex<firstIndex || currentIndex>=firstIndex+geometry.capacity) selectedKey=presentationKeys[firstIndex] || ""
   }
   function unfoldAt(x,y) {
     dragWorld.cancel(bodyKey,false); dragWorld.freeze(bodyKey,true)
     placementPending=false
     var reversing=(actorsMoving || reveal>0) && horizontal===requestedHorizontal
     if (!reversing) { horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0 }
-    pivotX=x; pivotY=y; firstIndex=0
-    selectedKey=iconModel.activeKeys[0] || ""
+    pivotX=x; pivotY=y; pendingPage=-1
+    if (!reversing || !chainStyle) { firstIndex=0; selectedKey=presentationKeys[0] || "" }
+    if (!reversing) chainCount=Math.max(1,geometry.capacity)
     fanSign=geometry.sign; fanCurve=geometry.curveSign
     expanded=true
   }
   function close(reason) { leaveDelay.stop(); if (expanded) lastDismissal=reason || "dismiss"; expanded=false }
   function finishClose() {
     if (!open && !actorsMoving && reveal===0) {
-      horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0; firstIndex=0
+      horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0; firstIndex=0; pendingPage=-1
       freezeUpdate.restart()
       if (placementPending) positionUpdate.restart()
     }
@@ -233,14 +281,15 @@ Item {
     for (var i=0;i<actors.count;i++) {
       var actor=actors.itemAt(i) as StashFanIcon
       if (!actor) continue
-      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.progress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible}
+      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset}
       states.push(record)
       if ((open || reveal>0) && actor.slotVisible && actor.drawWeight>.01) (actor.retiring ? exiting : icons).push(record)
     }
-    icons.sort(function(a,b) { return iconModel.activeKeys.indexOf(a.key)-iconModel.activeKeys.indexOf(b.key) })
+    icons.sort(function(a,b) { return presentationKeys.indexOf(a.key)-presentationKeys.indexOf(b.key) })
     var front=frontActor()
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",style:activeAnimation,animating:animating,progress:reveal,
       createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
+      chain:{progress:chainProgress,count:chainCount,moving:chainAnimation.running,stage:Math.min(Math.max(0,chainCount-1),Math.floor(chainProgress*Math.max(0,chainCount-1)))},
       dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:bodyMoving,windows:windows.length,groups:groups.length,
@@ -268,9 +317,12 @@ Item {
   onRequestedHorizontalChanged: { close(); motionUpdate.restart() }
   onActiveChanged: { inputChanged(); if (!active) { close(); if (dragWorld) dragWorld.remove(bodyKey); held=false; bodyMoving=false } else schedulePlacement(false) }
   onWindowsChanged:if (windows.length<=1) close()
-  onAnimationsChanged:if (!Motion.full(animations)) {
-    tailAnimation.complete()
-    if (animations==="off") { revealAnimation.complete(); handleAnimation.complete() }
+  onAnimationsChanged: {
+    retargetChain()
+    if (!Motion.full(animations)) {
+      tailAnimation.complete()
+      if (animations==="off") { revealAnimation.complete(); handleAnimation.complete() }
+    }
   }
   onRevealChanged: {
     inputChanged()
@@ -278,7 +330,7 @@ Item {
     motionUpdate.restart()
   }
   onOpenChanged: {
-    inputChanged(); grabReady=false; updateLeaveTimer()
+    retargetChain(); inputChanged(); grabReady=false; updateLeaveTimer()
     if (open) {
       openingFrames=0; grabDelay.restart()
       Qt.callLater(function() { if (dock.open) dock.forceActiveFocus() })
@@ -347,7 +399,7 @@ Item {
       id:actor
       required property string groupKey
       required retiring
-      readonly property int liveIndex:iconModel.activeKeys.indexOf(groupKey)
+      readonly property int liveIndex:dock.presentationKeys.indexOf(groupKey)
       property int lastIndex:Math.max(0,liveIndex)
       onLiveIndexChanged:if (liveIndex>=0) lastIndex=liveIndex
       ordinal:liveIndex>=0 ? liveIndex : lastIndex
@@ -363,6 +415,10 @@ Item {
       globalPresence:dock.handleOpacity
       animations:dock.animations
       unfoldStyle:dock.activeAnimation
+      sharedProgress:dock.chainProgress
+      sharedMoving:chainAnimation.running
+      chainCount:dock.chainCount
+      firstIndex:dock.firstIndex
       idleOpacity:dock.iconIdleOpacity
       frameVisible:dock.config.iconFrame!=="hidden"
       iconShape:dock.config.iconShape || "auto"

@@ -175,7 +175,7 @@ Item {
     if (!shell) { lastError = "Shell settings are not available"; return }
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
-      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"]}
+      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"]}
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100}
     if (numericLimits[key] !== undefined) {
       if (!/^(0|[1-9][0-9]{0,2})$/.test(String(value)) || Number(value) > numericLimits[key]) {
