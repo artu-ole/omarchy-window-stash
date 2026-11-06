@@ -137,25 +137,31 @@ def main():
         settle(False);park(windows[-1]);d=expand();keyboard(1)
         wait(lambda:dock()['currentIndex']==1,'Physical arrow direction did not select next icon')
         collapse()
-        under=spawn();target='address:'+under
-        h.dispatch('window.float',window=target,action='on');h.dispatch('window.resize',window=target,x=640,y=420,relative=False)
-        h.dispatch('window.move',window=target,x=monitor['x']+100,y=monitor['y']+100,relative=False)
         for direction in ('horizontal','vertical'):
+            h.dispatch('focus',workspace=str(workspace))
+            under=spawn();target='address:'+under
+            h.dispatch('window.float',window=target,action='on');h.dispatch('window.resize',window=target,x=640,y=420,relative=False)
+            h.dispatch('window.move',window=target,x=monitor['x']+100,y=monitor['y']+100,relative=False)
+            app=wait(lambda:(c if (c:=h.client(under)) and c['workspace']['id']==workspace and c['floating']
+                     and c['at']==[monitor['x']+100,monitor['y']+100] and c['size']==[640,420] else None),
+                     'Outside-click application geometry did not settle')
+            app_point=(app['at'][0]-monitor['x']+app['size'][0]/2,app['at'][1]-monitor['y']+app['size'][1]/2)
+            assert not app['title'].endswith(' clicked'),'Outside-click fixture must start unclicked for each orientation'
             configure('floatingDirection',direction)
             d=expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not arm')
-            pointer.move(*point(250,220))
+            pointer.move(*point(*app_point))
             wait(lambda:dock()['dismissal']['pending'],'Leaving did not arm timeout')
             time.sleep(.15)
             assert dock()['expanded'],'Pointer movement collapsed fan before grace period'
             r=dock()['icons'][0];pointer.move(*point(r['x']+24,r['y']+24))
             wait(lambda:not dock()['dismissal']['pending'],'Re-entry did not cancel timeout')
             time.sleep(.9);assert dock()['expanded'],'Cancelled leave timer still closed the fan'
-            left=time.monotonic();pointer.move(*point(250,220))
+            left=time.monotonic();pointer.move(*point(*app_point))
             wait(lambda:not dock()['expanded'],'Leave timeout did not close fan',timeout=2)
             assert .6<time.monotonic()-left<2,'Incorrect leave grace duration'
             settle(False)
             expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not rearm')
-            pointer.move(*point(250,220));time.sleep(.15)
+            pointer.move(*point(*app_point));time.sleep(.15)
             assert dock()['expanded'],'Focus follows mouse bypassed timeout'
             beforeClick=shell('status')['clickObserverCount']
             clicked=time.monotonic();pointer.button(True);time.sleep(.02);pointer.button(False)
@@ -164,7 +170,15 @@ def main():
                 print('Click observer diagnostics:',beforeClick,shell('status')['clickObserverCount'],json.dumps(dock()),flush=True)
                 raise
             assert time.monotonic()-clicked<.5 and dock()['lastDismissal']=='outside-click'
-            wait(lambda:h.client(under)['title'].endswith(' clicked'),'Outside click was swallowed')
+            try:wait(lambda:h.client(under)['title'].endswith(' clicked'),'Outside click was swallowed')
+            except AssertionError:
+                app=h.client(under)
+                print('Outside application click diagnostics:',{'direction':direction,'point':app_point,
+                      'client':{k:app.get(k) for k in ('address','at','size','workspace','floating','title')} if app else None,
+                      'cursor':h.read('cursorpos'),'activeAddress':h.read('activewindow').get('address'),
+                      'activeWorkspace':h.read('activeworkspace')['id'],'observerBefore':beforeClick,
+                      'observerAfter':shell('status')['clickObserverCount'],'dock':dock()},flush=True)
+                raise
             settle(False)
             # Clicking unused desktop space must also bypass the delay.
             expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not rearm')
@@ -178,6 +192,8 @@ def main():
             wait(lambda:not dock()['expanded'],'Transparent corner click did not close fan',timeout=.5)
             assert dock()['lastDismissal']=='outside-click'
             settle(False)
+            h.dispatch('window.close',window=target)
+            wait(lambda:not h.client(under),'Outside-click fixture did not close')
         print('PASS 800 ms leave grace, re-entry cancellation, immediate app/desktop outside clicks and click-through in both orientations',flush=True)
         expand();h.dispatch('focus',workspace=str(workspace+1));wait(lambda:not dock()['expanded'],'Workspace interaction did not close fan')
         h.dispatch('focus',workspace=str(workspace));settle(False)

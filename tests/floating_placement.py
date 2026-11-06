@@ -103,8 +103,20 @@ def main():
 
         for index,(x,y) in enumerate(((w*.2,cy),(cx,height*.2),(w*.75,cy),(cx,height*.75))):
             drag(lambda:bubble(key),x,y,hold=index==0)
-            moving=wait(lambda:bubble(key) if bubble(key)['animating'] else None,'Bubble skipped its snap animation')
-            r=wait(lambda:bubble(key) if not bubble(key)['animating'] else None,'Bubble snap did not finish')
+            def intermediate():
+                state=surface();sample=next(b for b in state['bubbles'] if b['key']==key)
+                area=state['usableArea']
+                remaining=min(abs(sample['x']-area['x']-8),abs(sample['y']-area['y']-8),
+                              abs(sample['x']+sample['width']-area['x']-area['width']+8),
+                              abs(sample['y']+sample['height']-area['y']-area['height']+8))
+                # A true animation flag can precede its first frame. Observe
+                # one coherent sample after departure and before any edge.
+                return sample if sample['animating'] and abs(sample['x']-x)+abs(sample['y']-y)>.5 and remaining>.5 else None
+            moving=wait(intermediate,'Bubble snap did not expose an intermediate moving frame')
+            def settled():
+                sample=bubble(key)
+                return sample if not sample['animating'] else None
+            r=wait(settled,'Bubble snap did not finish')
             edge(r);saved(key,r)
             assert abs(moving['x']-r['x'])+abs(moving['y']-r['y'])>0.5,'Snap had no intermediate position'
         # Another bubble released at the same point must find its own edge slot.

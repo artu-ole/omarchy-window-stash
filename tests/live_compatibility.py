@@ -89,7 +89,7 @@ def ready(record):
 
 @desktop_test('Enhanced live preview rendering tests')
 def main(apps):
-    with NativeSession() as session, tempfile.TemporaryDirectory(prefix='stash-live-fixtures-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='stash-live-fixtures-') as temporary, NativeSession() as session:
         directory = Path(temporary)
         for key, value in dict(presentation='dock', scope='workspace', grouping='window', hoverPreview='live',
                                livePreviewCompatibility='standard', previewDelay=0, previewHideDelay=100,

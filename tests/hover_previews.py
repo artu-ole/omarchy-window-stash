@@ -135,6 +135,10 @@ def away(session):
                  (area['x']+6, area['y']+area['height']-6),
                  (area['x']+area['width']-6, area['y']+area['height']-6)):
         if not any(contains(r, x, y) for r in excluded):
+            # A restore can warp the compositor cursor while this absolute
+            # test device still has its old focus. Cross the leave boundary
+            # with motion, as hover() does, before testing the final point.
+            session.move(x, y+1)
             session.move(x, y)
             return x, y
     raise AssertionError('No empty corner was available to leave the preview')

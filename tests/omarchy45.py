@@ -3,7 +3,7 @@
 
 Install this checkout first. Only owned fixtures and previously absent
 workspaces are changed; NativeSession preserves the user's desktop, and the
-mode files are restored separately. Root is the sole desktop test runner.
+mode files are restored separately. Run one desktop suite at a time.
 """
 import json
 import os

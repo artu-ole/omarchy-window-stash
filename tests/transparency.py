@@ -26,7 +26,10 @@ def main():
         right=max(m['x']+round(m['width']/m['scale']) for m in monitors)
         bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
         return m['x']+x-left,m['y']+y-top,right-left,bottom-top
-    def move(x,y):pointer.move(*point(x-1,y));pointer.move(*point(x,y))
+    last_pointer={}
+    def move(x,y):
+        last_pointer.update(x=x,y=y,time=time.monotonic())
+        pointer.move(*point(x-1,y));pointer.move(*point(x,y))
     def hover(rect):move(rect['x']+rect['width']/2,rect['y']+rect['height']/2)
     def click(rect):hover(rect);pointer.button(True);time.sleep(.05);pointer.button(False)
     def away():move(32,80)
@@ -48,7 +51,19 @@ def main():
         w,ht=map(int,size.split());assert len(data)==w*ht*3
         return list(data)
     def alpha(getter,value):
-        return wait(lambda:getter() if abs(getter()['opacity']-value)<.001 else None,'Opacity did not settle at '+str(value))
+        def sample():
+            feedback=getter()
+            return feedback if abs(feedback['opacity']-value)<.001 else None
+        try:
+            return wait(sample,'Opacity did not settle at '+str(value))
+        except AssertionError:
+            state=surface();floating=state['floatingDock']
+            print('Opacity diagnostics:',{'wanted':value,'actual':getter(),
+                  'lastPointer':dict(last_pointer),'cursor':h.read('cursorpos'),
+                  'surface':{key:state[key] for key in ('visible','width','height','workspaceId')},
+                  'dock':{key:floating[key] for key in ('active','expanded','orientation','animating','snapping','currentIndex','lastDismissal','dismissal','panel')},
+                  'icons':[{key:icon[key] for key in ('key','x','y','width','height','interactive','moving','progress','appearance')} for icon in floating['icons']]},flush=True)
+            raise
     def icon():return surface()['shelf']['icons'][0]
     def icon_feedback():return icon()['appearance']['feedback']
     def frame_feedback():return surface()['shelf']['feedback']
@@ -117,11 +132,21 @@ def main():
         for direction in ('vertical','horizontal'):
             configure('floatingDirection',direction);click(dock()['handle'])
             wait(lambda:dock()['expanded'] and not dock()['animating'],'Floating dock did not open')
-            away();alpha(lambda:dock()['panel']['feedback'],.3)
-            assert dock()['icons'][dock()['currentIndex']]['appearance']['feedback']['opacity']>.999
-            other=1 if dock()['currentIndex']==0 else 0
-            alpha(lambda:dock()['icons'][other]['appearance']['feedback'],.35)
-            hover(dock()['icons'][other]);alpha(lambda:dock()['panel']['feedback'],1)
+            def idle_fan():
+                # Read one coherent frame and return its target rectangle.
+                # Separate status reads here can consume the 800 ms leave
+                # grace before the pointer returns to the open dock.
+                state=dock()
+                if not state['expanded'] or state['animating'] or len(state['icons'])!=2:
+                    return None
+                selected=state['currentIndex']
+                if selected not in (0,1):return None
+                other=1 if selected==0 else 0
+                return (state,other) if abs(state['panel']['feedback']['opacity']-.3)<.001 \
+                    and state['icons'][selected]['appearance']['feedback']['opacity']>.999 \
+                    and abs(state['icons'][other]['appearance']['feedback']['opacity']-.35)<.001 else None
+            away();idle,other=wait(idle_fan,'Floating idle alpha did not settle before re-entry')
+            hover(idle['icons'][other]);alpha(lambda:dock()['panel']['feedback'],1)
             alpha(lambda:dock()['icons'][other]['appearance']['feedback'],1)
             back=('Up' if dock()['fan']['sign']>0 else 'Down') if direction=='vertical' else ('Left' if dock()['fan']['sign']>0 else 'Right')
             subprocess.run(['wtype','-k',back],check=True)
