@@ -172,6 +172,73 @@ PanelWindow {
     function onDialogWindowsChanged() { modelDelay.restart() }
     function onDialogQueryChanged() { modelDelay.restart() }
   }
+  function settingItems() {
+    var rows=[],repeaters=[generalRows,placementRows,iconRows,dockRows,motionRows,previewRows]
+    for (var i=0;i<repeaters.length;i++) {
+      if (!repeaters[i]) continue
+      for (var j=0;j<repeaters[i].count;j++) {
+        var row=repeaters[i].itemAt(j)
+        if (row) rows.push(row)
+      }
+    }
+    return rows
+  }
+  component SettingChoice:RowLayout {
+    id:settingRow
+    required property var modelData
+    readonly property alias selector:settingDropdown
+    visible:(["previewSize","previewPlacement","previewTitles"].indexOf(modelData.key)<0 || surface.previewsEnabled)
+      && ((modelData.key!=="floatingDirection" && modelData.key!=="floatingAnimation") || surface.floatingMode)
+      && (modelData.key!=="dockSide" || surface.config.presentation==="dock")
+      && (modelData.key!=="floatingPlacement" || surface.bubbleMode || surface.floatingMode)
+      && (modelData.key!=="dragMotion" || surface.bubbleMode || surface.floatingMode)
+      && (modelData.key!=="dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
+      && (modelData.key!=="dockFrame" || !surface.bubbleMode)
+      && (modelData.key!=="iconShape" || surface.config.iconFrame!=="hidden")
+    Layout.fillWidth:true
+    Text {
+      text:settingRow.modelData.label
+      wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
+      color:surface.popupColors.text
+      font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+    }
+    Ui.Dropdown {
+      id:settingDropdown
+      Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+      showLabel:false
+      options:settingRow.modelData.values.map(function(value,i) { return {value:value,label:settingRow.modelData.labels[i]} })
+      Component.onCompleted:value=surface.config[settingRow.modelData.key]
+      Connections {
+        target:surface
+        function onConfigChanged() { settingDropdown.value=surface.config[settingRow.modelData.key] }
+      }
+      onChanged:function(value) { surface.stash.setting(settingRow.modelData.key,value) }
+    }
+  }
+  component SettingNumber:RowLayout {
+    id:settingRow
+    required property var modelData
+    readonly property alias numberField:settingNumber
+    visible:(modelData.key!=="dockCornerRadius" || (!surface.bubbleMode && surface.dockFrameVisible && surface.config.dockCorners==="custom"))
+      && (modelData.key!=="dockOpacity" || (!surface.bubbleMode && surface.dockFrameVisible))
+      && (["previewDelay","previewHideDelay"].indexOf(modelData.key)<0 || surface.previewsEnabled)
+    Layout.fillWidth:true
+    Text {
+      text:settingRow.modelData.label
+      wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
+      color:surface.popupColors.text
+      font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+    }
+    Ui.NumberField {
+      id:settingNumber
+      Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+      fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+      from:0; to:settingRow.modelData.maximum; stepSize:settingRow.modelData.stepSize || 1
+      value:surface.config[settingRow.modelData.key]===undefined ? settingRow.modelData.defaultValue : surface.config[settingRow.modelData.key]
+      foreground:surface.popupColors.text
+      onModified:function(value) { surface.stash.setting(settingRow.modelData.key,value) }
+    }
+  }
   function details() {
     var menuDetails=contextMenu.details()
     var currentDialog=menuDetails.opened ? {x:menuDetails.rect.x,y:menuDetails.rect.y,width:menuDetails.rect.width,height:menuDetails.rect.height,visible:menuDetails.visible,rendered:menuDetails.rendered,progress:menuDetails.progress}
@@ -183,25 +250,22 @@ PanelWindow {
         shape:b.iconShape, radius:b.hitRadius,animating:b.positionAnimating,held:b.positionHeld,appearance:b.appearance()})
     }
     var controls = []
-    for (var j = 0; j < settingRows.count; j++) {
-      var row = settingRows.itemAt(j)
-      // Repeater.itemAt() is typed as Item; its delegate adds these properties.
-      // qmllint disable missing-property
-      if (row) controls.push({key:row.modelData.key, value:row.selector.value,
+    var rows=settingItems()
+    for (var j=0;j<rows.length;j++) {
+      var row=rows[j] as SettingChoice
+      if (row) controls.push({key:row.modelData.key,section:row.modelData.section,value:row.selector.value,
         open:row.selector.popupOpen,visible:row.visible, rect:itemRect(row.selector)})
-      // qmllint enable missing-property
     }
     var opacityControls=[]
-    for (var k=0;k<opacityRows.count;k++) {
-      var opacityRow=opacityRows.itemAt(k)
-      // qmllint disable missing-property
+    var opacityItems=[iconOpacityRow,dockOpacityRow]
+    for (var k=0;k<opacityItems.length;k++) {
+      var opacityRow=opacityItems[k] as SettingNumber
       if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
-      // qmllint enable missing-property
     }
     var shortcutControls=[]
     for (var n=0;n<shortcutRows.count;n++) {
       var shortcut=shortcutRows.itemAt(n) as StashShortcutField
-      if (shortcut) shortcutControls.push(shortcut.details(surface.contentItem))
+      if (shortcut) shortcutControls.push(Object.assign({section:"shortcuts"},shortcut.details(surface.contentItem)))
     }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
@@ -217,9 +281,15 @@ PanelWindow {
       dialog:currentDialog,contextMenu:menuDetails,
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
+      settingSections:[{key:"general",title:generalHeader.text,rect:itemRect(generalHeader)},
+        {key:"placement",title:placementHeader.text,rect:itemRect(placementHeader)},
+        {key:"appearance",title:appearanceHeader.text,rect:itemRect(appearanceHeader)},
+        {key:"motion",title:motionHeader.text,rect:itemRect(motionHeader)},
+        {key:"previews",title:previewsHeader.text,rect:itemRect(previewsHeader)},
+        {key:"shortcuts",title:shortcutsHeader.text,rect:itemRect(shortcutsHeader)}],
       settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight},shortcutControls:shortcutControls,
       opacityControls:opacityControls,
-      cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
+      cornerControl:{visible:radiusRow.visible,value:radiusRow.numberField.value,rect:itemRect(radiusRow.numberField.field)},
       floatingDock:floatingDock.details(),
       preview:windowPreview.details(),
       actions:{here:contextMenu.actionRect("here"),original:contextMenu.actionRect("original"),settings:contextMenu.actionRect("settings")},
@@ -245,11 +315,12 @@ PanelWindow {
   onDialogOpenChanged: {
     dialogFrames=0
     if (dialogOpen) floatingDock.close()
-    else for (var i=0;i<settingRows.count;i++) {
-      var row=settingRows.itemAt(i)
-      // qmllint disable missing-property
-      if (row) row.selector.close()
-      // qmllint enable missing-property
+    else {
+      var rows=settingItems()
+      for (var i=0;i<rows.length;i++) {
+        var row=rows[i] as SettingChoice
+        if (row) row.selector.close()
+      }
     }
   }
   Timer { id: primeFocus; interval: 70; onTriggered: surface.focusPrimed = true }
@@ -655,158 +726,99 @@ PanelWindow {
           width:Math.max(0,settingsViewport.width-surface.metrics.sm*2)
           height:implicitHeight
           spacing:surface.metrics.panelGap
-        Repeater {
-          id: settingRows
-          model: [
-            {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
-              labels:["Static dock","Floating bubbles","Floating dock"]},
-            {key:"hoverPreview",label:"Hover preview",values:["off","still","live"],labels:["Off","Still image","Live"]},
-            {key:"previewSize",label:"Preview size",values:["small","medium","large"],labels:["Small","Medium","Large"]},
-            {key:"previewPlacement",label:"Preview placement",values:["auto","above","below","left","right"],labels:["Automatic","Above","Below","Left","Right"]},
-            {key:"previewTitles",label:"Preview titles",values:["shown","hidden"],labels:["Shown","Hidden"]},
-            {key:"animations", label:"Animations", values:["full","reduced","off"], labels:["Full","Reduced","Off"]},
-            {key:"animationSpeed",label:"Animation speed",values:["slow","relaxed","normal","fast","ultrafast"],labels:["Slow (0.5×)","Relaxed (0.75×)","Normal","Fast (1.5×)","Ultrafast (2.5×)"]},
-            {key:"iconFrame", label:"Icon border/background", values:["shown","hidden"], labels:["Shown","Hidden (larger icons)"]},
-            {key:"dockFrame", label:"Dock border/background", values:["shown","hidden"], labels:["Shown","Hidden"]},
-            {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
-            {key:"dragMotion", label:"Drag motion", values:["physics","direct"], labels:["Physics","Direct"]},
-            {key:"dockCorners", label:"Dock corners", values:["theme","custom"], labels:["Follow desktop","Custom"]},
-            {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
-            {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
-            {key:"floatingAnimation", label:"Unfold animation", values:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop"], labels:["Arc","Glide","Cascade","Spring","Swing","Matryoshka","Matryoshka hops"]},
-            {key:"scope", label:"Stash visibility", values:["global","workspace"], labels:["Global","Current workspace"]},
-            {key:"restoreDestination", label:"Restore destination", values:["current","original"], labels:["Current workspace","Original workspace"]},
-            {key:"grouping", label:"Icon grouping", values:["window","app"], labels:["One per window","One per app"]},
-            {key:"iconShape", label:"Icon shape", values:["auto","circle","square","rounded","squircle"],
-              labels:["Automatic","Circle","Square","Rounded square","Squircle"]}
-          ]
-          delegate: RowLayout {
-            id: settingRow
-            required property var modelData
-            readonly property alias selector: settingDropdown
-            visible:(["previewSize","previewPlacement","previewTitles"].indexOf(modelData.key)<0 || surface.previewsEnabled)
-              && ((modelData.key !== "floatingDirection" && modelData.key !== "floatingAnimation") || surface.floatingMode)
-              && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
-              && (modelData.key !== "floatingPlacement" || surface.bubbleMode || surface.floatingMode)
-              && (modelData.key !== "dragMotion" || surface.bubbleMode || surface.floatingMode)
-              && (modelData.key !== "dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
-              && (modelData.key !== "dockFrame" || !surface.bubbleMode)
-              && (modelData.key !== "iconShape" || surface.config.iconFrame !== "hidden")
-            Layout.fillWidth: true
-            Text {
-              text: settingRow.modelData.label
-              wrapMode:Text.Wrap
-              Layout.minimumWidth:0
-              color: surface.popupColors.text
-              font.family: surface.fonts.family
-              font.pixelSize: surface.fonts.body
-              Layout.fillWidth: true
-            }
-            Ui.Dropdown {
-              id: settingDropdown
-              Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-              showLabel: false
-              options: settingRow.modelData.values.map(function(value, i) {
-                return {value:value, label:settingRow.modelData.labels[i]}
-              })
-              Component.onCompleted: value = surface.config[settingRow.modelData.key]
-              Connections {
-                target: surface
-                function onConfigChanged() { settingDropdown.value = surface.config[settingRow.modelData.key] }
-              }
-              onChanged: function(value) { surface.stash.setting(settingRow.modelData.key, value) }
-            }
+          Ui.PanelSectionHeader { id:generalHeader; text:"General"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Repeater {
+            id:generalRows
+            model:[
+              {key: "presentation", label: "Display mode", values: ["dock", "bubbles", "floating"], labels: ["Static dock", "Floating bubbles", "Floating dock"], section: "general"},
+              {key: "scope", label: "Stash visibility", values: ["global", "workspace"], labels: ["Global", "Current workspace"], section: "general"},
+              {key: "grouping", label: "Icon grouping", values: ["window", "app"], labels: ["One per window", "One per app"], section: "general"},
+              {key: "restoreDestination", label: "Restore destination", values: ["current", "original"], labels: ["Current workspace", "Original workspace"], section: "general"}
+            ]
+            delegate:SettingChoice {}
           }
-        }
-        RowLayout {
-          id:radiusRow
-          visible:!surface.bubbleMode && surface.dockFrameVisible && surface.config.dockCorners === "custom"
-          Layout.fillWidth:true
-          Text {
-            text:"Corner radius (px)"
-            wrapMode:Text.Wrap; Layout.minimumWidth:0
-            color:surface.popupColors.text
-            font.family:surface.fonts.family
-            font.pixelSize:surface.fonts.body
-            Layout.fillWidth:true
+          StashButton { animations:surface.animations; animationSpeed:surface.animationSpeed; text:"All stashed windows"; focusable:true; foreground:surface.popupColors.text
+            onClicked:surface.stash.allWindows(surface.screen.name) }
+          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:placementHeader; text:"Placement"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Repeater {
+            id:placementRows
+            model:[
+              {key: "dockSide", label: "Dock side", values: ["bottom", "top", "left", "right"], labels: ["Bottom", "Top", "Left", "Right"], section: "placement"},
+              {key: "floatingDirection", label: "Floating dock direction", values: ["vertical", "horizontal"], labels: ["Vertical", "Horizontal"], section: "placement"},
+              {key: "floatingPlacement", label: "Floating placement", values: ["edges", "free"], labels: ["Snap to edges", "Free placement"], section: "placement"}
+            ]
+            delegate:SettingChoice {}
           }
-          Ui.NumberField {
-            id:radiusField
-            Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-            fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-            from:0; to:64; stepSize:1
-            value:surface.config.dockCornerRadius === undefined ? 12 : surface.config.dockCornerRadius
-            foreground:surface.popupColors.text
-            onModified:function(value) { surface.stash.setting("dockCornerRadius",value) }
+          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:appearanceHeader; text:"Appearance"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Repeater {
+            id:iconRows
+            model:[
+              {key: "iconFrame", label: "Icon border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden (larger icons)"], section: "appearance"},
+              {key: "iconShape", label: "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"}
+            ]
+            delegate:SettingChoice {}
           }
-        }
-        Repeater {
-          id:opacityRows
-          model:[{key:"dockOpacity",label:"Dock opacity (%)"},{key:"iconOpacity",label:"Icon opacity (%)"}]
-          delegate:RowLayout {
-            id:opacityRow
-            required property var modelData
-            readonly property alias numberField:opacityField
-            visible:modelData.key !== "dockOpacity" || (!surface.bubbleMode && surface.dockFrameVisible)
-            Layout.fillWidth:true
-            Text {
-              text:opacityRow.modelData.label
-              wrapMode:Text.Wrap; Layout.minimumWidth:0
-              color:surface.popupColors.text
-              font.family:surface.fonts.family
-              font.pixelSize:surface.fonts.body
-              Layout.fillWidth:true
-            }
-            Ui.NumberField {
-              id:opacityField
-              Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-              fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-              from:0; to:100; stepSize:1
-              value:surface.config[opacityRow.modelData.key] === undefined ? 100 : surface.config[opacityRow.modelData.key]
-              foreground:surface.popupColors.text
-              onModified:function(value) { surface.stash.setting(opacityRow.modelData.key,value) }
+          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          Repeater {
+            id:dockRows
+            model:[
+              {key: "dockFrame", label: "Dock border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden"], section: "appearance"},
+              {key: "dockCorners", label: "Dock corners", values: ["theme", "custom"], labels: ["Follow desktop", "Custom"], section: "appearance"}
+            ]
+            delegate:SettingChoice {}
+          }
+          SettingNumber { id:radiusRow; modelData:({key: "dockCornerRadius", label: "Corner radius (px)", maximum: 64, defaultValue: 12, section: "appearance"}) }
+          SettingNumber { id:dockOpacityRow; modelData:({key: "dockOpacity", label: "Dock opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:motionHeader; text:"Motion"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Repeater {
+            id:motionRows
+            model:[
+              {key: "animations", label: "Animations", values: ["full", "reduced", "off"], labels: ["Full", "Reduced", "Off"], section: "motion"},
+              {key: "animationSpeed", label: "Animation speed", values: ["slow", "relaxed", "normal", "fast", "ultrafast"], labels: ["Slow (0.5×)", "Relaxed (0.75×)", "Normal", "Fast (1.5×)", "Ultrafast (2.5×)"], section: "motion"},
+              {key: "dragMotion", label: "Drag motion", values: ["physics", "direct"], labels: ["Physics", "Direct"], section: "motion"},
+              {key: "floatingAnimation", label: "Unfold animation", values: ["arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop"], labels: ["Arc", "Glide", "Cascade", "Spring", "Swing", "Matryoshka", "Matryoshka hops"], section: "motion"}
+            ]
+            delegate:SettingChoice {}
+          }
+          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:previewsHeader; text:"Previews"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Repeater {
+            id:previewRows
+            model:[
+              {key: "hoverPreview", label: "Hover preview", values: ["off", "still", "live"], labels: ["Off", "Still image", "Live"], section: "previews"},
+              {key: "previewSize", label: "Preview size", values: ["small", "medium", "large"], labels: ["Small", "Medium", "Large"], section: "previews"},
+              {key: "previewPlacement", label: "Preview placement", values: ["auto", "above", "below", "left", "right"], labels: ["Automatic", "Above", "Below", "Left", "Right"], section: "previews"},
+              {key: "previewTitles", label: "Preview titles", values: ["shown", "hidden"], labels: ["Shown", "Hidden"], section: "previews"}
+            ]
+            delegate:SettingChoice {}
+          }
+          Repeater {
+            id:previewTimingRows
+            model:[
+              {key: "previewDelay", label: "Preview delay (ms)", maximum: 1500, defaultValue: 400, stepSize: 50, section: "previews"},
+              {key: "previewHideDelay", label: "Preview hide delay (ms)", maximum: 1000, defaultValue: 200, stepSize: 50, section: "previews"}
+            ]
+            delegate:SettingNumber {}
+          }
+          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:shortcutsHeader; text:"Keyboard shortcuts"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Repeater {
+            id:shortcutRows
+            model:[{key:"minimizeShortcut",label:"Minimize window",defaultValue:"SUPER + A"},
+              {key:"restoreLastShortcut",label:"Restore newest (last in, first out)",defaultValue:"SUPER + Z"},
+              {key:"restoreOldestShortcut",label:"Restore oldest (first in, first out)",defaultValue:""}]
+            delegate:StashShortcutField {
+              required property var modelData
+              stash:surface.stash; settingKey:modelData.key; label:modelData.label
+              binding:surface.config[modelData.key]===undefined ? modelData.defaultValue : surface.config[modelData.key]
+              defaultBinding:modelData.defaultValue
+              animations:surface.animations; animationSpeed:surface.animationSpeed; foreground:surface.popupColors.text
             }
           }
-        }
-        Repeater {
-          id:previewTimingRows
-          model:[{key:"previewDelay",label:"Preview delay (ms)",maximum:1500,defaultValue:400},
-            {key:"previewHideDelay",label:"Preview hide delay (ms)",maximum:1000,defaultValue:200}]
-          delegate:RowLayout {
-            id:timingRow
-            required property var modelData
-            readonly property alias numberField:timingField
-            visible:surface.previewsEnabled
-            Layout.fillWidth:true
-            Text { text:timingRow.modelData.label; wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
-              color:surface.popupColors.text; font.family:surface.fonts.family; font.pixelSize:surface.fonts.body }
-            Ui.NumberField {
-              id:timingField
-              Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-              fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-              from:0; to:timingRow.modelData.maximum; stepSize:50
-              value:surface.config[timingRow.modelData.key]===undefined ? timingRow.modelData.defaultValue : surface.config[timingRow.modelData.key]
-              foreground:surface.popupColors.text
-              onModified:function(value) { surface.stash.setting(timingRow.modelData.key,value) }
-            }
-          }
-        }
-        Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }
-        Repeater {
-          id:shortcutRows
-          model:[{key:"minimizeShortcut",label:"Minimize window",defaultValue:"SUPER + A"},
-            {key:"restoreLastShortcut",label:"Restore newest (last in, first out)",defaultValue:"SUPER + Z"},
-            {key:"restoreOldestShortcut",label:"Restore oldest (first in, first out)",defaultValue:""}]
-          delegate:StashShortcutField {
-            required property var modelData
-            stash:surface.stash; settingKey:modelData.key; label:modelData.label
-            binding:surface.config[modelData.key]===undefined ? modelData.defaultValue : surface.config[modelData.key]
-            defaultBinding:modelData.defaultValue
-            animations:surface.animations; animationSpeed:surface.animationSpeed; foreground:surface.popupColors.text
-          }
-        }
-        StashButton { animations:surface.animations; animationSpeed:surface.animationSpeed; text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
-          onClicked: surface.stash.allWindows(surface.screen.name) }
+          Item { Layout.fillWidth:true; Layout.preferredHeight:surface.metrics.xxs }
         }
         Controls.ScrollBar.vertical:Controls.ScrollBar {
           id:settingsScrollbar

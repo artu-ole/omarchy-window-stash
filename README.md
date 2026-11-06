@@ -98,6 +98,10 @@ Duplicate and existing desktop shortcuts are rejected without replacing them.
 Bindings survive shell restarts and compositor reloads. Updates migrate the
 installer's old shortcut block while preserving other personal bindings.
 Explicit overrides already in that block are retained until uninstallation.
+
+Settings are grouped into General, Placement, Appearance, Motion, Previews, and
+Keyboard shortcuts. Controls follow the selected mode; preview timing and dock
+corner controls stay with their related options.
 Open settings or the global recovery chooser even when the stash is empty:
 
 ```sh
