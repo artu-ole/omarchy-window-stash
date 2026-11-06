@@ -40,6 +40,7 @@ def main():
         return all(w['address'] != target for w in command('list')['windows'])
 
     try:
+        configure('dragMotion','direct')
         configure("floatingPlacement","free")
         configure("iconFrame","shown")
         shell('settings')

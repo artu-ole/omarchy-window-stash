@@ -118,6 +118,14 @@ class ControllerTests(unittest.TestCase):
         self.settings(scope="global")
         self.assertEqual(self.stash.restore_last()["id"],second)
 
+    def test_drag_motion_setting_and_legacy_default(self):
+        self.settings(presentation="bubbles")
+        self.assertEqual(self.stash.settings()["dragMotion"], "physics")
+        self.settings(dragMotion="direct")
+        self.assertEqual(self.stash.settings()["dragMotion"], "direct")
+        self.settings(dragMotion="invalid")
+        self.assertEqual(self.stash.settings()["dragMotion"], "physics")
+
     def test_floating_animation_settings_and_legacy_default(self):
         self.settings(presentation="floating")
         self.assertEqual(self.stash.settings()["floatingAnimation"], "arc")
@@ -144,7 +152,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")

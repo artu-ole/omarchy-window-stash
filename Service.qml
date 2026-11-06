@@ -11,7 +11,7 @@ Item {
   property var shell: null
   readonly property string pluginId: "community.window-stash"
   readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", floatingAnimation:"arc", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "shown", dockFrame: "shown", animations: "full", dockOpacity:100, iconOpacity:100}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "shown", dockFrame: "shown", animations: "full", dockOpacity:100, iconOpacity:100}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -175,7 +175,7 @@ Item {
     if (!shell) { lastError = "Shell settings are not available"; return }
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
-      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"]}
+      iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"]}
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100}
     if (numericLimits[key] !== undefined) {
       if (!/^(0|[1-9][0-9]{0,2})$/.test(String(value)) || Number(value) > numericLimits[key]) {
@@ -194,6 +194,10 @@ Item {
     snapshot = next
     shell.updateEntryInline(pluginId, patch)
     refresh()
+  }
+  function positionPending(key) {
+    function targets(args) { return args[0]==="position" && args[2]===key }
+    return (worker.running && targets(runningArgs)) || queue.some(targets)
   }
   function recordPosition(monitor, key, x, y) {
     enqueue(["position", Model.monitorKey(monitor), key, String(Math.round(x)), String(Math.round(y))])

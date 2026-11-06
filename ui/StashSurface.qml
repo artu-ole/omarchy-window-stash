@@ -69,6 +69,42 @@ PanelWindow {
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
   readonly property bool snapFloating: config.floatingPlacement !== "free"
+  readonly property alias dragWorld:motionWorld
+  function bubbleForKey(key:string):StashIcon {
+    for (var i=0;i<bubbles.count;i++) {
+      var icon=bubbles.itemAt(i) as StashIcon
+      if (icon && icon.group.key===key) return icon
+    }
+    return null
+  }
+  function updateBubbleGrab() {
+    var anyHeld=false
+    for (var i=0;i<bubbles.count;i++) {
+      var icon=bubbles.itemAt(i) as StashIcon
+      if (icon && icon.positionHeld && !icon.retiring) { anyHeld=true;break }
+    }
+    bubbleHeld=anyHeld
+  }
+  StashDragWorld {
+    id:motionWorld
+    area:surface.usableArea
+    snapEdges:surface.snapFloating
+    physicsEnabled:surface.config.dragMotion!=="direct"
+    animations:surface.animations
+    onMoved:function(key,x,y) {
+      var icon=surface.bubbleForKey(key)
+      if (icon && !icon.retiring) { icon.x=x;icon.y=y }
+    }
+    onActivityChanged:function(key,held,moving) {
+      var icon=surface.bubbleForKey(key)
+      if (!icon) return
+      icon.positionHeld=held;icon.positionAnimating=moving
+      surface.updateBubbleGrab()
+    }
+    onSettled:function(key,x,y) {
+      if (surface.bubbleForKey(key)) surface.finishBubbleMove(key,x,y)
+    }
+  }
   property var bubbleDrafts: ({})
   readonly property var bubbleTargets: Model.bubbleLayout(bubblesModel.activeKeys,
     savedPositions, bubbleDrafts, canvasWidth, canvasHeight, usableArea, snapFloating)
@@ -82,14 +118,13 @@ PanelWindow {
     if (JSON.stringify(next) !== JSON.stringify(bubbleDrafts)) bubbleDrafts=next
   }
   function finishBubbleMove(key, x, y) {
-    var at=bubblesModel.activeKeys.indexOf(key)
-    if (at<0 || !bubbleTargets[at]) return
-    var next=Object.assign({},bubbleDrafts)
-    next[key]=[x,y]; bubbleDrafts=next
-    var point=bubbleTargets[at].map(Math.round)
-    next=Object.assign({},bubbleDrafts); next[key]=point; bubbleDrafts=next
+    if (bubblesModel.activeKeys.indexOf(key)<0) return
+    var point=[Math.round(x),Math.round(y)],next=Object.assign({},bubbleDrafts)
+    next[key]=point
+    if (JSON.stringify(next)!==JSON.stringify(bubbleDrafts)) bubbleDrafts=next
     stash.recordPosition(monitor,key,point[0],point[1])
   }
+
   property bool bubbleHeld: false
   property int createdBubbles: 0
   property var bubbleRegions: []
@@ -159,7 +194,7 @@ PanelWindow {
     }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
-      motion:{mode:animations,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal},
+      motion:{mode:animations,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal,dragWorld:motionWorld.details()},
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
         borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
@@ -348,63 +383,101 @@ PanelWindow {
       onExited:function(frames) { surface.recordExit("bubbles",groupKey,frames) }
       enabled:!retiring && surface.bubbleMode
       onRetiringChanged: {
-        if (retiring) { bubbleXAnimation.stop(); bubbleYAnimation.stop() }
-        else place()
+        if (retiring) unregisterBody()
+        else registerBody()
         surface.refreshInputMask()
       }
       bubble: true
       frameVisible: surface.config.iconFrame !== "hidden"
       onFrameVisibleChanged: surface.refreshInputMask()
       iconShape: surface.config.iconShape || "auto"
-      property bool held: false
-      property bool motionReady: false
+      readonly property bool held:positionHeld
+      property bool registered:false
+      property bool initialized:false
+      property string lastSaved:""
       onXChanged: surface.refreshInputMask()
       onYChanged: surface.refreshInputMask()
-      positionHeld: held
-      positionAnimating: bubbleXAnimation.running || bubbleYAnimation.running
-      Behavior on x { enabled:Motion.full(bubbleIcon.animations) && bubbleIcon.motionReady && !bubbleIcon.held
-        NumberAnimation { id:bubbleXAnimation; duration:240; easing.type:Easing.OutCubic } }
-      Behavior on y { enabled:Motion.full(bubbleIcon.animations) && bubbleIcon.motionReady && !bubbleIcon.held
-        NumberAnimation { id:bubbleYAnimation; duration:240; easing.type:Easing.OutCubic } }
       property Region hitRegion: StashIconRegion {
         originX:bubbleIcon.x; originY:bubbleIcon.y; size:bubbleIcon.retiring ? 0 : bubbleIcon.width
         cornerRadius:bubbleIcon.hitRadius; iconShape:bubbleIcon.inputShape
       }
-      function place() {
-        var at=bubblesModel.activeKeys.indexOf(groupKey)
-        if (held || retiring || at<0 || !surface.bubbleTargets[at]) return
-        var position = surface.bubbleTargets[at]
-        x = position[0]; y = position[1]
+      function registerBody() {
+        if (registered || retiring || !surface.bubbleMode) return
+        var at=Math.max(0,bubblesModel.activeKeys.indexOf(groupKey))
+        var initial=initialized ? [x,y] : surface.bubbleTargets[at]
+          || Model.bubblePosition(surface.savedPositions[groupKey],at,surface.canvasWidth,surface.canvasHeight,bubblesModel.activeKeys.length)
+        if (!initialized && !surface.savedPositions[groupKey]) {
+          var slot=surface.dragWorld.availablePosition(groupKey,initial[0],initial[1],width,height)
+          initial=[slot.x,slot.y]
+        }
+        x=initial[0];y=initial[1]
+        lastSaved=JSON.stringify(surface.savedPositions[groupKey] || null)
+        surface.dragWorld.add(groupKey,x,y,width,height)
+        registered=true
+        var body=surface.dragWorld.body(groupKey)
+        if (body) { x=body.x;y=body.y;positionHeld=body.held;positionAnimating=body.moving }
+        updateFrozen()
       }
-      onDragHeld: function(pressed) {
-        surface.bubbleHeld=pressed
-        held=pressed
-        if (held) { bubbleXAnimation.stop(); bubbleYAnimation.stop() }
-        else Qt.callLater(place)
+      function unregisterBody() {
+        if (!registered) return
+        if (surface.dragWorld) surface.dragWorld.remove(groupKey)
+        registered=false
+        positionHeld=false;positionAnimating=false;surface.updateBubbleGrab()
       }
-      onActivated: surface.stash.selectGroup(group, surface.screen.name)
-      onCloseRequested:surface.stash.closeGroup(group,surface.screen.name)
-      onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,bubbleIcon.mapToItem(surface.contentItem,x,y)) }
-      onMoved: function(dx, dy) { x = Math.max(0, Math.min(surface.width - width, x + dx)); y = Math.max(24, Math.min(surface.height - height, y + dy)) }
-      onDragFinished: surface.finishBubbleMove(group.key,x,y)
+      function updateFrozen() {
+        if (!registered) return
+        var ownsMenu=surface.contextMenuOpen && surface.stash.contextGroup && surface.stash.contextGroup.key===groupKey
+        surface.dragWorld.freeze(groupKey,surface.stash.dialogKind!=="" || Boolean(ownsMenu) || surface.stash.groupClosing(group))
+      }
+      function applySaved() {
+        if (!registered || retiring) return
+        var saved=surface.savedPositions[groupKey],stamp=JSON.stringify(saved || null)
+        if (stamp===lastSaved) return
+        lastSaved=stamp
+        var draft=surface.bubbleDrafts[groupKey]
+        // Old controller acknowledgements cannot undo a newer resting point.
+        if (draft && JSON.stringify(draft)!==stamp) {
+          if (surface.stash.positionPending(groupKey)) return
+          var next=Object.assign({},surface.bubbleDrafts);delete next[groupKey];surface.bubbleDrafts=next
+        }
+        var body=surface.dragWorld.body(groupKey)
+        if (!body || body.held || body.moving || body.frozen) return
+        var at=bubblesModel.activeKeys.indexOf(groupKey),target=at>=0 ? surface.bubbleTargets[at] : null
+        if (target) surface.dragWorld.sync(groupKey,target[0],target[1],width,height)
+      }
+      onPointerPressed:function(button) { if (registered && button!==Qt.LeftButton) surface.dragWorld.cancel(groupKey,false) }
+      onDragHeld:function(pressed) {
+        if (!registered) return
+        if (pressed && !surface.stash.groupClosing(group)) surface.dragWorld.press(groupKey)
+        else { positionHeld=false;surface.updateBubbleGrab() }
+      }
+      onActivated: { if (!surface.stash.groupClosing(group)) { surface.dragWorld.cancel(groupKey,false);surface.stash.selectGroup(group,surface.screen.name) } }
+      onCloseRequested: { surface.dragWorld.cancel(groupKey,false);surface.stash.closeGroup(group,surface.screen.name) }
+      onContextRequested:function(x,y) {
+        surface.dragWorld.cancel(groupKey,false)
+        surface.stash.openContext(group,surface.screen.name,bubbleIcon.mapToItem(surface.contentItem,x,y))
+      }
+      onMoved:function(dx,dy) { if (registered) surface.dragWorld.drag(groupKey,x+dx,y+dy) }
+      onDragFinished:if (registered) surface.dragWorld.release(groupKey)
       Component.onCompleted: {
         surface.createdBubbles++
-        var initial=Model.bubblePosition(surface.savedPositions[group.key],Math.max(0,bubblesModel.activeKeys.indexOf(groupKey)),surface.canvasWidth,surface.canvasHeight,bubblesModel.activeKeys.length)
-        x=initial[0]; y=initial[1]
-        Qt.callLater(function() { bubbleIcon.motionReady=true; bubbleIcon.place() })
-        var next = surface.bubbleRegions.slice(); next.push(hitRegion); surface.bubbleRegions = next
+        registerBody();initialized=true
+        var next=surface.bubbleRegions.slice();next.push(hitRegion);surface.bubbleRegions=next
       }
       Component.onDestruction: {
-        if (held) surface.bubbleHeld=false
-        surface.bubbleRegions = surface.bubbleRegions.filter(function(r) { return r !== hitRegion })
+        unregisterBody()
+        surface.bubbleRegions=surface.bubbleRegions.filter(function(r) { return r!==hitRegion })
       }
       Connections {
-        target: surface
-        function onBubbleTargetsChanged() { bubbleIcon.place() }
-        function onAnimationsChanged() {
-          if (!Motion.full(surface.animations)) { bubbleXAnimation.complete(); bubbleYAnimation.complete() }
-          bubbleIcon.place()
-        }
+        target:surface
+        function onSavedPositionsChanged() { bubbleIcon.applySaved() }
+      }
+      Connections {
+        target:surface.stash
+        function onContextGroupChanged() { bubbleIcon.updateFrozen() }
+        function onContextOpenChanged() { bubbleIcon.updateFrozen() }
+        function onDialogKindChanged() { bubbleIcon.updateFrozen() }
+        function onPendingCloseIdsChanged() { bubbleIcon.updateFrozen() }
       }
     }
   }
@@ -416,6 +489,7 @@ PanelWindow {
     width:surface.canvasWidth
     height:surface.canvasHeight
     stash:surface.stash
+    dragWorld:surface.dragWorld
     hostWindow:surface
     monitor:surface.monitor
     screenName:surface.screen.name
@@ -555,6 +629,7 @@ PanelWindow {
             {key:"iconFrame", label:"Icon border/background", values:["shown","hidden"], labels:["Shown","Hidden (larger icons)"]},
             {key:"dockFrame", label:"Dock border/background", values:["shown","hidden"], labels:["Shown","Hidden"]},
             {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
+            {key:"dragMotion", label:"Drag motion", values:["physics","direct"], labels:["Physics","Direct"]},
             {key:"dockCorners", label:"Dock corners", values:["theme","custom"], labels:["Follow desktop","Custom"]},
             {key:"dockSide", label:"Dock side", values:["bottom","top","left","right"], labels:["Bottom","Top","Left","Right"]},
             {key:"floatingDirection", label:"Floating dock direction", values:["vertical","horizontal"], labels:["Vertical","Horizontal"]},
@@ -572,6 +647,7 @@ PanelWindow {
             visible:((modelData.key !== "floatingDirection" && modelData.key !== "floatingAnimation") || surface.floatingMode)
               && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
               && (modelData.key !== "floatingPlacement" || surface.bubbleMode || surface.floatingMode)
+              && (modelData.key !== "dragMotion" || surface.bubbleMode || surface.floatingMode)
               && (modelData.key !== "dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
               && (modelData.key !== "dockFrame" || !surface.bubbleMode)
               && (modelData.key !== "iconShape" || surface.config.iconFrame !== "hidden")

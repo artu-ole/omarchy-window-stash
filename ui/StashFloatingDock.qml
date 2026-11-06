@@ -12,6 +12,7 @@ import "Motion.js" as Motion
 Item {
   id:dock
   required property var stash
+  required property var dragWorld
   required property var hostWindow
   required property var monitor
   required property string screenName
@@ -23,6 +24,11 @@ Item {
   property bool expanded:false
   property bool grabReady:false
   property bool held:false
+  property bool bodyMoving:false
+  readonly property string bodyKey:"dock:floating"
+  readonly property bool motionFrozen:open || reveal>0 || actorsMoving
+    || (stash.contextOpen && stash.contextScreen===screenName)
+    || stash.dialogKind!=="" || (groups.length>0 && stash.groupClosing(groups[0]))
   property bool motionReady:false
   property bool closeForPlacement:false
   property bool placementPending:false
@@ -114,10 +120,23 @@ Item {
   Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:Motion.duration(dock.animations,180,0); easing.type:Easing.OutCubic } }
   Behavior on handleOpacity { NumberAnimation { id:handleAnimation; duration:Motion.duration(dock.animations,180,100); easing.type:Easing.OutCubic } }
   Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,(dock.open ? dock.fanTiming.open : dock.fanTiming.close)+Math.min(dock.fanTiming.limit,Math.max(0,dock.geometry.capacity-1)*dock.fanTiming.stagger),100); easing.type:Easing.OutCubic } }
-  Behavior on anchorX { enabled:Motion.full(dock.animations) && dock.motionReady && !dock.held
-    NumberAnimation { id:snapXAnimation; duration:240; easing.type:Easing.OutCubic } }
-  Behavior on anchorY { enabled:Motion.full(dock.animations) && dock.motionReady && !dock.held
-    NumberAnimation { id:snapYAnimation; duration:240; easing.type:Easing.OutCubic } }
+  onMotionFrozenChanged:freezeUpdate.restart()
+  Timer { id:freezeUpdate; interval:0; onTriggered:if (dock.dragWorld) dock.dragWorld.freeze(dock.bodyKey,dock.motionFrozen) }
+  Connections {
+    target:dock.dragWorld
+    function onMoved(key,x,y) { if (key===dock.bodyKey) { dock.anchorX=x; dock.anchorY=y } }
+    function onActivityChanged(key,isHeld,moving) {
+      if (key!==dock.bodyKey) return
+      dock.held=isHeld; dock.bodyMoving=moving
+      if (!isHeld && !moving && !dock.motionFrozen && dock.placementPending) positionUpdate.restart()
+    }
+    function onSettled(key,x,y) {
+      if (key!==dock.bodyKey || !dock.active) return
+      dock.pendingPosition=[Math.round(x),Math.round(y)]; dock.placementPending=false
+      if (!dock.savedPosition || Math.abs(dock.savedPosition[0]-x)>.5 || Math.abs(dock.savedPosition[1]-y)>.5)
+        dock.stash.recordPosition(dock.monitor,key,x,y)
+    }
+  }
 
   StashCollection {
     id:iconModel
@@ -163,7 +182,8 @@ Item {
     if (currentIndex<firstIndex || currentIndex>=firstIndex+geometry.capacity) selectedKey=iconModel.activeKeys[firstIndex] || ""
   }
   function unfoldAt(x,y) {
-    snapXAnimation.stop(); snapYAnimation.stop(); placementPending=true
+    dragWorld.cancel(bodyKey,false); dragWorld.freeze(bodyKey,true)
+    placementPending=false
     var reversing=(actorsMoving || reveal>0) && horizontal===requestedHorizontal
     if (!reversing) { horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0 }
     pivotX=x; pivotY=y; firstIndex=0
@@ -175,15 +195,22 @@ Item {
   function finishClose() {
     if (!open && !actorsMoving && reveal===0) {
       horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0; firstIndex=0
+      freezeUpdate.restart()
       if (placementPending) positionUpdate.restart()
     }
   }
   function place() {
-    if (held || open || actorsMoving) { placementPending=true; return }
+    if (!motionReady || !dragWorld) { placementPending=true; return }
+    if (!active) { dragWorld.remove(bodyKey); return }
+    var body=dragWorld.body(bodyKey)
+    if (body && (body.width!==tileSize || body.height!==tileSize+tail))
+      dragWorld.sync(bodyKey,body.x,body.y,tileSize,tileSize+tail)
+    if (body && (body.held || body.moving || body.frozen)) { placementPending=true; return }
     placementPending=false
     var point=Model.floatingPosition(pendingPosition || savedPosition,width,height,usableArea,snapEdges,tileSize+tail)
-    if (Math.abs(anchorX-point[0])>.01) anchorX=point[0]
-    if (Math.abs(anchorY-point[1])>.01) anchorY=point[1]
+    if (!body) dragWorld.add(bodyKey,point[0],point[1],tileSize,tileSize+tail)
+    else dragWorld.sync(bodyKey,point[0],point[1],tileSize,tileSize+tail)
+    freezeUpdate.restart()
   }
   function schedulePlacement(closeFan) { placementPending=true; closeForPlacement=closeForPlacement || closeFan; positionUpdate.restart() }
   Timer {
@@ -192,11 +219,12 @@ Item {
   }
   function activate(group) {
     if (!group || !groups.some(function(g) { return g.key===group.key })) return
-    close("restore"); stash.selectGroup(group,screenName)
+    dragWorld.cancel(bodyKey,false); close("restore"); stash.selectGroup(group,screenName)
   }
   function context(group,point) {
     var target=group || groups[0]
     if (!target) return
+    dragWorld.cancel(bodyKey,false)
     stash.openContext(target,screenName,point)
     close("menu")
   }
@@ -215,7 +243,7 @@ Item {
       createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
       dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
-      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
+      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:bodyMoving,windows:windows.length,groups:groups.length,
       handle:{held:held,x:anchorX,y:anchorY,width:tileSize,height:tileSize+stackTail,opacity:handleOpacity,appearance:front ? front.icon.appearance() : null},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
         borderWidth:dockFrameVisible ? borderWidth : 0,targetHeight:finalBounds.height,targetWidth:finalBounds.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.forward && !horizontal,right:geometry.forward && horizontal,feedback:panelFeedback.details()},
@@ -238,10 +266,10 @@ Item {
   onHeightChanged:schedulePlacement(true)
   onRequestedAnimationChanged:if (!open && !actorsMoving && reveal===0) activeAnimation=requestedAnimation
   onRequestedHorizontalChanged: { close(); motionUpdate.restart() }
-  onActiveChanged: { inputChanged(); if (!active) close() }
+  onActiveChanged: { inputChanged(); if (!active) { close(); if (dragWorld) dragWorld.remove(bodyKey); held=false; bodyMoving=false } else schedulePlacement(false) }
   onWindowsChanged:if (windows.length<=1) close()
   onAnimationsChanged:if (!Motion.full(animations)) {
-    snapXAnimation.complete(); snapYAnimation.complete(); tailAnimation.complete()
+    tailAnimation.complete()
     if (animations==="off") { revealAnimation.complete(); handleAnimation.complete() }
   }
   onRevealChanged: {
@@ -257,7 +285,8 @@ Item {
     } else closingFrames=0
   }
   Timer { id:grabDelay; interval:100; onTriggered:dock.grabReady=dock.open }
-  Component.onCompleted: { horizontal=requestedHorizontal; schedulePlacement(false); Qt.callLater(function() { dock.motionReady=true }) }
+  Component.onCompleted: { horizontal=requestedHorizontal; motionReady=true; schedulePlacement(false) }
+  Component.onDestruction:if (dragWorld) dragWorld.remove(bodyKey)
   Connections {
     target:Hyprland
     function onRawEvent(event) {
@@ -368,7 +397,8 @@ Item {
       property bool dragging:false
       onPressed:function(mouse) {
         start=Qt.point(mouse.x,mouse.y); dragging=false
-        if (mouse.button===Qt.LeftButton) { dock.held=true; snapXAnimation.stop(); snapYAnimation.stop() }
+        if (mouse.button===Qt.LeftButton && !dock.stash.groupClosing(dock.groups[0])) dock.dragWorld.press(dock.bodyKey)
+        else dock.dragWorld.cancel(dock.bodyKey,false)
       }
       onPositionChanged:function(mouse) {
         if (!pressed || pressedButtons!==Qt.LeftButton) return
@@ -376,19 +406,15 @@ Item {
         if (dragging || Math.abs(dx)+Math.abs(dy)>6) {
           dragging=true
           var point=Model.floatingAnchor([dock.anchorX+dx,dock.anchorY+dy],dock.width,dock.height)
-          dock.anchorX=point[0]; dock.anchorY=point[1]
+          dock.dragWorld.drag(dock.bodyKey,point[0],point[1])
         }
       }
-      function finishDrag() {
-        dock.held=false
-        var point=Model.floatingPosition([dock.anchorX,dock.anchorY],dock.width,dock.height,dock.usableArea,dock.snapEdges,48+dock.tail).map(Math.round)
-        dock.pendingPosition=point; dock.place()
-        dock.stash.recordPosition(dock.monitor,"dock:floating",point[0],point[1])
-      }
+      function finishDrag() { dock.dragWorld.release(dock.bodyKey) }
       onCanceled:if (dock.held) finishDrag()
       onReleased:function(mouse) {
         if (dragging) { finishDrag(); return }
-        dock.held=false
+        if (mouse.button===Qt.LeftButton && dock.stash.groupClosing(dock.groups[0])) return
+        dock.dragWorld.cancel(dock.bodyKey,false)
         if (mouse.button===Qt.MiddleButton) { if (containsMouse) dock.stash.closeGroup(dock.groups[0],dock.screenName) }
         else if (mouse.button===Qt.RightButton) dock.context(dock.groups[0],dock.mapToItem(dock.hostWindow.contentItem,dock.anchorX+mouse.x,dock.anchorY+mouse.y))
         else if (dock.windows.length===1) dock.activate(dock.groups[0])

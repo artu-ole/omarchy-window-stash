@@ -4,7 +4,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 
 | Requirement | Evidence |
 |---|---|
-| Controller state, settings, LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 23 passing Python unit tests |
+| Controller state, settings, LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 37 passing Python controller tests |
 | Grouping, filtering, ordering and bubble placement | Passing Node model checks |
 | Valid plugin and QML | Omarchy manifest validator and Qt6 qmllint pass without warnings |
 | Exact floating size and position | Live native Wayland GTK test |
@@ -18,6 +18,10 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Existing window switcher | Search for the parked client, commit selection, verify workspace restoration |
 | Icons-only docks | Static and floating docks contain app icons only; shared length checks exclude menu slots and trailing gaps; native right-click Settings access, all four sides, both floating directions, rounded end clearance, scrolling and final-icon exit remain covered |
 | Dock and bubbles | Live icon clicks, bubble dragging, position persistence and mode changes |
+| Confirmed normal closure | Native isolated-ledger immediate/delayed close, shared grace, native Save/Cancel prompt, unstashed same-app preservation, workspace/global close-all; unit tests cover atomic identity guards, hexadecimal stable IDs, address reuse, partial failure and polling outages |
+| Pointer context menus | Native actual click coordinates, four edges, icon/group/front-stack and chooser-row targeting, separated global section, keyboard navigation, click-through outside dismissal, scope-aware close-all, focus return to chooser, prompt accessibility and secondary scaled monitor |
+| Middle-click closure | Native static dock, bubbles, collapsed front icon, both expanded axes, pending icon retention/frozen body, duplicate coalescing, grouped stash-only close and Save/Cancel handling |
+| Physical floating dragging | Pure simulation at 30/60/120/144 Hz and native offscreen Qt clock; real pointer flicks, stale-velocity rejection, catching, gentle collisions and neighbor saving, constrained edges, Direct/Reduced/Off, frozen menu/fan origin, held-dock mode switch without ghost input, and restart without saved velocity |
 | Fixed floating stack origin | Full native animation samples keep the original icon at its pre-click coordinates throughout unfolding and folding for all five styles and both orientations, including off-center clicks; geometry tests include fractional anchors and subtle bounded front-icon effects |
 | Floating fan styles | Native dropdown selection for Arc, Glide, Cascade, Spring and Swing; each style in both orientations, distinct motion, persistent actors and complete restacking; non-default choice survives restart; Reduced/Off override all five profiles. Pure geometry checks cover distinct paths, exact endpoints, rotated-corner bounds and capped staggering |
 | Floating fan dismissal | Native tests cover the 800 ms pointer-leave grace, cancellation on re-entry, immediate click dismissal on apps, empty desktop and transparent rounded corners, and delivery of the same click to the underlying GTK app in both orientations; non-consuming observers are enabled only while a fan is open, and pre-existing mouse/key bindings remain unchanged |
@@ -36,7 +40,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Compact dock spacing | Live horizontal/vertical floating docks and bottom-dock restore with reduced panel padding and icon gaps; enlarged artwork has shape-aware corner clearance and pixel-grid centering checks at 1×, 1.25×, 1.5× and 2× |
 | Input regions | A click outside bubbles reaches a GTK window underneath |
 | Icon shapes | Live native dropdown, all five bubble shapes, corner input, squircle dragging, dock restore and saved choice after shell restart; model checks cover exact squircle input pixels and legacy setting defaults |
-| Desktop test notice | All seventeen desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
+| Desktop test notice | All desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
 | App grouping and chooser | Group two windows, open chooser by mouse, search by keyboard and restore with Enter |
 | Restore destination | Live original/current destination checks and original-workspace context action |
 | Global/workspace scope | Live one-, two-, and three-output checks in dock and bubble modes |
@@ -58,7 +62,7 @@ Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
 `python3 tests/scrolling_width.py`, `python3 tests/icon_shapes.py`, and
-`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`. Pinned restoration and workspace-ID event handling
+`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, and `python3 tests/drag_physics.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 Validation did not upgrade system packages or modify packaged Omarchy files.
@@ -74,14 +78,14 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.13.1`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.14.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
 | Consent before configuration edits | Helper displays its plan and prompts before any writes; non-interactive runs require explicit `--yes`; refusal and consent tests pass |
 | File layout | No symlinks, bundled executables, credentials, or private runtime data in the source folder |
 | Shared UI | Uses installed Omarchy theme tokens and UI components; icons are looked up locally rather than bundled |
-| Checks after publishing preparation | 29 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
+| Checks after publishing preparation | 43 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
 
 The current installation path requires manual setup. Generic `omarchy plugin
 add` does not install the controller wrapper or shortcuts, and generic removal

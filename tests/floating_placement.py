@@ -79,7 +79,7 @@ def main():
         time.sleep(.1)
 
     try:
-        configure('animations','full')
+        configure('animations','full');configure('dragMotion','direct')
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot did not load')
         configure('scope','workspace');configure('grouping','window');configure('presentation','bubbles');configure('floatingPlacement','free')
         h.dispatch('focus',workspace=str(workspace))

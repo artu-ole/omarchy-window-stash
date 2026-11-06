@@ -56,6 +56,7 @@ def main():
     def expand():
         click(dock()['handle'])
         try:
+        configure('dragMotion','direct')
             return wait(lambda:dock() if dock()['expanded'] and dock()['icons'] and not dock()['animating'] else None,'Stack did not expand')
         except AssertionError:
             print('Floating dock diagnostics:',json.dumps(dock()),flush=True)

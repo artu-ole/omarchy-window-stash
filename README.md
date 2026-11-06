@@ -119,6 +119,7 @@ omarchy-shell window-stash configure iconOpacity 75
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
 | `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`; unfold/fold style, overridden by Reduced/Off |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
+| `dragMotion` | `physics` | `physics`: momentum and gentle collisions; `direct`: direct placement with the existing edge glide |
 | `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
 | `dockFrame` | `shown` | `shown`, `hidden`; static and expanded floating docks |
 | `dockOpacity` | `100` | Integer `0`–`100`%; dock background and border at rest |
@@ -131,6 +132,13 @@ Hover smoothly restores full opacity; pressed and keyboard-selected icons stay
 opaque. Dock and icon opacity are independent. Transparent elements retain their
 normal input regions, including at 0%; menus and settings keep their theme opacity.
 Fades follow the animation setting.
+
+With Physics and Full animations, floating icons and the collapsed stack track
+the pointer directly, then coast after a flick. Icons gently nudge one another;
+edge mode docks near the predicted stopping point and free mode coasts to rest.
+Grabbing, opening a menu, or unfolding stops momentum immediately. Only resting
+positions are saved, including nudged neighbors. Motion stays inside the current
+monitor's usable area. Reduced/Off suppress inertia and collisions.
 
 Frames can be hidden independently. Automatic shapes and theme corners follow
 the desktop; custom choices persist when their frames are hidden. Rounded docks
@@ -193,7 +201,8 @@ and `rebase OLD_ID NEW_ID`. Frontend IPC also exposes `status`, `refresh`, and
 [Service.qml](Service.qml) serializes controller requests and watches compositor
 events and state/config files. Visible edge surfaces refresh bar reservations
 every 1.5 seconds. [ui/](ui/) contains the themed surfaces, placement model,
-feedback, and keyed animation lifecycles. [controller/stash.py](controller/stash.py)
+feedback, and keyed animation lifecycles. The shared drag world uses a
+frame-driven fixed-step simulation with bounded momentum and soft collisions. [controller/stash.py](controller/stash.py)
 parks windows on `special:minimized` with ownership tags, validates client
 identity, and writes an atomic, locked ledger before moving windows. Interrupted
 restores retain records for retry.
@@ -217,6 +226,10 @@ python3 tests/live.py              # controller + desktop integration
 python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
+python3 tests/close_actions.py     # isolated ledger: closure, scope and native save prompts
+python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-through and scaled output
+python3 tests/middle_close.py      # pending icons, grouped close and cancellation
+python3 tests/drag_physics.py      # real flicks, collisions, catching, edges and saved positions
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator

@@ -60,6 +60,10 @@ def main():
             assert status['queueLength']<=1,'Repeated middle clicks enqueued duplicate close requests'
             no_unrelated_ui(status)
             surface=view(status)
+            if presentation!='dock' and 'dragWorld' in surface['motion']:
+                body_key='dock:floating' if presentation=='floating' else key
+                body=next(b for b in surface['motion']['dragWorld']['bodies'] if b['key']==body_key)
+                assert body['frozen'] and not body['moving'],'Pending close body can still coast or be nudged'
             icons=surface['shelf']['icons'] if presentation=='dock' else surface['bubbles'] if presentation=='bubbles' else [surface['floatingDock']['handle']]
             held_icon=next((i for i in icons if presentation=='floating' or i['key']==key),None)
             assert held_icon and held_icon['appearance']['presence']>.999,'Icon disappeared before the window closed'
