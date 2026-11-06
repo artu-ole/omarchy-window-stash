@@ -143,7 +143,7 @@ Item {
     sourceGroups:dock.config.presentation==="floating" ? dock.groups : []
     animations:dock.animations
     hold:!dock.open && (dock.reveal>0 || dock.actorsMoving)
-    onReconciled:dock.repairSelection()
+    onReconciled: { dock.repairSelection(); motionUpdate.restart() }
   }
   function hasMovingActors() {
     for (var i=0;i<actors.count;i++) { var actor=actors.itemAt(i) as StashFanIcon; if (actor && actor.moving) return true }
