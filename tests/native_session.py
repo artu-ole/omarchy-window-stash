@@ -61,7 +61,9 @@ class NativeSession:
         return r
     def surface_records(self):
         # Controller completion and UI snapshot are separately scheduled.
-        return command('list')['windows'] if shell('status')['windows']==len(command('list')['windows']) else []
+        # Restore/re-stash can replace an ID without changing the count.
+        ids=set(shell('status')['windowIds'])
+        return [record for record in command('list')['windows'] if record['id'] in ids]
     def touch(self,key):self.touched.setdefault(monitor_identity(self.monitor),set()).add(key)
     def icon(self,key=None):
         s=self.surface();mode=shell('status')['settings']['presentation']

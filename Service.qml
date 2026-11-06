@@ -368,7 +368,8 @@ Item {
   IpcHandler {
     target: "window-stash"
     function status(): string {
-      return JSON.stringify({loaded: true, windows: root.snapshot.windows.length, settings: root.snapshot.settings,
+      return JSON.stringify({loaded: true, windows: root.snapshot.windows.length,
+        windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,
         screens: root.snapshot.monitors.map(function(m) { return m.name }), dialog: root.contextOpen ? "menu" : root.dialogKind, context:{open:root.contextOpen,screen:root.contextScreen,workspace:root.contextWorkspace,ids:root.contextIds}, pendingCloseIds:Object.keys(root.pendingCloseIds), error: root.lastError,

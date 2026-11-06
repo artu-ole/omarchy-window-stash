@@ -11,6 +11,19 @@ import native_session
 
 
 class NativeCleanupTests(unittest.TestCase):
+    def test_equal_window_counts_do_not_acknowledge_a_stale_snapshot(self):
+        session=native_session.NativeSession()
+        with patch.object(native_session,'shell',return_value={'windows':1,'windowIds':['old']}), \
+                patch.object(native_session,'command',return_value={'windows':[{'id':'new'}]}):
+            self.assertEqual(session.surface_records(),[])
+
+    def test_only_acknowledged_record_ids_are_ready(self):
+        session=native_session.NativeSession()
+        records=[{'id':'first'},{'id':'new'},{'id':'last'}]
+        with patch.object(native_session,'shell',return_value={'windows':2,'windowIds':['last','first']}), \
+                patch.object(native_session,'command',return_value={'windows':records}):
+            self.assertEqual(session.surface_records(),[records[0],records[2]])
+
     def test_disconnected_pointer_still_restores_desktop_state(self):
         for error in (BrokenPipeError('pointer disconnected'), RuntimeError('Wayland protocol error')):
             with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory(prefix='stash-cleanup-unit-') as directory:
