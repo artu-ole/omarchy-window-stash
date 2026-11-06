@@ -216,14 +216,16 @@ function reconcileKeys(previous, desired) {
   return result
 }
 
-// Keep the newest tile under the invocation point; fan toward available space.
-function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, preferredSign, preferredCurve) {
+// Fan toward available space. An existing stack supplies its exact tile origin;
+// pointer-centered placement remains available for callers without an anchor.
+function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, preferredSign, preferredCurve, anchor) {
   var padX=horizontal ? endInset : inset, padY=horizontal ? inset : endInset
   var x=Math.max(area.x+padX,Math.min(area.x+area.width-size-padX,px-size/2))
   var y=Math.max(area.y+padY,Math.min(area.y+area.height-size-padY,py-size/2))
   // Near an edge, cursor coverage takes precedence over symmetric padding.
   x=Math.max(area.x,Math.min(area.x+Math.max(0,area.width-size),Math.min(px,Math.max(px-size+1,x))))
   y=Math.max(area.y,Math.min(area.y+Math.max(0,area.height-size),Math.min(py,Math.max(py-size+1,y))))
+  if (anchor) { x=anchor.x; y=anchor.y }
   var step=size+gap
   var ahead=horizontal ? area.x+area.width-padX-x-size : area.y+area.height-padY-y-size
   var behind=horizontal ? x-area.x-padX : y-area.y-padY
@@ -232,7 +234,7 @@ function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, 
   var capacity=count ? Math.min(count,Math.max(1,1+Math.floor(Math.max(0,sign>0 ? ahead : behind)/step))) : 0
   var crossBefore=horizontal ? y-area.y : x-area.x
   var crossAfter=horizontal ? area.y+area.height-y-size : area.x+area.width-x-size
-  return {x:Math.round(x),y:Math.round(y),horizontal:horizontal,sign:sign,forward:sign>0,
+  return {x:anchor ? x : Math.round(x),y:anchor ? y : Math.round(y),horizontal:horizontal,sign:sign,forward:sign>0,
     capacity:capacity,step:step,size:size,span:dockLength(capacity,size,gap),
     curveSign:preferredCurve===1 || preferredCurve===-1 ? preferredCurve : crossBefore>=crossAfter ? -1 : 1,
     curveLimit:Math.max(0,Math.min(18,Math.max(crossBefore,crossAfter)-inset))}
@@ -255,11 +257,17 @@ function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area, style) {
     amplitude=16+Math.max(0,ordinal)*2; shrink=.025
     tilt=phase*layout.curveSign*Math.min(9,4+Math.max(0,ordinal)*2)
   }
+  var fixed=ordinal===0 && sx===tx && sy===ty
+  if (fixed) {
+    amplitude=0
+    shrink=style==="glide" ? 0 : style==="spring" ? .02 : style==="cascade" ? .012 : .008
+    tilt=style==="swing" ? phase*layout.curveSign : 0
+  }
   var bend=phase*Math.min(layout.curveLimit,amplitude)
   // Keep rotated corners within the same square input/work-area envelope.
   var radians=tilt*Math.PI/180,fit=1/(Math.abs(Math.cos(radians))+Math.abs(Math.sin(radians)))
-  return {x:Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*progress+(layout.horizontal ? 0 : bend*layout.curveSign))),
-    y:Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*progress+(layout.horizontal ? bend*layout.curveSign : 0))),
+  return {x:fixed ? sx : Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*progress+(layout.horizontal ? 0 : bend*layout.curveSign))),
+    y:fixed ? sy : Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*progress+(layout.horizontal ? bend*layout.curveSign : 0))),
     bend:bend,tilt:tilt,scale:Math.min(1-shrink*phase,fit)}
 }
 

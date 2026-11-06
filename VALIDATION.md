@@ -18,6 +18,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Existing window switcher | Search for the parked client, commit selection, verify workspace restoration |
 | Icons-only docks | Static and floating docks contain app icons only; shared length checks exclude menu slots and trailing gaps; native right-click Settings access, all four sides, both floating directions, rounded end clearance, scrolling and final-icon exit remain covered |
 | Dock and bubbles | Live icon clicks, bubble dragging, position persistence and mode changes |
+| Fixed floating stack origin | Full native animation samples keep the original icon at its pre-click coordinates throughout unfolding and folding for all five styles and both orientations, including off-center clicks; geometry tests include fractional anchors and subtle bounded front-icon effects |
 | Floating fan styles | Native dropdown selection for Arc, Glide, Cascade, Spring and Swing; each style in both orientations, distinct motion, persistent actors and complete restacking; non-default choice survives restart; Reduced/Off override all five profiles. Pure geometry checks cover distinct paths, exact endpoints, rotated-corner bounds and capped staggering |
 | Floating fan dismissal | Native tests cover the 800 ms pointer-leave grace, cancellation on re-entry, immediate click dismissal on apps, empty desktop and transparent rounded corners, and delivery of the same click to the underlying GTK app in both orientations; non-consuming observers are enabled only while a fan is open, and pre-existing mouse/key bindings remain unchanged |
 | Cursor-first floating fan | Persistent icon actors unfold from the stack to the pointer, newest first, and fold back to the saved position; native tests cover all expansion directions, curved intermediate motion, identity across cycles, spatial keys, newest restore, one-click outside interaction, focus/workspace dismissal, grouping, Reduced/Off, hidden frames, and both-axis overflow on a small monitor; pure geometry checks verify cursor coverage, work-area bounds and rounded-border clearance |
@@ -73,7 +74,7 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.13.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.13.1`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |

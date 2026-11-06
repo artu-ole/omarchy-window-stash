@@ -12,9 +12,9 @@ controller; no compiled compositor plugin or additional daemon.
 | **Floating bubbles** | Separate draggable icons, starting at the middle right. Snap to edges or place freely. |
 | **Floating dock** | One draggable stack. A single window restores directly; multiple windows fan into a row or column, newest under the pointer. |
 
-Click the floating stack to fan out the same icons beneath the pointer. The
-newest window is immediately under the cursor; older icons follow the configured
-axis toward available screen space. Choose an unfold style in Settings: Arc
+Click the floating stack to fan out the same icons. The front icon stays at its
+original position, with only a small pulse or tilt depending on the style; the
+other icons follow the configured axis toward available screen space. Choose an unfold style in Settings: Arc
 (the original curved motion), Glide (a synchronized straight slide), Cascade
 (staggered icons, folding from the far end), Spring (a weighted overshoot), or
 Swing (a wider arc with a small tilt). Dismissal folds the icons back to their saved

@@ -226,3 +226,21 @@ const cascade=motion.fanProfile('cascade')
 assert.ok(motion.fanDelay(cascade,2,true,3)>motion.fanDelay(cascade,0,true,3))
 assert.ok(motion.fanDelay(cascade,2,false,3)<motion.fanDelay(cascade,0,false,3))
 console.log('Motion: five distinct fan profiles, stable endpoints, rotated bounds, capped timing and reverse cascade passed')
+
+for (const style of styles) for (const horizontal of [false,true]) {
+  for (const origin of [{x:8,y:34},{x:944,y:662},{x:500.375,y:350.625}]) {
+    for (const offset of [2,9,41,46]) {
+      const fan=ctx.fanLayout(origin.x+offset,origin.y+offset,sampleArea,3,horizontal,48,4,3,17,0,0,origin)
+      assert.equal(fan.x,origin.x);assert.equal(fan.y,origin.y)
+      const slot=ctx.fanSlot(fan,0,0)
+      for (let frame=0;frame<=108;frame++) {
+        const p=ctx.fanPose(origin.x,origin.y,slot.x,slot.y,frame/100,0,fan,sampleArea,style)
+        assert.equal(p.x,origin.x,'Front icon must never translate, including during overshoot')
+        assert.equal(p.y,origin.y)
+        assert.equal(p.bend,0)
+        assert.ok(Math.abs(p.tilt)<=1 && p.scale>=.979 && p.scale<=1,'Front effect must remain subtle')
+      }
+    }
+  }
+}
+console.log('Motion: original icon stays fixed for every style, axis, click offset and fractional anchor')

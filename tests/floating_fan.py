@@ -39,18 +39,27 @@ def main():
         command('minimize','--address',a)
         wait(lambda:any(w['address']==a for w in command('list')['windows']),'Stash missing')
         wait(lambda:dock()['active'] and not dock()['animating'] and not dock()['snapping'],'Stack did not settle')
-    def settle(opened):
-        return wait(lambda:dock() if dock()['expanded']==opened and not dock()['animating'] and not dock()['snapping'] else None,'Fan did not settle '+str(opened))
+    def settle(opened,pinned=None):
+        def sample():
+            d=dock()
+            if pinned:
+                a=next(a for a in d['actors'] if a['key']==pinned['key'])
+                assert abs(a['x']-pinned['x'])<.001 and abs(a['y']-pinned['y'])<.001,('Original icon moved during unfold/fold',a,pinned)
+            return d if d['expanded']==opened and not d['animating'] and not d['snapping'] else None
+        return wait(sample,'Fan did not settle '+str(opened))
     def expand(offset=0):
-        r=dock()['handle'];created=dock()['createdIcons'];x=r['x']+r['width']/2+offset;y=r['y']+24+offset
+        before=dock();r=before['handle'];created=before['createdIcons'];pinned=before['actors'][0]
+        x=r['x']+r['width']/2+offset;y=r['y']+24+offset
         pointer.move(*point(x-1,y));pointer.click(*point(x,y))
-        d=settle(True);assert d['createdIcons']==created,'Expansion recreated icon actors'
+        d=settle(True,pinned);assert d['createdIcons']==created,'Expansion recreated icon actors'
         first=next(i for i in d['icons'] if i['key']==d['actors'][0]['key'])
         assert first['x']<=x<=first['x']+first['width'] and first['y']<=y<=first['y']+first['height'],('Newest icon missed the pointer',d)
         assert d['currentIndex']==0,d
+        assert first['maxBend']==0 and first['maxTilt']<=1.01 and first['minScale']>=.979,'Front icon effect was too large'
         return d
     def collapse():
-        subprocess.run(['wtype','-k','Escape'],check=True);d=settle(False)
+        pinned=dock()['actors'][0]
+        subprocess.run(['wtype','-k','Escape'],check=True);d=settle(False,pinned)
         for a in d['actors']:
             assert abs(a['x']-d['handle']['x'])<.01 and abs(a['y']-d['handle']['y'])<=8.01,'Actor did not return to the stack'
         return d
@@ -82,7 +91,7 @@ def main():
             wait(lambda:shell('status')['settings']['floatingAnimation']==style,'Native style selector did not save '+style)
             shell('dismiss');settle(False)
             for direction in ('vertical','horizontal'):
-                configure('floatingDirection',direction);d=expand()
+                configure('floatingDirection',direction);d=expand(offset=-17 if direction=='vertical' else 17)
                 assert d['style']==style and d['createdIcons']==created
                 assert all(a['frames']>=2 and a['rotation']==0 and abs(a['scale']-1)<.001 for a in d['actors'])
                 if style in ('glide','cascade'):assert all(a['maxBend']==0 for a in d['actors'])
@@ -92,7 +101,7 @@ def main():
                 if style=='swing':assert any(a['maxTilt']>1 and a['minScale']<.95 for a in d['actors'])
                 if style=='arc':assert any(a['maxBend']>1 for a in d['actors'])
                 collapse()
-            print('PASS native '+style+' selection, both axes, distinct motion and complete restacking',flush=True)
+            print('PASS native '+style+' selection, fixed original icon, both axes, distinct motion and complete restacking',flush=True)
         configure('floatingAnimation','arc')
         for direction in ('vertical','horizontal'):
             configure('floatingDirection',direction)

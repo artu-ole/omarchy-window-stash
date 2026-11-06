@@ -68,7 +68,7 @@ Item {
   property real reveal:open ? 1 : 0
   readonly property bool open:active && expanded && windows.length>1
   readonly property int currentIndex:iconModel.activeKeys.indexOf(selectedKey)
-  readonly property var geometry:Model.fanLayout(pivotX,pivotY,usableArea,groupCount || iconModel.count,horizontal,tileSize,gap,inset,endInset,fanSign,fanCurve)
+  readonly property var geometry:Model.fanLayout(pivotX,pivotY,usableArea,groupCount || iconModel.count,horizontal,tileSize,gap,inset,endInset,fanSign,fanCurve,{x:anchorX,y:anchorY})
   readonly property int maxFirst:Math.max(0,groupCount-geometry.capacity)
   readonly property bool overflow:maxFirst>0
   property bool actorsMoving:false
