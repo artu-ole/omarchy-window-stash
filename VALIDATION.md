@@ -2,9 +2,19 @@
 
 Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 
+The final pre-publication sweep passes **32 native suites**, including their
+small-output variants, **115 Python tests**, **10 Node suites**, **three offscreen
+Qt suites**, manifest validation and QML lint. Python syntax checks cover all
+52 source and test files. Native suites ran in a disposable Bubblewrap home and
+runtime with a nested Hyprland compositor, real GTK buffers, XWayland and virtual
+outputs; install/uninstall and layout tests did not touch the working desktop.
+
 | Requirement | Evidence |
 |---|---|
-| Controller state, settings, FIFO/LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 49 passing Python controller tests |
+| Controller state, settings, FIFO/LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 62 passing Python controller tests |
+| Atomic window identity | Initial tagging and every minimize/restore mutation validate PID and stable window ID inside the compositor; ownership and final geometry reads are checked. Nine regression tests cover address reuse, closure, fullscreen snapshots, scrolling and retryable partial operations |
+| Blank monitor metadata | Four regression tests and native disconnected-monitor recovery verify that unrelated blank output fingerprints cannot capture the origin; saved output names and local workspace-slot fallback retain physical reconnect behavior |
+| Native test safety | All four empty-desktop legacy runners refuse existing stash entries before arming cleanup; regression tests confirm no restore/close/configuration mutation. Snapshot readiness uses exact record IDs, and status polling tolerates bounded shell restart gaps |
 | Grouping, filtering, ordering and bubble placement | Passing Node model checks |
 | Valid plugin and QML | Omarchy manifest validator and Qt6 qmllint pass without warnings |
 | Exact floating size and position | Live native Wayland GTK test |
@@ -80,7 +90,7 @@ Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
 `python3 tests/scrolling_width.py`, `python3 tests/icon_shapes.py`, and
-`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, `python3 tests/floating_main_preview.py`, and `python3 tests/animation_speed.py`, and `python3 tests/stack_follow.py`, and `python3 tests/floating_panel.py --small-output`, and `python3 tests/shortcuts.py`, and `python3 tests/jumping.py`, and `python3 tests/sizing.py`, and `python3 tests/reset_settings.py`. Pinned restoration and workspace-ID event handling
+`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, `python3 tests/floating_main_preview.py`, and `python3 tests/animation_speed.py`, and `python3 tests/stack_follow.py`, and `python3 tests/floating_panel.py --small-output`, and `python3 tests/shortcuts.py`, and `python3 tests/jumping.py`, and `python3 tests/sizing.py`, and `python3 tests/reset_settings.py`, and `python3 tests/settings_fit.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 Validation did not upgrade system packages or modify packaged Omarchy files.
@@ -96,14 +106,14 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.23.3`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.23.4`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
 | Consent before configuration edits | Helper displays its plan and prompts before any writes; non-interactive runs require explicit `--yes`; refusal and consent tests pass |
 | File layout | No symlinks, bundled executables, credentials, or private runtime data in the source folder |
 | Shared UI | Uses installed Omarchy theme tokens and UI components; icons are looked up locally rather than bundled |
-| Checks after publishing preparation | 94 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
+| Checks after publishing preparation | 115 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
 
 The current installation path requires manual setup. Generic `omarchy plugin
 add` does not install the controller wrapper or shortcuts, and generic removal
