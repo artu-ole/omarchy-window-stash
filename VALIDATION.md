@@ -65,6 +65,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Dock overflow | Fourteen entries on a 640×480 virtual output; real pointer drag scrolls without restoring a window |
 | Omarchy theme and shared controls | Native buttons, dropdowns, search, and tooltips; live Tokyo Night visual check, all four dropdowns and external-setting synchronization, grouped bubble search/Enter restore, context restore and dock click |
 | Organized settings | Six native Omarchy header groups: General, Placement, Appearance, Motion, Previews and Keyboard shortcuts. Live checks cover all 20 dropdowns, section order, preserved values, conditional controls across static/bubble/floating modes, numeric placement, native dropdown editing and access to the final shortcut field; original preferences, stash, focus and monitor geometry restored |
+| Small-screen settings | The complete settings page, errors and reset confirmation scroll within the usable work area; narrow labels/controls and shortcut actions wrap. Native scaled-output checks cover all 28 preferences, all six sections, wheel/drag/scrollbar navigation, whole-control Tab focus, bounded nine-option dropdowns and reset cancellation behind top/left bar reservations |
 | Confirmed settings reset | Native Cancel/default Enter/Escape/outside dismissal, fresh confirmation on reopen, one-shot confirmation, all canonical preferences and active managed shortcuts restored, with stash, positions and client geometry preserved. Twelve Python checks cover mandatory CLI confirmation, default binding conflicts, persistence rollback, concurrent edits, host metadata and file permissions |
 | Floating defaults | Canonical defaults, initial shell snapshot, fallback rendering, fresh installs and reset use a floating dock with edge gravity, transparent dock chrome, frameless icons and Normal speed. Existing explicit preferences remain valid; the requested presentation/appearance/motion fields are applied locally without resetting unrelated choices |
 | Safe removal and reinstall | Removal restores a parked window and removes bindings/integration; reinstall reloads successfully |
@@ -94,7 +95,7 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.23.1`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.23.2`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |

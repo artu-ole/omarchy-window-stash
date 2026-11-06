@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import Quickshell
@@ -39,6 +40,8 @@ PanelWindow {
   property int createdShelfIcons:0
   property int exitSerial:0
   property var completedExits:[]
+  property real settingsFormContentY:0
+  property bool settingsScrollRestoring:false
   function recordExit(view,key,frames) {
     exitSerial++
     completedExits=completedExits.concat([{serial:exitSerial,view:view,key:key,frames:frames}]).slice(-16)
@@ -191,12 +194,152 @@ PanelWindow {
     function onDialogQueryChanged() { modelDelay.restart() }
     function onResetConfirmationChanged() {
       if (!surface.dialogOpen || surface.renderDialogKind!=="settings") return
+      var previousY=surface.settingsFormContentY
       Qt.callLater(function() {
         if (!surface.dialogOpen || surface.renderDialogKind!=="settings") return
+        surface.settingsScrollRestoring=true
+        settingsViewport.contentY=surface.stash.resetConfirmation ? 0
+          : Math.max(0,Math.min(previousY,settingsViewport.contentHeight-settingsViewport.height))
+        surface.settingsScrollRestoring=false
         if (surface.stash.resetConfirmation) resetCancel.forceActiveFocus()
         else if (!surface.stash.resetBusy) resetRequest.forceActiveFocus()
         else dialog.forceActiveFocus()
+        settingsFocusDelay.restart()
       })
+    }
+    function onLastErrorChanged() {
+      if (surface.dialogOpen && surface.renderDialogKind==="settings" && surface.stash.lastError!=="")
+        Qt.callLater(function() { surface.scrollSettingsItem(settingsErrorText) })
+    }
+  }
+  function numberItems() {
+    var rows=[iconOpacityRow,radiusRow,dockOpacityRow]
+    for (var i=0;i<previewTimingRows.count;i++) {
+      var row=previewTimingRows.itemAt(i)
+      if (row) rows.push(row)
+    }
+    return rows
+  }
+  function within(item,ancestor) {
+    for (var current=item;current;current=current.parent) if (current===ancestor) return true
+    return false
+  }
+  function settingsFocusedItem() {
+    var window=surface.contentItem.Window.window
+    return surface.dialogOpen && surface.renderDialogKind==="settings" && window ? window.activeFocusItem : null
+  }
+  function settingsFocusTarget(item) {
+    if (!item) return null
+    var choices=settingItems(),numbers=numberItems()
+    for (var i=0;i<choices.length;i++) if (within(item,choices[i].selector)) return choices[i].selector
+    for (var j=0;j<numbers.length;j++) if (within(item,numbers[j].numberField.field)) return numbers[j].numberField.field
+    for (var n=0;n<shortcutRows.count;n++) {
+      var row=shortcutRows.itemAt(n) as StashShortcutField
+      if (row && within(item,row.field)) return row.field
+    }
+    return item
+  }
+  function scrollSettingsItem(item) {
+    item=settingsFocusTarget(item)
+    if (!item || !settingsViewport.visible || !within(item,settingsBody) || settingsViewport.height<=0) return
+    var point=item.mapToItem(settingsViewport.contentItem,0,0)
+    var padding=Math.min(surface.metrics.sm,settingsViewport.height/4),next=settingsViewport.contentY
+    if (point.y-padding<next) next=point.y-padding
+    else if (point.y+item.height+padding>next+settingsViewport.height)
+      next=point.y+Math.min(item.height,settingsViewport.height)+padding-settingsViewport.height
+    settingsViewport.cancelFlick()
+    settingsViewport.contentY=Math.max(0,Math.min(Math.max(0,settingsViewport.contentHeight-settingsViewport.height),next))
+  }
+  function settingsFocusDetails() {
+    var item=settingsFocusedItem(),target=settingsFocusTarget(item)
+    var result={rect:target ? itemRect(target) : null,activeRect:item ? itemRect(item) : null,key:"",part:""}
+    if (!item) return result
+    var choices=settingItems(),numbers=numberItems()
+    for (var i=0;i<choices.length;i++) {
+      if (within(item,choices[i])) { result.key=choices[i].modelData.key;result.part="choice";return result }
+    }
+    for (var j=0;j<numbers.length;j++) {
+      if (within(item,numbers[j])) { result.key=numbers[j].modelData.key;result.part="number";return result }
+    }
+    for (var n=0;n<shortcutRows.count;n++) {
+      var row=shortcutRows.itemAt(n) as StashShortcutField
+      if (!row || !within(item,row)) continue
+      result.key=row.settingKey
+      var record=row.details(surface.contentItem),parts=["field","apply","clear","default"]
+      for (var k=0;k<parts.length;k++) {
+        var r=record[parts[k]+"Rect"]
+        if (r && result.rect.x+result.rect.width/2>=r.x && result.rect.x+result.rect.width/2<=r.x+r.width
+            && result.rect.y+result.rect.height/2>=r.y && result.rect.y+result.rect.height/2<=r.y+r.height) {
+          result.part=parts[k]; break
+        }
+      }
+      return result
+    }
+    if (within(item,resetCancel)) { result.key="reset-settings";result.part="cancel" }
+    else if (within(item,resetConfirm)) { result.key="reset-settings";result.part="confirm" }
+    else if (within(item,resetRequest)) { result.key="reset-settings";result.part="request" }
+    else if (within(item,settingsHeading.closeButton)) result.part="close"
+    return result
+  }
+  Connections {
+    target:surface.contentItem.Window.window
+    function onActiveFocusItemChanged() { settingsFocusDelay.restart() }
+  }
+  Timer { id:settingsFocusDelay; interval:0; onTriggered:surface.scrollSettingsItem(surface.settingsFocusedItem()) }
+  component DialogHeading:RowLayout {
+    id:heading
+    required property string title
+    readonly property alias closeButton:headingClose
+    Layout.fillWidth:true; Layout.minimumWidth:0
+    spacing:surface.metrics.sm
+    Text {
+      text:heading.title
+      textFormat:Text.PlainText
+      wrapMode:Text.Wrap
+      color:surface.popupColors.text
+      font.family:surface.fonts.family; font.pixelSize:surface.fonts.title; font.bold:true
+      Layout.fillWidth:true; Layout.minimumWidth:0
+    }
+    StashActionButton {
+      id:headingClose
+      animations:surface.animations; animationSpeed:surface.animationSpeed
+      iconText:"󰅖"; tooltipText:"Close"; focusable:true
+      foreground:surface.popupColors.text
+      onClicked:surface.stash.closeDialog()
+    }
+  }
+  component SettingDropdown:Ui.Dropdown {
+    id:selector
+    property Controls.Popup boundedPopup:null
+    readonly property real popupMargin:Math.min(surface.metrics.sm,surface.usableArea.width/4,surface.usableArea.height/4)
+    function findPopup(object) {
+      var popup=object as Controls.Popup
+      if (popup) return popup
+      var children=object.data || object.children || []
+      for (var i=0;i<children.length;i++) {
+        var found=findPopup(children[i])
+        if (found) return found
+      }
+      return null
+    }
+    function popupRect() {
+      if (!boundedPopup || !boundedPopup.visible || !boundedPopup.parent) return null
+      var point=boundedPopup.parent.mapToItem(surface.contentItem,boundedPopup.x,boundedPopup.y)
+      return {x:point.x,y:point.y,width:boundedPopup.width,height:boundedPopup.height}
+    }
+    function popupCurrentRect() {
+      if (!boundedPopup || !boundedPopup.visible || !boundedPopup.contentItem) return null
+      var list=boundedPopup.contentItem as ListView
+      return list && list.currentItem ? surface.itemRect(list.currentItem) : null
+    }
+    Component.onCompleted: {
+      boundedPopup=findPopup(selector)
+      if (!boundedPopup) return
+      boundedPopup.leftMargin=Qt.binding(function() { return surface.usableArea.x+selector.popupMargin })
+      boundedPopup.topMargin=Qt.binding(function() { return surface.usableArea.y+selector.popupMargin })
+      boundedPopup.rightMargin=Qt.binding(function() { return surface.canvasWidth-surface.usableArea.x-surface.usableArea.width+selector.popupMargin })
+      boundedPopup.bottomMargin=Qt.binding(function() { return surface.canvasHeight-surface.usableArea.y-surface.usableArea.height+selector.popupMargin })
+      boundedPopup.height=Qt.binding(function() { return Math.max(0,Math.min(selector.boundedPopup.implicitHeight,surface.usableArea.height-selector.popupMargin*2)) })
     }
   }
   function settingItems() {
@@ -210,7 +353,7 @@ PanelWindow {
     }
     return rows
   }
-  component SettingChoice:RowLayout {
+  component SettingChoice:GridLayout {
     id:settingRow
     required property var modelData
     readonly property alias selector:settingDropdown
@@ -222,16 +365,19 @@ PanelWindow {
       && (modelData.key!=="dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
       && (modelData.key!=="dockFrame" || !surface.bubbleMode)
       && (modelData.key!=="iconShape" || surface.config.iconFrame==="shown")
-    Layout.fillWidth:true
+    Layout.fillWidth:true; Layout.minimumWidth:0
+    columns:width<Style.space(400) ? 1 : 2
+    columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
     Text {
       text:settingRow.modelData.label
       wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
       color:surface.popupColors.text
       font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
     }
-    Ui.Dropdown {
+    SettingDropdown {
       id:settingDropdown
-      Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+      Layout.minimumWidth:0; Layout.maximumWidth:Math.max(0,settingRow.width); Layout.fillWidth:settingRow.columns===1
+      Layout.preferredWidth:settingRow.columns===1 ? settingRow.width : Math.min(surface.metrics.dropdownWidth,settingRow.width*.55)
       showLabel:false
       options:settingRow.modelData.values.map(function(value,i) { return {value:value,label:settingRow.modelData.labels[i]} })
       Component.onCompleted:value=surface.config[settingRow.modelData.key]
@@ -242,14 +388,16 @@ PanelWindow {
       onChanged:function(value) { surface.stash.setting(settingRow.modelData.key,value) }
     }
   }
-  component SettingNumber:RowLayout {
+  component SettingNumber:GridLayout {
     id:settingRow
     required property var modelData
     readonly property alias numberField:settingNumber
     visible:(modelData.key!=="dockCornerRadius" || (!surface.bubbleMode && surface.dockFrameVisible && surface.config.dockCorners==="custom"))
       && (modelData.key!=="dockOpacity" || (!surface.bubbleMode && surface.dockFrameVisible))
       && (["previewDelay","previewHideDelay"].indexOf(modelData.key)<0 || surface.previewsEnabled)
-    Layout.fillWidth:true
+    Layout.fillWidth:true; Layout.minimumWidth:0
+    columns:width<Style.space(400) ? 1 : 2
+    columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
     Text {
       text:settingRow.modelData.label
       wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
@@ -258,8 +406,9 @@ PanelWindow {
     }
     Ui.NumberField {
       id:settingNumber
-      Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
-      fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+      Layout.minimumWidth:0; Layout.maximumWidth:Math.max(0,settingRow.width); Layout.fillWidth:settingRow.columns===1
+      Layout.preferredWidth:settingRow.columns===1 ? settingRow.width : Math.min(surface.metrics.dropdownWidth,settingRow.width*.55)
+      fieldWidth:Math.max(0,width)
       from:0; to:settingRow.modelData.maximum; stepSize:settingRow.modelData.stepSize || 1
       value:surface.config[settingRow.modelData.key]===undefined ? settingRow.modelData.defaultValue : surface.config[settingRow.modelData.key]
       foreground:surface.popupColors.text
@@ -281,7 +430,8 @@ PanelWindow {
     for (var j=0;j<rows.length;j++) {
       var row=rows[j] as SettingChoice
       if (row) controls.push({key:row.modelData.key,section:row.modelData.section,value:row.selector.value,
-        open:row.selector.popupOpen,visible:row.visible, rect:itemRect(row.selector)})
+        open:row.selector.popupOpen,visible:row.visible,rect:itemRect(row.selector),popupRect:row.selector.popupRect(),
+        popupCurrentRect:row.selector.popupCurrentRect()})
     }
     var opacityControls=[]
     var opacityItems=[iconOpacityRow,dockOpacityRow]
@@ -293,6 +443,12 @@ PanelWindow {
     for (var n=0;n<shortcutRows.count;n++) {
       var shortcut=shortcutRows.itemAt(n) as StashShortcutField
       if (shortcut) shortcutControls.push(Object.assign({section:"shortcuts"},shortcut.details(surface.contentItem)))
+    }
+    var numericControls=[],numericItems=numberItems(),focusDetails=settingsFocusDetails()
+    for (var q=0;q<numericItems.length;q++) {
+      var number=numericItems[q] as SettingNumber
+      if (number) numericControls.push({key:number.modelData.key,value:number.numberField.value,
+        visible:number.visible,rect:itemRect(number.numberField.field)})
     }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
@@ -314,11 +470,14 @@ PanelWindow {
         {key:"motion",title:motionHeader.text,rect:itemRect(motionHeader)},
         {key:"previews",title:previewsHeader.text,rect:itemRect(previewsHeader)},
         {key:"shortcuts",title:shortcutsHeader.text,rect:itemRect(shortcutsHeader)}],
-      settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight},shortcutControls:shortcutControls,
+      settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight,
+        focusedRect:focusDetails.rect,activeFocusRect:focusDetails.activeRect,focusedKey:focusDetails.key,focusedPart:focusDetails.part,
+        scrollbarRect:itemRect(settingsScrollbar),thumbRect:itemRect(settingsScrollbar.contentItem)},shortcutControls:shortcutControls,
+      settingsError:{visible:settingsErrorText.visible,rect:itemRect(settingsErrorText),text:settingsErrorText.text,lineCount:settingsErrorText.lineCount},
       reset:{confirming:stash.resetConfirmation,busy:stash.resetBusy,serial:stash.resetSerial,
         requestEnabled:resetRequest.enabled,confirmEnabled:resetConfirm.enabled,
         requestRect:itemRect(resetRequest),cancelRect:itemRect(resetCancel),confirmRect:itemRect(resetConfirm),confirmationRect:itemRect(resetPane)},
-      opacityControls:opacityControls,
+      opacityControls:opacityControls,numberControls:numericControls,
       cornerControl:{visible:radiusRow.visible,value:radiusRow.numberField.value,rect:itemRect(radiusRow.numberField.field)},
       floatingDock:floatingDock.details(),
       preview:windowPreview.details(),
@@ -656,15 +815,22 @@ PanelWindow {
   }
   Ui.BorderSurface {
     id: dialog
+    readonly property bool settingsMode:surface.renderDialogKind==="settings"
+    readonly property bool compact:surface.usableArea.width<Style.space(440) || surface.usableArea.height<Style.space(400)
+    readonly property real outerPadding:Math.max(0,Math.min(compact ? surface.metrics.sm : surface.metrics.popupPadding,
+      surface.usableArea.width/4,surface.usableArea.height/4))
+    readonly property real innerPadding:Math.max(0,Math.min(compact ? surface.metrics.sm : surface.metrics.popupPadding,
+      surface.usableArea.width/8,surface.usableArea.height/8))
+    readonly property real availableHeight:Math.max(0,surface.usableArea.height-outerPadding*2)
+    readonly property real bodyHeight:Math.max(0,availableHeight-innerPadding*2-borderTop-borderBottom)
     visible:surface.dialogOpen || surface.dialogReveal>0
     enabled:surface.dialogOpen
     opacity:surface.dialogReveal
     scale:Motion.full(surface.animations) ? 0.97+surface.dialogReveal*0.03 : 1
-    x: (surface.canvasWidth - width) / 2
-    y: Math.max(surface.metrics.popupPadding, (surface.canvasHeight - height) / 2)
-    width: Math.min(Style.space(560), surface.canvasWidth - surface.metrics.popupPadding * 2)
-    height: Math.min(surface.canvasHeight - surface.metrics.popupPadding * 2,
-      contents.implicitHeight + surface.metrics.popupPadding * 2 + borderTop + borderBottom)
+    width:Math.max(0,Math.min(Style.space(560),surface.usableArea.width-outerPadding*2))
+    height:Math.max(0,Math.min(availableHeight,contents.implicitHeight+innerPadding*2+borderTop+borderBottom))
+    x:surface.usableArea.x+(surface.usableArea.width-width)/2
+    y:surface.usableArea.y+(surface.usableArea.height-height)/2
     radius: Style.cornerRadius
     color: surface.popupColors.background
     borderSpec: Border.surfaceSpec("popups", "border", surface.popupColors.border, Style.normalBorderWidth)
@@ -680,40 +846,23 @@ PanelWindow {
     MouseArea { anchors.fill: parent } // Keep clicks on card padding inside the dialog.
     ColumnLayout {
       id: contents
-      anchors.fill: parent
-      anchors.leftMargin: surface.metrics.popupPadding + dialog.borderLeft
-      anchors.rightMargin: surface.metrics.popupPadding + dialog.borderRight
-      anchors.topMargin: surface.metrics.popupPadding + dialog.borderTop
-      anchors.bottomMargin: surface.metrics.popupPadding + dialog.borderBottom
+      x:dialog.innerPadding+dialog.borderLeft
+      y:dialog.innerPadding+dialog.borderTop
+      width:Math.max(0,dialog.width-dialog.innerPadding*2-dialog.borderLeft-dialog.borderRight)
+      height:Math.max(0,dialog.height-dialog.innerPadding*2-dialog.borderTop-dialog.borderBottom)
       spacing: surface.metrics.rowGap
-      RowLayout {
-        Layout.fillWidth: true
-        Text {
-          text: surface.renderDialogKind === "settings" ? surface.stash.resetConfirmation ? "Reset settings?" : "Window Stash settings" : surface.renderDialogKind === "picker" ? "Stashed windows" : "Window Stash"
-          textFormat: Text.PlainText
-          color: surface.popupColors.text
-          font.family: surface.fonts.family
-          font.pixelSize: surface.fonts.title
-          font.bold: true
-          Layout.fillWidth: true
-        }
-        StashActionButton { animations:surface.animations; animationSpeed:surface.animationSpeed;
-          iconText: "󰅖"
-          tooltipText: "Close"
-          focusable: true
-          foreground: surface.popupColors.text
-          onClicked: surface.stash.closeDialog()
-        }
+      DialogHeading {
+        visible:!dialog.settingsMode
+        title:surface.renderDialogKind==="picker" ? "Stashed windows" : "Window Stash"
       }
-      Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }
+      Ui.PanelSeparator { visible:!dialog.settingsMode; Layout.fillWidth:true; foreground:surface.popupColors.text }
       Text {
-        visible: surface.stash.lastError !== ""
-        text: surface.stash.lastError
-        textFormat: Text.PlainText
-        color: Commons.Color.urgent
-        font.family: surface.fonts.family
-        font.pixelSize: surface.fonts.body
-        wrapMode: Text.Wrap; Layout.fillWidth: true
+        visible:!dialog.settingsMode && surface.stash.lastError!==""
+        text:surface.stash.lastError
+        textFormat:Text.PlainText
+        color:Commons.Color.urgent
+        font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+        wrapMode:Text.Wrap; Layout.fillWidth:true; Layout.minimumWidth:0
       }
       Ui.TextField {
         id: search
@@ -732,7 +881,8 @@ PanelWindow {
         id: picker
         visible: surface.renderDialogKind === "picker"
         Layout.fillWidth: true
-        Layout.preferredHeight: Math.min(Style.space(360), contentHeight)
+        Layout.fillHeight:true; Layout.minimumHeight:0
+        Layout.preferredHeight: Math.min(Style.space(360), contentHeight, dialog.bodyHeight)
         clip: true; spacing: surface.metrics.labelGap; currentIndex: 0
         model: surface.renderDialogWindows.filter(function(w) {
           return (w.title + " " + w.app).toLowerCase().indexOf(surface.renderDialogQuery.toLowerCase()) >= 0
@@ -774,20 +924,43 @@ PanelWindow {
       }
       Flickable {
         id:settingsViewport
-        visible:surface.renderDialogKind === "settings" && !surface.stash.resetConfirmation
-        enabled:!surface.stash.resetBusy
+        visible:dialog.settingsMode
         Layout.fillWidth:true; Layout.fillHeight:true
-        Layout.preferredHeight:Math.min(contentHeight,Math.max(0,surface.canvasHeight-surface.metrics.popupPadding*2-120))
-        contentWidth:width; contentHeight:settingsContents.implicitHeight
+        Layout.minimumWidth:0; Layout.minimumHeight:0
+        Layout.preferredHeight:Math.min(contentHeight,dialog.bodyHeight)
+        contentWidth:width; contentHeight:settingsBody.implicitHeight
         boundsBehavior:Flickable.StopAtBounds
         flickableDirection:Flickable.VerticalFlick
         clip:true
+        onHeightChanged:settingsFocusDelay.restart()
+        onContentYChanged:if (!surface.stash.resetConfirmation && !surface.settingsScrollRestoring)
+          surface.settingsFormContentY=contentY
         ColumnLayout {
-          id:settingsContents
+          id:settingsBody
           width:Math.max(0,settingsViewport.width-surface.metrics.sm*2)
           height:implicitHeight
-          spacing:surface.metrics.panelGap
-          Ui.PanelSectionHeader { id:generalHeader; text:"General"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          spacing:surface.metrics.rowGap
+          DialogHeading {
+            id:settingsHeading
+            title:surface.stash.resetConfirmation ? "Reset settings?" : "Window Stash settings"
+          }
+          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Text {
+            id:settingsErrorText
+            visible:surface.stash.lastError!==""
+            text:surface.stash.lastError
+            textFormat:Text.PlainText
+            color:Commons.Color.urgent
+            font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+            wrapMode:Text.Wrap; Layout.fillWidth:true; Layout.minimumWidth:0
+          }
+          ColumnLayout {
+            id:settingsContents
+            visible:!surface.stash.resetConfirmation
+            enabled:!surface.stash.resetBusy
+            Layout.fillWidth:true; Layout.minimumWidth:0
+            spacing:surface.metrics.panelGap
+          Ui.PanelSectionHeader { id:generalHeader; text:"General"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:generalRows
             model:[
@@ -798,10 +971,11 @@ PanelWindow {
             ]
             delegate:SettingChoice {}
           }
-          StashButton { animations:surface.animations; animationSpeed:surface.animationSpeed; text:"All stashed windows"; focusable:true; foreground:surface.popupColors.text
+          StashButton { animations:surface.animations; animationSpeed:surface.animationSpeed; text:settingsBody.width<Style.space(220) ? "All windows" : "All stashed windows"; tooltipText:"All stashed windows"; focusable:true; foreground:surface.popupColors.text
+            Layout.maximumWidth:settingsBody.width
             onClicked:surface.stash.allWindows(surface.screen.name) }
-          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
-          Ui.PanelSectionHeader { id:placementHeader; text:"Placement"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:placementHeader; text:"Placement"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:placementRows
             model:[
@@ -811,8 +985,8 @@ PanelWindow {
             ]
             delegate:SettingChoice {}
           }
-          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
-          Ui.PanelSectionHeader { id:appearanceHeader; text:"Appearance"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:appearanceHeader; text:"Appearance"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:iconRows
             model:[
@@ -833,8 +1007,8 @@ PanelWindow {
           }
           SettingNumber { id:radiusRow; modelData:({key: "dockCornerRadius", label: "Corner radius (px)", maximum: 64, defaultValue: 12, section: "appearance"}) }
           SettingNumber { id:dockOpacityRow; modelData:({key: "dockOpacity", label: "Dock opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
-          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
-          Ui.PanelSectionHeader { id:motionHeader; text:"Motion"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:motionHeader; text:"Motion"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:motionRows
             model:[
@@ -845,8 +1019,8 @@ PanelWindow {
             ]
             delegate:SettingChoice {}
           }
-          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
-          Ui.PanelSectionHeader { id:previewsHeader; text:"Previews"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:previewsHeader; text:"Previews"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:previewRows
             model:[
@@ -865,8 +1039,8 @@ PanelWindow {
             ]
             delegate:SettingNumber {}
           }
-          Ui.PanelSeparator { Layout.fillWidth:true; foreground:surface.popupColors.text }
-          Ui.PanelSectionHeader { id:shortcutsHeader; text:"Keyboard shortcuts"; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
+          Ui.PanelSectionHeader { id:shortcutsHeader; text:"Keyboard shortcuts"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:shortcutRows
             model:[{key:"minimizeShortcut",label:"Minimize window",defaultValue:"SUPER + A"},
@@ -880,60 +1054,71 @@ PanelWindow {
               animations:surface.animations; animationSpeed:surface.animationSpeed; foreground:surface.popupColors.text
             }
           }
+          }
+          ColumnLayout {
+            id:resetPane
+            visible:surface.stash.resetConfirmation
+            Layout.fillWidth:true; Layout.minimumWidth:0
+            spacing:surface.metrics.rowGap
+            Text {
+              Layout.fillWidth:true; Layout.minimumWidth:0
+              text:"Reset all Window Stash settings to their defaults, including keyboard shortcuts? Stashed windows and saved icon positions will be kept."
+              textFormat:Text.PlainText
+              wrapMode:Text.Wrap
+              color:surface.popupColors.text
+              font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+            }
+            GridLayout {
+              id:resetActions
+              Layout.fillWidth:true; Layout.minimumWidth:0
+              columns:width<resetCancel.implicitWidth+resetConfirm.implicitWidth+surface.metrics.sm ? 1 : 3
+              columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.sm
+              Item { visible:resetActions.columns===3; Layout.fillWidth:true }
+              StashButton {
+                id:resetCancel
+                text:"Cancel"; focusable:true
+                Layout.minimumWidth:0; Layout.fillWidth:resetActions.columns===1
+                enabled:!surface.stash.resetBusy
+                animations:surface.animations; animationSpeed:surface.animationSpeed
+                foreground:surface.popupColors.text
+                onClicked:surface.stash.cancelResetSettings()
+              }
+              StashButton {
+                id:resetConfirm
+                text:settingsBody.width<Style.space(220) ? "Reset" : "Reset to defaults"
+                tooltipText:"Reset to defaults"; focusable:true
+                Layout.minimumWidth:0; Layout.fillWidth:resetActions.columns===1
+                enabled:!surface.stash.settingsBusy
+                animations:surface.animations; animationSpeed:surface.animationSpeed
+                foreground:surface.popupColors.text
+                onClicked:surface.stash.resetSettings()
+              }
+            }
+          }
+          Ui.PanelSeparator { visible:!surface.stash.resetConfirmation; Layout.fillWidth:true; foreground:surface.popupColors.text }
+          StashButton {
+            id:resetRequest
+            visible:!surface.stash.resetConfirmation
+            text:surface.stash.resetBusy ? "Resetting…" : settingsBody.width<Style.space(220) ? "Reset" : "Reset to defaults"
+            tooltipText:"Reset to defaults"
+            Layout.maximumWidth:settingsBody.width
+            enabled:!surface.stash.settingsBusy && surface.stash.deferredSettings.length===0
+            focusable:true
+            animations:surface.animations; animationSpeed:surface.animationSpeed
+            foreground:surface.popupColors.text
+            onClicked:surface.stash.askResetSettings()
+          }
           Item { Layout.fillWidth:true; Layout.preferredHeight:surface.metrics.xxs }
         }
         Controls.ScrollBar.vertical:Controls.ScrollBar {
           id:settingsScrollbar
+          policy:Controls.ScrollBar.AsNeeded
+          interactive:true
+          minimumSize:Math.min(1,Style.space(24)/Math.max(1,height))
           contentItem:Rectangle { implicitWidth:surface.metrics.sm; radius:Style.cornerRadius
             color:Style.hoverStateColor(surface.popupColors.text,Commons.Color.accent); opacity:settingsScrollbar.active ? .6 : 0 }
           background:Item {}
         }
-      }
-      ColumnLayout {
-        id:resetPane
-        visible:surface.renderDialogKind==="settings" && surface.stash.resetConfirmation
-        Layout.fillWidth:true
-        spacing:surface.metrics.rowGap
-        Text {
-          Layout.fillWidth:true
-          text:"Reset all Window Stash settings to their defaults, including keyboard shortcuts? Stashed windows and saved icon positions will be kept."
-          textFormat:Text.PlainText
-          wrapMode:Text.Wrap
-          color:surface.popupColors.text
-          font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
-        }
-        RowLayout {
-          Layout.fillWidth:true
-          spacing:surface.metrics.sm
-          Item { Layout.fillWidth:true }
-          StashButton {
-            id:resetCancel
-            text:"Cancel"; focusable:true
-            enabled:!surface.stash.resetBusy
-            animations:surface.animations; animationSpeed:surface.animationSpeed
-            foreground:surface.popupColors.text
-            onClicked:surface.stash.cancelResetSettings()
-          }
-          StashButton {
-            id:resetConfirm
-            text:"Reset to defaults"; focusable:true
-            enabled:!surface.stash.settingsBusy
-            animations:surface.animations; animationSpeed:surface.animationSpeed
-            foreground:surface.popupColors.text
-            onClicked:surface.stash.resetSettings()
-          }
-        }
-      }
-      Ui.PanelSeparator { visible:surface.renderDialogKind==="settings" && !surface.stash.resetConfirmation; Layout.fillWidth:true; foreground:surface.popupColors.text }
-      StashButton {
-        id:resetRequest
-        visible:surface.renderDialogKind==="settings" && !surface.stash.resetConfirmation
-        text:surface.stash.resetBusy ? "Resetting…" : "Reset to defaults"
-        enabled:!surface.stash.settingsBusy && surface.stash.deferredSettings.length===0
-        focusable:true
-        animations:surface.animations; animationSpeed:surface.animationSpeed
-        foreground:surface.popupColors.text
-        onClicked:surface.stash.askResetSettings()
       }
     }
   }

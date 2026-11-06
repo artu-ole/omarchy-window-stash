@@ -20,8 +20,10 @@ ColumnLayout {
   property string submittedText:""
   readonly property var metrics:Style.spacing
   readonly property var fonts:Style.font
+  readonly property bool narrow:width<Style.space(360)
   readonly property alias field:input
   Layout.fillWidth:true
+  Layout.minimumWidth:0
   spacing:shortcut.metrics.xxs
 
   function resetDraft() {
@@ -67,28 +69,39 @@ ColumnLayout {
     }
   }
 
-  RowLayout {
+  GridLayout {
     Layout.fillWidth:true
-    spacing:shortcut.metrics.sm
+    Layout.minimumWidth:0
+    columns:shortcut.narrow ? 1 : 2
+    columnSpacing:shortcut.metrics.sm
+    rowSpacing:shortcut.metrics.xxs
     Text {
       text:shortcut.label
       textFormat:Text.PlainText
       wrapMode:Text.Wrap
       Layout.minimumWidth:0; Layout.fillWidth:true
+      Layout.maximumWidth:shortcut.width
       color:shortcut.foreground
       font.family:shortcut.fonts.family; font.pixelSize:shortcut.fonts.body
     }
     Text {
       visible:shortcut.dirty || shortcut.awaiting
+      Layout.minimumWidth:0
+      Layout.fillWidth:shortcut.narrow
+      Layout.maximumWidth:shortcut.width
       text:shortcut.awaiting ? "Saving…" : "Not applied"
       textFormat:Text.PlainText
+      wrapMode:Text.Wrap
       color:shortcut.foreground; opacity:.65
       font.family:shortcut.fonts.family; font.pixelSize:shortcut.fonts.caption
     }
   }
-  RowLayout {
+  GridLayout {
     Layout.fillWidth:true
-    spacing:shortcut.metrics.sm
+    Layout.minimumWidth:0
+    columns:shortcut.narrow ? 1 : 2
+    columnSpacing:shortcut.metrics.sm
+    rowSpacing:shortcut.metrics.xxs
     Ui.TextField {
       id:input
       Layout.minimumWidth:0; Layout.fillWidth:true
@@ -107,33 +120,46 @@ ColumnLayout {
         text:"Example: SUPER + SHIFT + Z. Leave empty to disable."
       }
     }
-    StashButton {
-      id:applyButton
-      text:"Apply"; focusable:true
-      enabled:(shortcut.dirty || !!shortcut.stash.lastError) && !shortcut.awaiting
-      animations:shortcut.animations; animationSpeed:shortcut.animationSpeed
-      foreground:shortcut.foreground
-      onClicked:shortcut.submit(input.text)
-    }
-    StashActionButton {
-      id:clearButton
-      size:input.implicitHeight
-      iconText:"×"; tooltipText:"Disable shortcut"
-      focusable:true
-      enabled:!shortcut.awaiting && (input.text!=="" || shortcut.binding!=="")
-      animations:shortcut.animations; animationSpeed:shortcut.animationSpeed
-      foreground:shortcut.foreground
-      onClicked:shortcut.submit("")
-    }
-    StashActionButton {
-      id:defaultButton
-      size:input.implicitHeight
-      iconText:"↺"; tooltipText:"Use default: "+(shortcut.defaultBinding || "Not bound")
-      focusable:true
-      enabled:!shortcut.awaiting && (shortcut.dirty || shortcut.binding!==shortcut.defaultBinding)
-      animations:shortcut.animations; animationSpeed:shortcut.animationSpeed
-      foreground:shortcut.foreground
-      onClicked:shortcut.submit(shortcut.defaultBinding)
+    Item {
+      Layout.minimumWidth:0
+      Layout.fillWidth:shortcut.narrow
+      Layout.maximumWidth:shortcut.width
+      implicitWidth:applyButton.implicitWidth+clearButton.width+defaultButton.width+shortcut.metrics.sm*2
+      implicitHeight:actionFlow.implicitHeight
+      Flow {
+        id:actionFlow
+        width:parent.width
+        spacing:shortcut.metrics.sm
+        StashButton {
+          id:applyButton
+          width:implicitWidth; height:implicitHeight
+          text:"Apply"; focusable:true
+          enabled:(shortcut.dirty || !!shortcut.stash.lastError) && !shortcut.awaiting
+          animations:shortcut.animations; animationSpeed:shortcut.animationSpeed
+          foreground:shortcut.foreground
+          onClicked:shortcut.submit(input.text)
+        }
+        StashActionButton {
+          id:clearButton
+          size:input.implicitHeight
+          iconText:"×"; tooltipText:"Disable shortcut"
+          focusable:true
+          enabled:!shortcut.awaiting && (input.text!=="" || shortcut.binding!=="")
+          animations:shortcut.animations; animationSpeed:shortcut.animationSpeed
+          foreground:shortcut.foreground
+          onClicked:shortcut.submit("")
+        }
+        StashActionButton {
+          id:defaultButton
+          size:input.implicitHeight
+          iconText:"↺"; tooltipText:"Use default: "+(shortcut.defaultBinding || "Not bound")
+          focusable:true
+          enabled:!shortcut.awaiting && (shortcut.dirty || shortcut.binding!==shortcut.defaultBinding)
+          animations:shortcut.animations; animationSpeed:shortcut.animationSpeed
+          foreground:shortcut.foreground
+          onClicked:shortcut.submit(shortcut.defaultBinding)
+        }
+      }
     }
   }
 }

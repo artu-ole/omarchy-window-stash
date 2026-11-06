@@ -63,9 +63,11 @@ def open_settings(session):
 
 
 def ask(session):
+    from settings_fit import reveal
+
     reset = session.surface()['reset']
     assert reset['requestEnabled'] and not reset['busy'], 'Reset action was unavailable while idle'
-    session.click(reset['requestRect'])
+    session.click(reveal(session, lambda: session.surface()['reset']['requestRect']))
     return wait(lambda: (r if (r := session.surface()['reset'])['confirming'] else None),
                 'Reset action did not open its confirmation')
 

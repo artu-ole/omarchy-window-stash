@@ -88,8 +88,10 @@ its default. Restore oldest starts unbound; duplicate/occupied chords are reject
 Bindings survive shell/compositor reloads; installation preserves personal bindings
 and migrates the managed block's explicit overrides.
 
-Settings are grouped by purpose. Reset all settings requires confirmation and
-restores every preference and default shortcut atomically. Conflicts leave
+Settings are grouped by purpose and scroll within the monitor's usable area.
+Narrow layouts stack controls; keyboard focus scrolls fields into view.
+Reset all settings requires confirmation and restores every preference and default
+shortcut atomically. Conflicts leave
 settings and bindings intact; parked windows and positions are retained.
 CLI equivalent: `window-stash reset-settings --confirm`.
 
@@ -255,6 +257,7 @@ NativeSession-based suites preserve windows, stash and preferences. Legacy suite
 including `tests/live.py`, need an empty, isolated test desktop; read their setup
 requirements first. Input automation announces itself **five seconds before starting**;
 follow [AGENTS.md](AGENTS.md).
+Small-display settings regression: `python3 tests/settings_fit.py`.
 
 Copyright © 2026 **artu-ole** · [AGPL-3.0-only](LICENSE) ·
 [Third-party notices](THIRD_PARTY_NOTICES.md).
