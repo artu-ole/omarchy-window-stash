@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Widgets as Widgets
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
@@ -18,8 +19,9 @@ PanelWindow {
   readonly property var metrics: Style.spacing
   required property var stash
   readonly property var monitor: stash.screenMonitor(screen.name)
-  readonly property int activeWorkspaceId:monitor ? monitor.activeWorkspace.id : -1
-  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (contextMenuOpen) stash.closeContext() }
+  readonly property var liveMonitor:Hyprland.monitorFor(screen)
+  readonly property int activeWorkspaceId:liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : monitor ? monitor.activeWorkspace.id : -1
+  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
@@ -55,7 +57,15 @@ PanelWindow {
   readonly property bool floatingDockOpen:floatingDock.open
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen
-  onContextMenuOpenChanged: { refreshInputMask(); if (contextMenuOpen) floatingDock.close("menu") }
+  onContextMenuOpenChanged: {
+    refreshInputMask()
+    if (contextMenuOpen) floatingDock.close("menu")
+    else Qt.callLater(function() {
+      if (surface.contextMenuOpen || !surface.dialogOpen) return
+      if (surface.stash.dialogKind==="picker") search.forceActiveFocus()
+      else if (surface.stash.dialogKind!=="") dialog.forceActiveFocus()
+    })
+  }
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
   readonly property bool snapFloating: config.floatingPlacement !== "free"
@@ -102,7 +112,7 @@ PanelWindow {
     interval: 1
     onTriggered: {
       var nextWindows = Model.visibleWindows(surface.stash.snapshot.windows,
-        surface.monitor ? surface.monitor.activeWorkspace.id : -1, surface.config.scope)
+        surface.activeWorkspaceId, surface.config.scope)
       // Reserve-only refreshes must preserve delegates, active drags and hover.
       if (JSON.stringify(nextWindows) !== JSON.stringify(surface.windows)) surface.windows = nextWindows
       surface.dialogOpen = surface.stash.dialogKind !== "" && surface.stash.dialogScreen === surface.screen.name
@@ -147,7 +157,7 @@ PanelWindow {
       if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
       // qmllint enable missing-property
     }
-    return {screen:screen.name, width:width, height:height, eligible:windows.length,
+    return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
       motion:{mode:animations,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal},
       usableArea:usableArea,

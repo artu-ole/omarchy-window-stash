@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pointer menu geometry, targeting, native actions, dismissal, and scoped close-all."""
 import time
+import json
 
 from desktop_test import desktop_test
 from live import h,command,shell,configure,wait
@@ -17,7 +18,10 @@ def main():
         key='window:'+str(rb.get('stableId') or rb['id'])
         def open_menu(rect):
             t.click(rect,273)
-            m=wait(lambda:t.menu() if t.menu()['visible'] else None,'Pointer context menu did not open')
+            try:m=wait(lambda:t.menu() if t.menu()['visible'] else None,'Pointer context menu did not open')
+            except AssertionError:
+                print('Menu invocation diagnostics:',shell('status')['context'],t.menu(),flush=True)
+                raise
             assert not shell('status')['error'],shell('status')['error']
             return m
         def dismiss():
@@ -68,7 +72,14 @@ def main():
         h.dispatch('focus',workspace=str(t.workspace));configure('scope','workspace')
         h.dispatch('window.move',window='address:'+b,workspace=str(t.workspace),follow=True)
         rb=t.park(b);key='window:'+str(rb.get('stableId') or rb['id'])
-        configure('grouping','app');t.resting();m=open_menu(t.icon())
+        configure('grouping','app');t.resting()
+        t.click(t.icon());wait(lambda:shell('status')['dialog']=='picker' and t.surface()['dialog']['visible'],'Grouped picker did not open')
+        picker=t.surface()['picker']
+        m=open_menu({'x':picker['x'],'y':picker['y'],'width':80,'height':48})
+        assert len(m['targetIds'])==1,'Chooser-row menu did not target just that row'
+        dismiss();t.keys(ra['title'])
+        wait(lambda:t.surface()['pickerCount']==1,'Search focus did not return after dismissing row context menu')
+        shell('dismiss');t.resting();m=open_menu(t.icon())
         assert set(m['targetIds'])=={ra['id'],rb['id']} and '2' in t.action('close')['text']
         t.click(t.action('close')['rect'])
         wait(lambda:not h.client(a) and not h.client(b),'Grouped menu did not close represented windows')
@@ -89,6 +100,39 @@ def main():
             t.click(t.action('closeAll')['rect']);wait(lambda:not h.client(b),'Global UI close-all did not close eligible stash')
         else:dismiss()
         print('PASS visibility-dependent close-all labels and workspace scope; isolated backend suite covers global closure safely',flush=True)
+        # A close action from a chooser row must not leave the picker over a Save prompt.
+        configure('scope','workspace');configure('grouping','window');h.dispatch('focus',workspace=str(t.workspace))
+        prompted,title=t.spawn(mode='prompt',app='org.windowstash.MenuPrompt');record=t.park(prompted)
+        shell('all');wait(lambda:t.surface()['dialog']['visible'],'Recovery picker did not open')
+        t.keys(title);wait(lambda:t.surface()['pickerCount']==1,'Prompt target search did not narrow picker')
+        picker=t.surface()['picker'];m=open_menu({'x':picker['x'],'y':picker['y'],'width':80,'height':48})
+        assert m['targetIds']==[record['id']]
+        t.click(t.action('close')['rect'])
+        prompt=wait(lambda:next((c for c in h.read('clients') if c['title']==title+' save changes' and c['workspace']['id']==t.workspace),None),'Chooser close did not show Save prompt')
+        assert shell('status')['dialog']=='' and not t.surface()['dialog']['visible'],'Picker obscured application Save prompt'
+        h.dispatch('focus',window='address:'+prompt['address']);t.keys('-k','Escape')
+        wait(lambda:not h.client(prompt['address']),'Save prompt Cancel failed');assert h.client(prompted)
+        print('PASS chooser-origin close dismisses picker and exposes native Save/Cancel prompt',flush=True)
+
+        # Real secondary scaled output; no physical output profile is modified.
+        old_outputs={m['name'] for m in h.read('monitors')};h.call('output','create','headless')
+        extra=wait(lambda:next((m for m in h.read('monitors') if m['name'] not in old_outputs),None),'Headless monitor did not appear')
+        t.outputs.append(extra['name'])
+        end=max(m['x']+round(m['width']/m['scale']) for m in h.read('monitors') if m['name']!=extra['name'])
+        h.eval('hl.monitor({output=%s,mode="640x480@60",position=%s,scale=1.25})'%(json.dumps(extra['name']),json.dumps('%dx0'%end)))
+        t.monitor=wait(lambda:next((m for m in h.read('monitors') if m['name']==extra['name'] and m['width']==640 and abs(m['scale']-1.25)<.01),None),'Scaled profile did not apply')
+        t.move(round(t.monitor['width']/t.monitor['scale']/2),round(t.monitor['height']/t.monitor['scale']/2))
+        h.dispatch('focus',monitor=t.monitor['name']);h.dispatch('focus',workspace=str(t.workspace+3))
+        configure('presentation','bubbles');configure('floatingPlacement','free')
+        scaled,_=t.spawn(workspace=t.workspace+3);scaled_record=t.park(scaled);scaled_key='window:'+str(scaled_record.get('stableId') or scaled_record['id'])
+        t.resting();s=t.surface();area=s['usableArea']
+        assert scaled_record['origin']['id']==t.workspace+3,'Scaled fixture was not placed on its explicit workspace'
+        t.position(scaled_key,area['x']+area['width']-65,area['y']+area['height']-65)
+        m=open_menu(t.icon(scaled_key));p=m['rect'];area=t.surface()['usableArea']
+        assert m['screen']==t.monitor['name'] and p['x']>=area['x'] and p['y']>=area['y'] and p['x']+p['width']<=area['x']+area['width'] and p['y']+p['height']<=area['y']+area['height']
+        t.keys('-k','End','-k','Return');wait(lambda:shell('status')['dialog']=='settings','Scaled menu keyboard Settings failed')
+        shell('dismiss')
+        print('PASS second scaled monitor pointer coordinates, edge fitting, and keyboard action',flush=True)
         assert not shell('status')['error'],shell('status')['error']
 
 

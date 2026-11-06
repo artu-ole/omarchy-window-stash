@@ -66,10 +66,16 @@ Item {
       if (snapshot.monitors[i].name === name) return snapshot.monitors[i]
     return null
   }
+  function invocationWorkspace(name) {
+    var surface=surfaces.find(function(s) { return s.screen.name===name })
+    if (surface && surface.activeWorkspaceId!==-1) return surface.activeWorkspaceId
+    var monitor=screenMonitor(name)
+    return monitor ? monitor.activeWorkspace.id : 1
+  }
   function openContext(group,name,point) {
     var m=screenMonitor(name)
     if (!m || !group) return
-    contextScreen=name; contextWorkspace=m.activeWorkspace.id
+    contextScreen=name; contextWorkspace=invocationWorkspace(name)
     contextPoint=Qt.point(point.x,point.y)
     contextGroup=Object.assign({},group,{windows:group.windows.slice()})
     contextIds=group.windows.map(function(w) { return w.id })
@@ -81,7 +87,7 @@ Item {
   }
   function scopeWindows(name,workspace) {
     var m=screenMonitor(name)
-    return Model.visibleWindows(snapshot.windows,workspace===undefined ? (m ? m.activeWorkspace.id : -1) : workspace,snapshot.settings.scope)
+    return Model.visibleWindows(snapshot.windows,workspace===undefined ? invocationWorkspace(name) : workspace,snapshot.settings.scope)
   }
   function scopeCount(name) { return scopeWindows(name).length }
   function groupClosing(group) {
@@ -98,16 +104,16 @@ Item {
     var pending=Object.assign({},pendingCloseIds)
     ids.forEach(function(id) { pending[id]=true })
     pendingCloseIds=pending
-    enqueue(["close"].concat(ids,["--monitor",name,"--workspace",String(workspace===undefined ? m.activeWorkspace.id : workspace)]))
+    enqueue(["close"].concat(ids,["--monitor",name,"--workspace",String(workspace===undefined ? invocationWorkspace(name) : workspace)]))
   }
   function closeGroup(group,name) { if (group) closeWindows(group.windows,name) }
   function closeContextWindows() {
     var windows=contextWindows(),name=contextScreen,workspace=contextWorkspace
-    closeContext(); closeWindows(windows,name,workspace)
+    closeContext(); closeDialog(); closeWindows(windows,name,workspace)
   }
   function closeContextAll() {
     var windows=scopeWindows(contextScreen,contextWorkspace),name=contextScreen,workspace=contextWorkspace
-    closeContext(); closeWindows(windows,name,workspace)
+    closeContext(); closeDialog(); closeWindows(windows,name,workspace)
   }
   function restoreContext(destination) {
     var windows=contextWindows(),name=contextScreen,workspace=contextWorkspace,group=contextGroup
@@ -143,7 +149,7 @@ Item {
     var m = screenMonitor(name)
     if (!m) return
     dialogScreen = name
-    dialogWorkspace = m.activeWorkspace.id
+    dialogWorkspace = invocationWorkspace(name)
     dialogWindows = windows || []
     dialogGroup = group || null
     dialogQuery = ""
@@ -222,6 +228,7 @@ Item {
         try {
           var result = JSON.parse(text)
           if (result.windows) root.snapshot = result
+          if (result.action==="close" && result.restored>0) { root.closeContext(); root.closeDialog() }
           if (result.ok === false) {
             root.lastError = result.error || "Window action failed"
             if (root.runningArgs[0]==="close") root.notifyCloseError(root.lastError)

@@ -38,8 +38,8 @@ class NativeSession:
         x=r['x']+r['width']/2;y=r['y']+r['height']/2
         self.move(x-1,y);self.pointer.click(*self.point(x,y),button=button)
     def keys(self,*args):subprocess.run(['wtype',*args],check=True)
-    def spawn(self,mode=None,app='org.windowstash.NativeTest',delay=500):
-        wanted=h.read('activeworkspace')['id']
+    def spawn(self,mode=None,app='org.windowstash.NativeTest',delay=500,workspace=None):
+        wanted=h.read('activeworkspace')['id'] if workspace is None else workspace
         if wanted<=0:wanted=self.workspace
         h.dispatch('focus',workspace=str(wanted))
         title='Stash native %s %s'%(os.getpid(),len(self.addresses))
@@ -72,8 +72,13 @@ class NativeSession:
     def resting(self):
         return wait(lambda:self.surface() if not self.dock()['snapping'] and not self.dock()['animating'] and not any(b['animating'] for b in self.surface()['bubbles']) else None,'Floating items did not settle')
     def position(self,key,x,y):
-        self.touch(key);command('position',monitor_identity(self.monitor),key,x,y);shell('refresh')
-        wait(lambda:(r:=self.icon(key if key!='dock:floating' else None)) and abs(r['x']-x)<2 and abs(r['y']-y)<2,'Position did not load')
+        self.touch(key)
+        wait(lambda:not shell('status')['controllerBusy'] and shell('status')['queueLength']==0,'Controller did not drain before external position update')
+        command('position',monitor_identity(self.monitor),key,x,y);shell('refresh')
+        try:wait(lambda:(r:=self.icon(key if key!='dock:floating' else None)) and abs(r['x']-x)<2 and abs(r['y']-y)<2,'Position did not load')
+        except AssertionError:
+            print('Position diagnostics:',key,[x,y],self.icon(key if key!='dock:floating' else None),self.surface()['usableArea'],self.surface().get('motion',{}).get('dragWorld'),flush=True)
+            raise
         self.resting()
     def __exit__(self,kind,value,trace):
         try:
