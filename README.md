@@ -167,12 +167,20 @@ between stops. The original front icon stays fixed; folding collects the icons
 in reverse. Both follow the floating direction and keep movement inside the
 work area. Reduced/Off use immediate positions instead.
 
-With Physics and Full animations, floating icons and the collapsed stack track
-the pointer directly, then coast after a flick. Icons gently nudge one another;
-edge mode docks near the predicted stopping point and free mode coasts to rest.
+With Physics and Full animations, floating icons and the collapsed stack's front
+icon track the pointer directly, then coast after a flick. Icons gently nudge one
+another; edge mode docks near the predicted stopping point and free mode coasts
+to rest.
 Grabbing, opening a menu, or unfolding stops momentum immediately. Only resting
 positions are saved, including nudged neighbors. Motion stays inside the current
 monitor's usable area. Reduced/Off suppress inertia and collisions.
+
+A collapsed floating dock's visible back icons trail the front on damped springs
+in both axes during dragging and coasting, then restack. Slow gives a heavier
+trail; Fast and Ultrafast tighten the follow. The followers stay within the work
+area and add no input regions or saved positions. Unfolding continues smoothly
+from a trail that is still settling. Direct dragging and Reduced/Off keep a rigid
+stack.
 
 Frames can be hidden independently. Automatic shapes and theme corners follow
 the desktop; custom choices persist when their frames are hidden. Rounded docks
@@ -275,6 +283,7 @@ python3 tests/close_actions.py     # isolated ledger: closure, scope and native 
 python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-through and scaled output
 python3 tests/middle_close.py      # pending icons, grouped close and cancellation
 python3 tests/drag_physics.py      # real flicks, collisions, catching, edges and saved positions
+python3 tests/stack_follow.py      # trailing stack springs, speed presets and unfold handoff
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator

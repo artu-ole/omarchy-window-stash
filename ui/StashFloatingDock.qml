@@ -26,6 +26,7 @@ Item {
   property bool grabReady:false
   property bool held:false
   property bool bodyMoving:false
+  property bool followingDrive:false
   readonly property string bodyKey:"dock:floating"
   readonly property bool motionFrozen:open || reveal>0 || actorsMoving
     || (stash.contextOpen && stash.contextScreen===screenName)
@@ -91,7 +92,7 @@ Item {
   property bool actorsMoving:false
   readonly property bool windowActive:Window.active
   readonly property bool openingMotion:open && (actorsMoving || chainAnimation.running || revealAnimation.running)
-  readonly property bool animating:actorsMoving || chainAnimation.running || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
+  readonly property bool animating:actorsMoving || stackFollow.active || chainAnimation.running || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
   readonly property bool present:active || handleOpacity>0 || reveal>0 || actorsMoving
   readonly property var currentRects:actorRects(false)
   readonly property var finalRects:actorRects(true)
@@ -174,6 +175,7 @@ Item {
     function onMoved(key,x,y) { if (key===dock.bodyKey) { dock.anchorX=x; dock.anchorY=y } }
     function onActivityChanged(key,isHeld,moving) {
       if (key!==dock.bodyKey) return
+      dock.followingDrive=isHeld || moving
       dock.held=isHeld; dock.bodyMoving=moving
       if (!isHeld && !moving && !dock.motionFrozen && dock.placementPending) positionUpdate.restart()
     }
@@ -183,6 +185,19 @@ Item {
       if (!dock.savedPosition || Math.abs(dock.savedPosition[0]-x)>.5 || Math.abs(dock.savedPosition[1]-y)>.5)
         dock.stash.recordPosition(dock.monitor,key,x,y)
     }
+  }
+
+  StashStackFollow {
+    id:stackFollow
+    leadX:dock.anchorX; leadY:dock.anchorY
+    count:dock.groupCount
+    size:dock.tileSize
+    area:dock.usableArea
+    identity:JSON.stringify(dock.presentationKeys.slice(0,3))
+    eligible:dock.active && dock.groupCount>1 && dock.config.dragMotion!=="direct" && Motion.full(dock.animations)
+    driving:dock.followingDrive
+    animationSpeed:dock.animationSpeed
+    onUpdated:dock.inputChanged()
   }
 
   StashCollection {
@@ -290,7 +305,7 @@ Item {
     for (var i=0;i<actors.count;i++) {
       var actor=actors.itemAt(i) as StashFanIcon
       if (!actor) continue
-      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset}
+      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset,stackLag:{x:actor.stackLagX,y:actor.stackLagY,weight:actor.lagWeight}}
       states.push(record)
       if ((open || reveal>0) && actor.slotVisible && actor.drawWeight>.01) (actor.retiring ? exiting : icons).push(record)
     }
@@ -302,7 +317,8 @@ Item {
       dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
       animation:{speed:animationSpeed,duration:revealAnimation.duration,openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:bodyMoving,windows:windows.length,groups:groups.length,
-      handle:{held:held,x:anchorX,y:anchorY,width:tileSize,height:tileSize+stackTail,opacity:handleOpacity,appearance:front ? front.icon.appearance() : null},
+      followers:stackFollow.details(),
+      handle:{held:held,x:anchorX,y:anchorY,width:tileSize,height:handle.height,opacity:handleOpacity,appearance:front ? front.icon.appearance() : null},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
         borderWidth:dockFrameVisible ? borderWidth : 0,targetHeight:finalBounds.height,targetWidth:finalBounds.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.forward && !horizontal,right:geometry.forward && horizontal,feedback:panelFeedback.details()},
       contentHeight:horizontal ? tileSize : Model.dockLength(groupCount,tileSize,gap),viewportHeight:horizontal ? tileSize : geometry.span,contentY:horizontal ? 0 : firstIndex*geometry.step,
@@ -312,7 +328,16 @@ Item {
   onAnchorYChanged:inputChanged()
   onStackTailChanged:inputChanged()
   onWindowActiveChanged:if (open && grabReady && !windowActive) updateLeaveTimer()
-  Timer { id:motionUpdate; interval:0; onTriggered: { dock.actorsMoving=dock.hasMovingActors(); dock.finishClose() } }
+  Timer {
+    id:motionUpdate; interval:0
+    onTriggered: {
+      dock.actorsMoving=dock.hasMovingActors()
+      // Every fan offset is hidden at its final slot. Finish the now-invisible
+      // catch-up here so folding starts from a clean, fully settled stack.
+      if (dock.open && !dock.actorsMoving && dock.reveal===1 && stackFollow.active) stackFollow.reset()
+      dock.finishClose()
+    }
+  }
   onSavedPositionChanged: {
     if (pendingPosition && JSON.stringify(pendingPosition)===JSON.stringify(savedPosition)) pendingPosition=null
     schedulePlacement(false)
@@ -324,7 +349,7 @@ Item {
   onHeightChanged:schedulePlacement(true)
   onRequestedAnimationChanged:if (!open && !actorsMoving && reveal===0) activeAnimation=requestedAnimation
   onRequestedHorizontalChanged: { close(); motionUpdate.restart() }
-  onActiveChanged: { inputChanged(); if (!active) { close(); if (dragWorld) dragWorld.remove(bodyKey); held=false; bodyMoving=false } else schedulePlacement(false) }
+  onActiveChanged: { inputChanged(); if (!active) { close(); if (dragWorld) dragWorld.remove(bodyKey); followingDrive=false; held=false; bodyMoving=false } else schedulePlacement(false) }
   onWindowsChanged:if (windows.length<=1) close()
   onAnimationsChanged: {
     retargetChain()
@@ -358,7 +383,7 @@ Item {
     }
   }
 
-  readonly property var inputRegions:!active ? [] : open ? actorRegions.concat([panelRegion]) : [frontRegion,middleRegion,backRegion]
+  readonly property var inputRegions:!active ? [] : open ? actorRegions.concat([panelRegion]) : stackFollow.active ? [frontRegion] : [frontRegion,middleRegion,backRegion]
   StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:48; iconShape:dock.config.iconFrame==="hidden" ? "square" : dock.config.iconShape || "auto"
     cornerRadius:dock.config.iconFrame==="hidden" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",48,true,Style.cornerRadius) }
   StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(4,dock.stackTail); size:dock.stackTail>0 ? 48 : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
@@ -421,6 +446,9 @@ Item {
       destinationX:slot.x; destinationY:slot.y
       slotVisible:slot.shown
       stackX:dock.anchorX; stackY:dock.anchorY+Math.min(ordinal,2)*4
+      readonly property var follower:stackFollow.pose(ordinal)
+      stackLagX:follower.x-stackX; stackLagY:follower.y-stackY
+      stackSettling:ordinal>0 && stackFollow.active && lagWeight>0
       expanded:dock.open
       globalPresence:dock.handleOpacity
       animations:dock.animations; animationSpeed:dock.animationSpeed
@@ -439,7 +467,7 @@ Item {
       onCloseRequested:dock.stash.closeGroup(group,dock.screenName)
       onContextRequested:function(x,y) { dock.context(group,actor.mapToItem(dock.hostWindow.contentItem,x,y)) }
       onHovered:function(value) {
-        if (value && actor.interactive && !pan.active && !actor.moving) dock.selectIndex(actor.ordinal)
+        if (value && actor.previewReady && !pan.active) dock.selectIndex(actor.ordinal)
         if (dock.preview) dock.preview.request(group,actor,value,"floating",{x:dock.finalBounds.x,y:dock.finalBounds.y,width:dock.finalBounds.width,height:dock.finalBounds.height})
       }
       onPointerPressed:if (dock.preview) dock.preview.dismiss(true)
@@ -454,7 +482,7 @@ Item {
     id:handle
     readonly property var group:dock.groups[0] || null
     z:20000
-    x:dock.anchorX; y:dock.anchorY; width:48; height:48+dock.stackTail
+    x:dock.anchorX; y:dock.anchorY; width:48; height:stackFollow.active ? 48 : 48+dock.stackTail
     enabled:dock.active && !dock.open
     readonly property bool previewReady:enabled && !dock.animating && !dock.held && !dock.bodyMoving && !drag.pressed
     onPreviewReadyChanged:if (stackHover.hovered && dock.preview) dock.preview.request(dock.groups[0],handle,previewReady,"floating",null)

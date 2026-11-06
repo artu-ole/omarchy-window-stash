@@ -12,6 +12,9 @@ Item {
   property int ordinal:0
   property real stackX:0
   property real stackY:0
+  property real stackLagX:0
+  property real stackLagY:0
+  property bool stackSettling:false
   property real destinationX:0
   property real destinationY:0
   property bool slotVisible:true
@@ -22,7 +25,7 @@ Item {
   property string animations:"full"
   property string animationSpeed:"normal"
   property bool previewEnabled:false
-  readonly property bool previewReady:interactive && !moving
+  readonly property bool previewReady:interactive && !moving && !stackSettling
   onPreviewReadyChanged:if (previewEnabled && graphic.pointerHovered) hovered(previewReady)
   property string unfoldStyle:"arc"
   readonly property var timing:Motion.fanProfile(unfoldStyle)
@@ -50,9 +53,16 @@ Item {
   readonly property bool moving:(sharedMotion && sharedMoving) || spread.running || destinationXAnimation.running || destinationYAnimation.running || pageFade.running
   readonly property real visualProgress:sharedMotion ? sharedProgress : progress
   readonly property real spatialProgress:Motion.full(animations) ? visualProgress : expanded ? 1 : 0
-  readonly property var pose:chainStyle
+  readonly property var basePose:chainStyle
     ? Model.fanChainPose(stackX,stackY,destinationX,destinationY,spatialProgress,ordinal,geometry,area,unfoldStyle,firstIndex,chainCount)
     : Model.fanPose(stackX,stackY,destinationX,destinationY,spatialProgress,ordinal,geometry,area,unfoldStyle)
+  // The followers keep settling toward the frozen lead during fan motion.
+  // Shared groups converge by the first landing; reversing never resurrects
+  // an old, latched drag offset.
+  readonly property real lagWeight:Math.max(0,1-Math.max(0,Math.min(1,spatialProgress))*(chainStyle ? Math.max(1,chainCount-1) : 1))
+  readonly property var pose:ordinal===0 || (!stackLagX && !stackLagY) || lagWeight===0 ? basePose
+    : Object.assign({},basePose,{x:Math.max(area.x,Math.min(area.x+area.width-geometry.size,basePose.x+stackLagX*lagWeight)),
+      y:Math.max(area.y,Math.min(area.y+area.height-geometry.size,basePose.y+stackLagY*lagWeight))})
   readonly property real stackWeight:ordinal<3 ? 1 : 0
   readonly property real drawWeight:sharedMotion ? (sharedProgress>0 ? pageWeight : stackWeight)
     : Math.max(0,Math.min(1,stackWeight+(pageWeight-stackWeight)*progress))
