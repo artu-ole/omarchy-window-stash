@@ -218,9 +218,32 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
+            grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             minimizeShortcut="SUPER + A",restoreLastShortcut="SUPER + Z",restoreOldestShortcut=""))
+
+    def test_size_preset_default_and_legacy_settings(self):
+        self.assertEqual(self.stash.settings()["sizePreset"], "100")
+        self.settings(presentation="floating", scope="workspace", iconShape="circle", dockOpacity=72)
+        result = self.stash.settings()
+        self.assertEqual(result["sizePreset"], "100")
+        self.assertEqual((result["presentation"], result["scope"], result["iconShape"], result["dockOpacity"]),
+                         ("floating", "workspace", "circle", 72))
+
+    def test_size_preset_choices_and_validation(self):
+        for presentation in ("dock", "bubbles", "floating"):
+            for size in ("50", "75", "100", "125", "150", "175", "200", "250", "300"):
+                with self.subTest(presentation=presentation, size=size):
+                    self.settings(sizePreset=size, presentation=presentation, animations="reduced", iconOpacity=72)
+                    result = self.stash.settings()
+                    self.assertEqual((result["sizePreset"], result["presentation"], result["animations"], result["iconOpacity"]),
+                                     (size, presentation, "reduced", 72))
+        for invalid in ("invalid", "", "25", "350", "100%", "100.0", "0100", 50, 100, 300, None, True, False, [], {}):
+            with self.subTest(invalid=invalid):
+                self.settings(sizePreset=invalid, presentation="bubbles", grouping="app", iconShape="squircle")
+                result = self.stash.settings()
+                self.assertEqual((result["sizePreset"], result["presentation"], result["grouping"], result["iconShape"]),
+                                 ("100", "bubbles", "app", "squircle"))
 
     def test_hover_preview_defaults_and_legacy_settings(self):
         self.settings(presentation="bubbles", scope="workspace", iconOpacity=72)

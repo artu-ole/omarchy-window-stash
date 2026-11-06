@@ -29,6 +29,7 @@ Ui.BorderSurface {
   property bool frameVisible: true
   readonly property string inputShape: frameVisible ? iconShape : "square"
   property bool bubble: false
+  property real sizeScale:1
   property bool draggable:bubble
   property string iconShape: "auto"
   property bool hasCursor: false
@@ -53,7 +54,7 @@ Ui.BorderSurface {
   signal dragHeld(bool held)
   signal dragFinished()
   signal hovered(bool isHovered)
-  width: bubble ? 48 : 44
+  width: Math.round((bubble ? 48 : 44)*sizeScale)
   height: width
   clip: true
   radius: hitRadius
@@ -95,7 +96,7 @@ Ui.BorderSurface {
     id: image
     animations:icon.animations; animationSpeed:icon.animationSpeed
     anchors.centerIn: parent
-    width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio, !icon.frameVisible)
+    width: Model.artworkSize(icon.width, Style.space(36)*icon.sizeScale, icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio, !icon.frameVisible,icon.sizeScale)
     height: width
     scale: Motion.full(icon.animations) && !icon.frameVisible && icon.hot ? 1.04 : 1
     Behavior on scale { NumberAnimation { id:artworkScaleAnimation; duration:Motion.move(icon.animations,icon.animationSpeed); easing.type:Easing.OutCubic } }
@@ -109,7 +110,7 @@ Ui.BorderSurface {
     text: String(icon.group.app || "?").slice(0, 1).toUpperCase()
     color: icon.popupColors.text
     font.family: icon.fonts.family
-    font.pixelSize: icon.fonts.display
+    font.pixelSize: Math.max(1,Math.min(icon.width-icon.artworkInset*2,icon.fonts.display*icon.sizeScale))
   }
   Rectangle {
     id:badge
@@ -121,9 +122,9 @@ Ui.BorderSurface {
     opacity:reveal
     scale:Motion.full(icon.animations) ? 0.8+reveal*0.2 : 1
     Behavior on reveal { NumberAnimation { id:badgeRevealAnimation; duration:Motion.duration(icon.animations,160,100,icon.animationSpeed); easing.type:Easing.OutCubic } }
-    width: Math.min(icon.width - inset * 2, Math.max(Style.space(18), countText.implicitWidth + icon.metrics.sm * 2))
-    height: Math.min(icon.height - inset * 2, Math.max(Style.space(18), icon.fonts.caption + icon.metrics.xxs * 2))
-    readonly property real inset: icon.hitRadius >= icon.width / 2 ? Math.ceil(icon.width * 0.12) : 2
+    width: Math.max(0,Math.min(icon.width - inset * 2, Math.max(Style.space(18)*icon.sizeScale, countText.implicitWidth + icon.metrics.sm*icon.sizeScale*2)))
+    height: Math.max(0,Math.min(icon.height - inset * 2, Math.max(Style.space(18)*icon.sizeScale, icon.fonts.caption*icon.sizeScale + icon.metrics.xxs*icon.sizeScale*2)))
+    readonly property real inset: Math.min(icon.width/4,icon.hitRadius >= icon.width / 2 ? Math.ceil(icon.width * 0.12) : 2*icon.sizeScale)
     radius: icon.hitRadius > 0 ? height / 2 : Style.cornerRadius
     anchors.right: parent.right; anchors.bottom: parent.bottom
     anchors.rightMargin: inset; anchors.bottomMargin: inset
@@ -131,17 +132,17 @@ Ui.BorderSurface {
     Text {
       id: countText
       anchors.centerIn: parent
-      width:parent.width-icon.metrics.xxs*2
-      height:parent.height-icon.metrics.xxs*2
+      width:Math.max(0,parent.width-icon.metrics.xxs*icon.sizeScale*2)
+      height:Math.max(0,parent.height-icon.metrics.xxs*icon.sizeScale*2)
       horizontalAlignment:Text.AlignHCenter
       verticalAlignment:Text.AlignVCenter
       fontSizeMode:Text.Fit
-      minimumPixelSize:5
+      minimumPixelSize:Math.min(5,Math.max(1,height))
       text: badge.shownCount > 99 ? "99+" : badge.shownCount
       textFormat: Text.PlainText
       color: Commons.Color.background
       font.family: icon.fonts.family
-      font.pixelSize: icon.fonts.caption
+      font.pixelSize: Math.max(1,icon.fonts.caption*icon.sizeScale)
       font.bold: true
     }
   }
@@ -157,9 +158,11 @@ Ui.BorderSurface {
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     cursorShape: Qt.PointingHandCursor
     property point start
+    property real pressedWidth:0
+    property real pressedHeight:0
     property bool dragging: false
     onContainsMouseChanged: { if (!containsMouse) icon.previewSuppressed=false; icon.hovered(containsMouse && !icon.previewSuppressed) }
-    onPressed: function(mouse) { icon.previewSuppressed=true; icon.pointerPressed(mouse.button); start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
+    onPressed: function(mouse) { pressedWidth=icon.width;pressedHeight=icon.height;icon.previewSuppressed=true; icon.pointerPressed(mouse.button); start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
     onPositionChanged: function(mouse) {
       if (!icon.draggable || !pressed || pressedButtons !== Qt.LeftButton) return
       var dx = mouse.x - start.x, dy = mouse.y - start.y
@@ -168,6 +171,7 @@ Ui.BorderSurface {
     onCanceled: { if (icon.draggable) { icon.dragHeld(false); icon.dragFinished() } }
     onReleased: function(mouse) {
       if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(false)
+      if (pressedWidth!==icon.width || pressedHeight!==icon.height) { if (icon.draggable) icon.dragFinished();return }
       if (dragging) { icon.dragFinished(); return }
       if (mouse.button === Qt.MiddleButton) { if (containsMouse) icon.closeRequested() }
       else if (mouse.button === Qt.RightButton) icon.contextRequested(mouse.x,mouse.y)

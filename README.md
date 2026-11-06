@@ -132,6 +132,7 @@ omarchy-shell window-stash configure hoverPreview live
 | `restoreDestination` | `current` | `current`, `original` |
 | `grouping` | `window` | `window`, `app` (count badge and window chooser) |
 | `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
+| `sizePreset` | `100` | `50`, `75`, `100`, `125`, `150`, `175`, `200`, `250`, `300` percent; icon and dock size across all presentations |
 | `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock only |
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
 | `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`, `jumping`; unfold/fold style, overridden by Reduced/Off |
@@ -154,6 +155,10 @@ omarchy-shell window-stash configure hoverPreview live
 | `minimizeShortcut` | `SUPER + A` | Minimize the focused window; empty disables |
 | `restoreLastShortcut` | `SUPER + Z` | Restore the newest eligible window; empty disables |
 | `restoreOldestShortcut` | empty | Restore the longest-stashed eligible window; empty disables |
+
+Size presets scale the static dock, floating icons and floating dock together.
+The 100% default keeps 44-pixel static icons and 48-pixel floating icons; larger
+sizes cap to fit the output's usable area.
 
 Preview cards follow the Omarchy popup theme and work across all presentations
 and chooser rows. A collapsed stack previews its front window or app group;
@@ -320,6 +325,7 @@ python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-thro
 python3 tests/middle_close.py      # pending icons, grouped close and cancellation
 python3 tests/drag_physics.py      # real flicks, collisions, catching, edges and saved positions
 python3 tests/stack_follow.py      # trailing stack springs, speed presets and unfold handoff
+python3 tests/sizing.py            # size presets, artwork/input, resizing and small-output overflow
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator

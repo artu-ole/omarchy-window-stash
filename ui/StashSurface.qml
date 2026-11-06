@@ -53,12 +53,30 @@ PanelWindow {
   readonly property bool dockFrameVisible: config.dockFrame !== "hidden"
   readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
   readonly property var usableArea: Model.usableArea(canvasWidth, canvasHeight, monitor ? monitor.reserved : [])
+  readonly property real requestedStaticIconSize:Model.iconSize(config.sizePreset,false,usableArea)
+  readonly property real requestedFloatingIconSize:Model.iconSize(config.sizePreset,true,usableArea)
+  property real staticIconSize:44
+  property real floatingIconSize:48
+  readonly property real staticScale:staticIconSize/44
+  readonly property real floatingScale:floatingIconSize/48
+  readonly property real dockGap:Math.max(1,metrics.sm*staticScale)
+  readonly property real dockInset:metrics.xxs*staticScale
+  property bool sizeResizing:false
+  property bool sizingReady:false
+  function updateSizes() {
+    sizeResizing=true
+    shelfWidthAnimation.complete(); shelfHeightAnimation.complete()
+    staticIconSize=requestedStaticIconSize; floatingIconSize=requestedFloatingIconSize
+    Qt.callLater(function() { surface.sizeResizing=false; surface.refreshInputMask() })
+  }
+  onRequestedStaticIconSizeChanged:if(sizingReady) updateSizes()
+  onRequestedFloatingIconSizeChanged:if(sizingReady) updateSizes()
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: config.presentation === "floating"
   readonly property bool floatingDockOpen:floatingDock.open
   readonly property bool previewOpen:windowPreview.opened
   readonly property bool previewsEnabled:(config.hoverPreview || "off")!=="off"
-  readonly property string previewLayoutKey:JSON.stringify([config.presentation,config.scope,config.grouping,config.dockSide,config.floatingDirection])
+  readonly property string previewLayoutKey:JSON.stringify([config.presentation,config.scope,config.grouping,config.dockSide,config.floatingDirection,config.sizePreset])
   onPreviewLayoutKeyChanged:if (windowPreview) windowPreview.dismiss(true)
   function dismissPreview() { windowPreview.dismiss(true) }
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
@@ -113,7 +131,7 @@ PanelWindow {
   }
   property var bubbleDrafts: ({})
   readonly property var bubbleTargets: Model.bubbleLayout(bubblesModel.activeKeys,
-    savedPositions, bubbleDrafts, canvasWidth, canvasHeight, usableArea, snapFloating)
+    savedPositions, bubbleDrafts, canvasWidth, canvasHeight, usableArea, snapFloating,false,floatingIconSize,Math.max(1,metrics.sm*floatingScale))
   StashCollection { id:shelfModel; sourceGroups:surface.config.presentation==="dock" ? surface.groups : []; animations:surface.animations; animationSpeed:surface.animationSpeed }
   StashCollection { id:bubblesModel; sourceGroups:surface.bubbleMode ? surface.groups : []; animations:surface.animations; animationSpeed:surface.animationSpeed }
   onSavedPositionsChanged: {
@@ -364,15 +382,15 @@ PanelWindow {
     readonly property real frameRight: Border.right(frameSpec)
     readonly property real frameTop: Border.top(frameSpec)
     readonly property real frameBottom: Border.bottom(frameSpec)
-    readonly property real crossInset:surface.metrics.xxs + (surface.verticalDock ? Math.min(frameLeft,frameRight) : Math.min(frameTop,frameBottom))
-    readonly property real thickness:44 + surface.metrics.xxs*2 + (surface.verticalDock ? frameLeft+frameRight : frameTop+frameBottom)
+    readonly property real crossInset:surface.dockInset + (surface.verticalDock ? Math.min(frameLeft,frameRight) : Math.min(frameTop,frameBottom))
+    readonly property real thickness:surface.staticIconSize + surface.dockInset*2 + (surface.verticalDock ? frameLeft+frameRight : frameTop+frameBottom)
     readonly property real targetRadius:Model.dockRadius(surface.config.dockCorners,surface.config.dockCornerRadius,Style.cornerRadius,thickness,thickness)
     readonly property real endInset:Model.dockEndInset(targetRadius,crossInset,Math.max(frameLeft,frameRight,frameTop,frameBottom))
     // Retain these insets when the frame is hidden so toggling it keeps positions.
-    readonly property real insetLeft:Math.max(surface.metrics.xxs+frameLeft,surface.verticalDock ? 0 : endInset)
-    readonly property real insetRight:Math.max(surface.metrics.xxs+frameRight,surface.verticalDock ? 0 : endInset)
-    readonly property real insetTop:Math.max(surface.metrics.xxs+frameTop,surface.verticalDock ? endInset : 0)
-    readonly property real insetBottom:Math.max(surface.metrics.xxs+frameBottom,surface.verticalDock ? endInset : 0)
+    readonly property real insetLeft:Math.max(surface.dockInset+frameLeft,surface.verticalDock ? 0 : endInset)
+    readonly property real insetRight:Math.max(surface.dockInset+frameRight,surface.verticalDock ? 0 : endInset)
+    readonly property real insetTop:Math.max(surface.dockInset+frameTop,surface.verticalDock ? endInset : 0)
+    readonly property real insetBottom:Math.max(surface.dockInset+frameBottom,surface.verticalDock ? endInset : 0)
     property real reveal:surface.config.presentation==="dock" && surface.groups.length>0 ? 1 : 0
     visible:shelfModel.count>0 || reveal>0
     enabled:surface.config.presentation==="dock" && surface.groups.length>0
@@ -386,8 +404,8 @@ PanelWindow {
     height: geometry.height
     x:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).x
     y:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).y
-    Behavior on width { NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
-    Behavior on height { NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+    Behavior on width { enabled:!surface.sizeResizing; NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+    Behavior on height { enabled:!surface.sizeResizing; NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
     radius: !surface.dockFrameVisible ? 0 : Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
     onRadiusChanged: surface.refreshInputMask()
     color: surface.dockFrameVisible ? surface.popupColors.background : "transparent"
@@ -417,12 +435,12 @@ PanelWindow {
         }
         Item {
           id: dockRow
-          readonly property real step:44+surface.metrics.sm
+          readonly property real step:surface.staticIconSize+surface.dockGap
           // The final outgoing icons retain their space until their fade ends.
           readonly property int layoutCount:shelfModel.activeKeys.length || shelfModel.count
-          readonly property real length:Model.dockLength(layoutCount,44,surface.metrics.sm)
-          implicitWidth:surface.verticalDock ? 44 : length
-          implicitHeight:surface.verticalDock ? length : 44
+          readonly property real length:Model.dockLength(layoutCount,surface.staticIconSize,surface.dockGap)
+          implicitWidth:surface.verticalDock ? surface.staticIconSize : length
+          implicitHeight:surface.verticalDock ? length : surface.staticIconSize
           width:implicitWidth; height:implicitHeight
           Repeater {
             id: dockIcons
@@ -436,10 +454,15 @@ PanelWindow {
               onLiveIndexChanged:if (liveIndex>=0) lastSlot=liveIndex
               x:surface.verticalDock ? 0 : Math.max(0,liveIndex>=0 ? liveIndex : lastSlot)*dockRow.step
               y:surface.verticalDock ? Math.max(0,liveIndex>=0 ? liveIndex : lastSlot)*dockRow.step : 0
-              Behavior on x { NumberAnimation { duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
-              Behavior on y { NumberAnimation { duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+              Behavior on x { enabled:!surface.sizeResizing; NumberAnimation { id:shelfXAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+              Behavior on y { enabled:!surface.sizeResizing; NumberAnimation { id:shelfYAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+              Connections {
+                target:surface
+                function onSizeResizingChanged() { if (surface.sizeResizing) { shelfXAnimation.complete();shelfYAnimation.complete() } }
+              }
               group:shelfModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
               animations:surface.animations; animationSpeed:surface.animationSpeed
+              sizeScale:surface.staticScale
               idleOpacity:surface.iconIdleOpacity
               onExited:function(frames) { surface.recordExit("dock",groupKey,frames) }
               Component.onCompleted: { surface.createdShelfIcons++; if (liveIndex>=0) lastSlot=liveIndex }
@@ -479,12 +502,32 @@ PanelWindow {
         surface.refreshInputMask()
       }
       bubble: true
+      property real activeSize:48
+      width:activeSize
+      sizeScale:activeSize/48
       frameVisible: surface.config.iconFrame !== "hidden"
       onFrameVisibleChanged: surface.refreshInputMask()
       iconShape: surface.config.iconShape || "auto"
       readonly property bool held:positionHeld
       property bool registered:false
       property bool initialized:false
+      function resizeBody() {
+        if (!initialized || retiring || positionHeld || activeSize===surface.floatingIconSize) return
+        var previous=[x,y]
+        unregisterBody()
+        activeSize=surface.floatingIconSize
+        var at=bubblesModel.activeKeys.indexOf(groupKey)
+        var target=surface.snapFloating && at>=0 ? surface.bubbleTargets[at] : null
+        var point=target || Model.floatingPosition(previous,surface.canvasWidth,surface.canvasHeight,surface.usableArea,
+          surface.snapFloating,width,width)
+        x=point[0]; y=point[1]
+        surface.dragWorld.add(groupKey,x,y,width,height); registered=true
+        var body=surface.dragWorld.body(groupKey)
+        if (body) { x=body.x;y=body.y }
+        updateFrozen(); surface.refreshInputMask()
+      }
+      Timer { id:bubbleSizeUpdate; interval:0; onTriggered:bubbleIcon.resizeBody() }
+      onPositionHeldChanged:if (!positionHeld) bubbleSizeUpdate.restart()
       property string lastSaved:""
       onXChanged: surface.refreshInputMask()
       onYChanged: surface.refreshInputMask()
@@ -496,7 +539,7 @@ PanelWindow {
         if (registered || retiring || !surface.bubbleMode) return
         var at=Math.max(0,bubblesModel.activeKeys.indexOf(groupKey))
         var initial=initialized ? [x,y] : surface.bubbleTargets[at]
-          || Model.bubblePosition(surface.savedPositions[groupKey],at,surface.canvasWidth,surface.canvasHeight,bubblesModel.activeKeys.length)
+          || Model.bubblePosition(surface.savedPositions[groupKey],at,surface.canvasWidth,surface.canvasHeight,bubblesModel.activeKeys.length,width)
         if (!initialized && !surface.savedPositions[groupKey]) {
           var slot=surface.dragWorld.availablePosition(groupKey,initial[0],initial[1],width,height)
           initial=[slot.x,slot.y]
@@ -542,7 +585,7 @@ PanelWindow {
         if (pressed && !surface.stash.groupClosing(group)) surface.dragWorld.press(groupKey)
         else { positionHeld=false;surface.updateBubbleGrab() }
       }
-      onActivated: { if (!surface.stash.groupClosing(group)) { surface.dragWorld.cancel(groupKey,false);surface.stash.selectGroup(group,surface.screen.name) } }
+      onActivated: { if (activeSize!==surface.floatingIconSize) { surface.dragWorld.cancel(groupKey,false);return }; if (!surface.stash.groupClosing(group)) { surface.dragWorld.cancel(groupKey,false);surface.stash.selectGroup(group,surface.screen.name) } }
       onCloseRequested: { surface.dragWorld.cancel(groupKey,false);surface.stash.closeGroup(group,surface.screen.name) }
       onContextRequested:function(x,y) {
         surface.dragWorld.cancel(groupKey,false)
@@ -552,6 +595,7 @@ PanelWindow {
       onDragFinished:if (registered) surface.dragWorld.release(groupKey)
       Component.onCompleted: {
         surface.createdBubbles++
+        activeSize=surface.floatingIconSize
         registerBody();initialized=true
         var next=surface.bubbleRegions.slice();next.push(hitRegion);surface.bubbleRegions=next
       }
@@ -562,6 +606,7 @@ PanelWindow {
       Connections {
         target:surface
         function onSavedPositionsChanged() { bubbleIcon.applySaved() }
+        function onFloatingIconSizeChanged() { bubbleSizeUpdate.restart() }
       }
       Connections {
         target:surface.stash
@@ -756,7 +801,8 @@ PanelWindow {
             id:iconRows
             model:[
               {key: "iconFrame", label: "Icon border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden (larger icons)"], section: "appearance"},
-              {key: "iconShape", label: "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"}
+              {key: "iconShape", label: "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"},
+              {key: "sizePreset", label: "Icon and dock size", values: ["50", "75", "100", "125", "150", "175", "200", "250", "300"], labels: ["50%", "75%", "100% (Default)", "125%", "150%", "175%", "200%", "250%", "300%"], section: "appearance"}
             ]
             delegate:SettingChoice {}
           }
@@ -851,6 +897,7 @@ PanelWindow {
     onInputChanged:surface.refreshInputMask()
   }
   Component.onCompleted: {
+    sizingReady=true;updateSizes()
     var next = stash.surfaces.slice(); next.push(surface); stash.surfaces = next
     modelDelay.restart()
   }

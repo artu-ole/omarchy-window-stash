@@ -85,6 +85,8 @@ Item {
   signal exited(int frames)
   onXChanged:inputChanged()
   onYChanged:inputChanged()
+  onWidthChanged:inputChanged()
+  onHeightChanged:inputChanged()
   onInteractiveChanged:inputChanged()
   onMovingChanged:inputChanged()
   onPoseChanged:if (spatialProgress>0 && spatialProgress<1) { maxBend=Math.max(maxBend,pose.bend); maxTilt=Math.max(maxTilt,Math.abs(pose.tilt)); minScale=Math.min(minScale,pose.scale) }
@@ -124,6 +126,7 @@ Item {
   StashAnimatedIcon {
     id:graphic
     width:actor.width; height:actor.height
+    sizeScale:actor.geometry.size/48
     transform:Scale {
       id:jumpStretch
       origin.x:actor.geometry.horizontal ? graphic.width/2 : actor.geometry.hopSign<0 ? graphic.width : 0

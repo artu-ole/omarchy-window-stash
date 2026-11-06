@@ -28,7 +28,7 @@ function bounded(state,x,y) {
   return {x:clamp(x,area.x,area.x+Math.max(0,area.width-state.size)),
     y:clamp(y,area.y,area.y+Math.max(0,area.height-state.size))}
 }
-function rest(state,ordinal) { return bounded(state,state.x,state.y+Math.min(2,Math.max(0,ordinal))*OFFSET) }
+function rest(state,ordinal) { return bounded(state,state.x,state.y+Math.min(2,Math.max(0,ordinal))*OFFSET*state.size/48) }
 function reset(state) {
   for (var i=0;i<state.followers.length;i++) {
     var target=rest(state,i+1),follower=state.followers[i]
@@ -70,8 +70,8 @@ function axis(position,velocity,start,end,seconds,omega) {
     velocity:targetVelocity+(relativeVelocity-omega*linear*seconds)*decay}
 }
 function limited(state,follower,ordinal,leadX,leadY) {
-  var target=bounded(state,leadX,leadY+ordinal*OFFSET)
-  var dx=follower.x-target.x,dy=follower.y-target.y,maximum=ordinal===1 ? 64 : 96
+  var target=bounded(state,leadX,leadY+ordinal*OFFSET*state.size/48)
+  var dx=follower.x-target.x,dy=follower.y-target.y,maximum=(ordinal===1 ? 64 : 96)*state.size/48
   var distance=Math.hypot(dx,dy)
   if (distance>maximum) {
     var nx=dx/distance,ny=dy/distance
@@ -101,7 +101,7 @@ function step(state,seconds) {
     var afterX=leadX,afterY=leadY
     for (var i=0;i<Math.min(2,state.count-1);i++) {
       var follower=state.followers[i],oldX=follower.x,oldY=follower.y
-      var from=bounded(state,beforeX,beforeY+OFFSET),to=bounded(state,afterX,afterY+OFFSET)
+      var from=bounded(state,beforeX,beforeY+OFFSET*state.size/48),to=bounded(state,afterX,afterY+OFFSET*state.size/48)
       var horizontal=axis(follower.x,follower.vx,from.x,to.x,dt,omega)
       var vertical=axis(follower.y,follower.vy,from.y,to.y,dt,omega)
       follower.x=horizontal.position; follower.y=vertical.position

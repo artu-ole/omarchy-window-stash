@@ -1,5 +1,18 @@
 .pragma library
 
+function sizeScale(preset) {
+  return ["50","75","100","125","150","175","200","250","300"].indexOf(preset)>=0 ? Number(preset)/100 : 1
+}
+
+function iconSize(preset, bubble, area) {
+  var desired=Math.round((bubble ? 48 : 44)*sizeScale(preset))
+  if (!area) return desired
+  if (Math.floor(area.width)<=0 || Math.floor(area.height)<=0) return 0
+  // Leave room for chrome, edge margins and the floating stack's scaled tail.
+  var available=bubble ? Math.min(area.width-32,(area.height-32)/(7/6)) : Math.min(area.width,area.height)-40
+  return Math.max(1,Math.min(desired,Math.floor(available),Math.floor(area.width),Math.floor(area.height)))
+}
+
 function iconRadius(shape, size, bubble, themeRadius) {
   if (shape === "circle") return size / 2
   if (shape === "square") return 0
@@ -29,8 +42,8 @@ function alignedIconSize(frame, desired, scale) {
   return pixels / scale
 }
 
-function artworkSize(frame, desired, radius, shape, inset, scale, frameless) {
-  if (frameless) return alignedIconSize(frame,frame-4,scale)
+function artworkSize(frame, desired, radius, shape, inset, scale, frameless, sizeScale) {
+  if (frameless) return alignedIconSize(frame,frame-4*(sizeScale===undefined ? 1 : sizeScale),scale)
   scale = Math.max(1, Number(scale) || 1)
   var half = Math.max(0, frame / 2 - inset)
   var r = Math.max(0, Math.min(half, radius - inset))
@@ -105,20 +118,25 @@ function monitorKey(monitor) {
   return [monitor.make || "", monitor.model || "", monitor.serial || "", monitor.description || ""].join("|")
 }
 
-function bubblePosition(saved, index, width, height, count) {
-  var rowsPerColumn = Math.max(1, Math.floor((height - 90) / 64))
+function bubblePosition(saved, index, width, height, count, itemSize) {
+  var size=itemSize===undefined ? 48 : itemSize,scale=size/48,step=size+16*scale
+  var rowsPerColumn = Math.max(1, Math.floor((height - 32 - 58*scale) / Math.max(1,step)))
   var column = Math.floor(index / rowsPerColumn)
   var rows = Math.min(rowsPerColumn, Math.max(index + 1, count || 1) - column * rowsPerColumn)
-  var top = (height - 48 - (rows - 1) * 64) / 2
-  var fallback = [width - 68 - 64 * column, top + 64 * (index % rowsPerColumn)]
+  var top = (height - size - (rows - 1) * step) / 2
+  var fallback = [width - size - 20*scale - step * column, top + step * (index % rowsPerColumn)]
   var pos = saved || fallback
-  return [Math.max(8, Math.min(width - 56, pos[0])), Math.max(32, Math.min(height - 56, pos[1]))]
+  var minX=Math.min(8,Math.max(0,width-size)),minY=Math.min(32,Math.max(0,height-size))
+  return [Math.max(minX, Math.min(width-size-8, pos[0])), Math.max(minY, Math.min(height-size-8, pos[1]))]
 }
 
-function floatingAnchor(saved, width, height) {
-  var x = saved ? saved[0] : width - 68
-  var y = saved ? saved[1] : (height - 48) / 2
-  return [Math.max(8, Math.min(width - 56, x)), Math.max(32, Math.min(height - 64, y))]
+function floatingAnchor(saved, width, height, itemSize, itemHeight) {
+  var size=itemSize===undefined ? 48 : itemSize,scale=size/48
+  var bodyHeight=itemHeight===undefined ? size+8*scale : itemHeight
+  var x = saved ? saved[0] : width-size-20*scale
+  var y = saved ? saved[1] : (height-size)/2
+  var minX=Math.min(8,Math.max(0,width-size)),minY=Math.min(32,Math.max(0,height-bodyHeight))
+  return [Math.max(minX, Math.min(width-size-8, x)), Math.max(minY, Math.min(height-Math.max(size+16*scale,bodyHeight+8), y))]
 }
 
 function dockLength(count, size, gap) {
@@ -162,15 +180,20 @@ function edgeTargets(point, area, width, height) {
     })
 }
 
-function floatingPosition(saved, width, height, area, snap, itemHeight) {
-  var point=floatingAnchor(saved,width,height)
-  return snap ? edgeTargets(point,area,48,itemHeight)[0].point : point
+function floatingPosition(saved, width, height, area, snap, itemHeight, itemSize) {
+  var size=itemSize===undefined ? 48 : itemSize
+  var point=itemSize===undefined ? floatingAnchor(saved,width,height) : floatingAnchor(saved,width,height,size,itemHeight)
+  if (snap) return edgeTargets(point,area,size,itemHeight)[0].point
+  return itemSize===undefined ? point : [Math.max(area.x,Math.min(area.x+Math.max(0,area.width-size),point[0])),
+    Math.max(area.y,Math.min(area.y+Math.max(0,area.height-itemHeight),point[1]))]
 }
 
-function bubbleLayout(keys, saved, drafts, width, height, area, snap, compact) {
-  var placed=[], size=48, gap=4, crowded=false
+function bubbleLayout(keys, saved, drafts, width, height, area, snap, compact, itemSize, itemGap) {
+  var placed=[], size=itemSize===undefined ? 48 : itemSize, gap=itemGap===undefined ? 4 : itemGap, crowded=false
   keys.forEach(function(key,index) {
-    var point=bubblePosition(drafts[key] || saved[key],index,width,height,keys.length)
+    var point=bubblePosition(drafts[key] || saved[key],index,width,height,keys.length,size)
+    if (itemSize!==undefined) point=[Math.max(area.x,Math.min(area.x+Math.max(0,area.width-size),point[0])),
+      Math.max(area.y,Math.min(area.y+Math.max(0,area.height-size),point[1]))]
     if (!snap) { placed.push(point); return }
     var edges=edgeTargets(point,area,size,size), chosen=null
     for (var i=0;i<edges.length && !chosen;i++) {
@@ -196,7 +219,7 @@ function bubbleLayout(keys, saved, drafts, width, height, area, snap, compact) {
   })
   // Repack fragmented gaps before treating a perimeter as full. With more
   // icons than fit on every edge, retain all icons at their nearest edge.
-  if (crowded && !compact) return bubbleLayout(keys,saved,drafts,width,height,area,snap,true)
+  if (crowded && !compact) return bubbleLayout(keys,saved,drafts,width,height,area,snap,true,itemSize,itemGap)
   return placed
 }
 
@@ -256,9 +279,9 @@ function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, 
   var hopSign=curveSign
   var hopRoom=hopSign<0 ? crossBefore : crossAfter
   return {x:anchor ? x : Math.round(x),y:anchor ? y : Math.round(y),horizontal:horizontal,sign:sign,forward:sign>0,
-    capacity:capacity,step:step,size:size,span:dockLength(capacity,size,gap),
-    curveSign:curveSign,curveLimit:Math.max(0,Math.min(18,curveRoom-inset)),
-    hopSign:hopSign,hopLimit:Math.max(0,Math.min(28,hopRoom-inset))}
+    capacity:capacity,step:step,size:size,tailStep:4*size/48,span:dockLength(capacity,size,gap),
+    curveSign:curveSign,curveLimit:Math.max(0,Math.min(18*size/48,curveRoom-inset)),
+    hopSign:hopSign,hopLimit:Math.max(0,Math.min(28*size/48,hopRoom-inset))}
 }
 
 function fanSlot(layout, index, first) {
@@ -321,7 +344,7 @@ function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area, style) {
     shrink=style==="glide" ? 0 : style==="spring" ? .02 : style==="cascade" ? .012 : .008
     tilt=style==="swing" ? phase*layout.curveSign : 0
   }
-  var bend=phase*Math.min(layout.curveLimit,amplitude)
+  var bend=phase*Math.min(layout.curveLimit,amplitude*layout.size/48)
   // Keep rotated corners within the same square input/work-area envelope.
   var radians=tilt*Math.PI/180,fit=1/(Math.abs(Math.cos(radians))+Math.abs(Math.sin(radians)))
   return {x:fixed ? sx : Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*progress+(layout.horizontal ? 0 : bend*layout.curveSign))),
@@ -346,8 +369,9 @@ function fanChainPose(sx, sy, tx, ty, progress, ordinal, layout, area, style, fi
   // reflows slots; even a new front icon must follow that animation.
   if (p===1) { result.x=tx; result.y=ty; return result }
   if (ordinal===0) { result.scale=1-.008*phase; return result }
-  if (p===0) { result.slot=0; result.groupOffset=Math.min(ordinal,2)*4; return result }
-  var originalOffset=Math.min(Math.max(0,ordinal),2)*4
+  var tailStep=layout.tailStep===undefined ? 4*layout.size/48 : layout.tailStep
+  if (p===0) { result.slot=0; result.groupOffset=Math.min(ordinal,2)*tailStep; return result }
+  var originalOffset=Math.min(Math.max(0,ordinal),2)*tailStep
   var anchorY=sy-originalOffset
   if (!hops) {
     var single=p*p*(3-2*p)
@@ -357,13 +381,13 @@ function fanChainPose(sx, sy, tx, ty, progress, ordinal, layout, area, style, fi
   }
   // A fan closed from another page still ends at the original preview stack.
   // Peel off its global preview offset during the first shared hop.
-  var pageOffset=Math.min(slot,2)*4
+  var pageOffset=Math.min(slot,2)*tailStep
   var pageCorrection=stage===0 ? (originalOffset-pageOffset)*(1-ease) : 0
   if (slot<=stage) {
     result.x=tx; result.y=ty+pageCorrection; result.groupOffset=pageCorrection
     return result
   }
-  var before=Math.min(slot-stage,2)*4,after=Math.min(slot-stage-1,2)*4
+  var before=Math.min(slot-stage,2)*tailStep,after=Math.min(slot-stage-1,2)*tailStep
   var tail=before+(after-before)*ease+pageCorrection
   var distance=(stage+ease)*layout.sign*layout.step
   var x=sx+(layout.horizontal ? distance : 0)
@@ -371,7 +395,7 @@ function fanChainPose(sx, sy, tx, ty, progress, ordinal, layout, area, style, fi
   var bend=0
   if (style==="matryoshka-hop") {
     var sign=layout.hopSign===1 || layout.hopSign===-1 ? layout.hopSign : layout.curveSign
-    var limit=layout.hopLimit===undefined ? Math.min(28,layout.curveLimit) : layout.hopLimit
+    var limit=layout.hopLimit===undefined ? Math.min(28*layout.size/48,layout.curveLimit) : layout.hopLimit
     bend=u>0 && u<1 ? Math.sin(Math.PI*u)*limit : 0
     // The whole remainder uses one safe cross-axis excursion, preserving its
     // layered silhouette rather than clamping individual icons differently.

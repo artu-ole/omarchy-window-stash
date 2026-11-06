@@ -46,8 +46,8 @@ Item {
   function pose(ordinal) {
     var index=Math.max(0,Math.min(2,ordinal))
     if (index===0) return {x:leadX,y:leadY}
-    if (!tracking && !active) return {x:leadX,y:leadY+index*4}
-    return positions[index] || {x:leadX,y:leadY+index*4}
+    if (!tracking && !active) return {x:leadX,y:leadY+index*4*size/48}
+    return positions[index] || {x:leadX,y:leadY+index*4*size/48}
   }
   function details() {
     return {active:active,tracking:tracking,eligible:eligible,driving:driving,speed:animationSpeed,frames:frames,

@@ -38,8 +38,8 @@ Item {
   property var pendingPosition:null
   property real anchorX:0
   property real anchorY:0
-  property real pivotX:anchorX+24
-  property real pivotY:anchorY+24
+  property real pivotX:anchorX+tileSize/2
+  property real pivotY:anchorY+tileSize/2
   property int fanSign:0
   property int fanCurve:0
   property int firstIndex:0
@@ -74,13 +74,17 @@ Item {
   readonly property var metrics:Style.spacing
   readonly property var panelBorder:Border.surfaceSpec("popups","border",popupColors.border,Style.normalBorderWidth)
   readonly property real borderWidth:Math.max(Border.left(panelBorder),Border.right(panelBorder),Border.top(panelBorder),Border.bottom(panelBorder))
-  readonly property real gap:metrics.sm
-  readonly property real tileSize:48
-  readonly property real inset:metrics.xxs+borderWidth
+  readonly property real requestedTileSize:Model.iconSize(config.sizePreset,true,usableArea)
+  property real tileSize:48
+  property bool sizePending:false
+  readonly property real tileScale:tileSize/48
+  readonly property real tailStep:4*tileScale
+  readonly property real gap:Math.max(1,Math.round(metrics.sm*tileScale))
+  readonly property real inset:metrics.xxs*tileScale+borderWidth
   readonly property real targetRadius:Model.dockRadius(config.dockCorners,config.dockCornerRadius,Style.cornerRadius,tileSize+inset*2,tileSize+inset*2)
   readonly property real endInset:Math.max(inset,Model.dockEndInset(targetRadius,inset,borderWidth))
   readonly property int groupCount:presentationKeys.length
-  readonly property int tail:Math.max(0,Math.min(3,groupCount)-1)*4
+  readonly property real tail:Math.max(0,Math.min(3,groupCount)-1)*tailStep
   property real stackTail:tail
   property real handleOpacity:active ? 1 : 0
   property real reveal:open ? 1 : 0
@@ -182,7 +186,7 @@ Item {
       if (key!==dock.bodyKey) return
       dock.followingDrive=isHeld || moving
       dock.held=isHeld; dock.bodyMoving=moving
-      if (!isHeld && !moving && !dock.motionFrozen && dock.placementPending) positionUpdate.restart()
+      if (!isHeld && (dock.sizePending || (!moving && !dock.motionFrozen && dock.placementPending))) positionUpdate.restart()
     }
     function onSettled(key,x,y) {
       if (key!==dock.bodyKey || !dock.active) return
@@ -277,18 +281,44 @@ Item {
     if (!open && !actorsMoving && reveal===0) {
       horizontal=requestedHorizontal; activeAnimation=requestedAnimation; fanSign=0; fanCurve=0; firstIndex=0; pendingPage=-1
       freezeUpdate.restart()
-      if (placementPending) positionUpdate.restart()
+      if (placementPending || sizePending) positionUpdate.restart()
     }
   }
+  // A running fan retains its tile geometry until folding finishes. A held
+  // pointer retains its grab until release; rebuilding then discards momentum
+  // and re-clamps even a frozen body before exposing the new-sized hit regions.
+  function applyRequestedSize() {
+    if (!sizePending) return true
+    if (!motionReady || open || reveal>0 || hasMovingActors() || chainAnimation.running || held || drag.pressed) return false
+    var origin=[anchorX,anchorY]
+    sizePending=false
+    dragWorld.remove(bodyKey)
+    tileSize=requestedTileSize
+    tailAnimation.complete()
+    stackFollow.reset()
+    if (active && tileSize>0) {
+      var point=Model.floatingPosition(origin,width,height,usableArea,snapEdges,tileSize+tail,tileSize)
+      pendingPosition=point
+      dragWorld.add(bodyKey,point[0],point[1],tileSize,tileSize+tail)
+      if (monitor && (!savedPosition || Math.abs(savedPosition[0]-point[0])>.5 || Math.abs(savedPosition[1]-point[1])>.5))
+        stash.recordPosition(monitor,bodyKey,point[0],point[1])
+    }
+    followingDrive=false; held=false; bodyMoving=false
+    placementPending=false
+    freezeUpdate.restart(); inputChanged()
+    return true
+  }
+  function positionUpdateForSize() { if (sizePending) positionUpdate.restart() }
   function place() {
     if (!motionReady || !dragWorld) { placementPending=true; return }
-    if (!active) { dragWorld.remove(bodyKey); return }
+    if (sizePending && !applyRequestedSize()) { placementPending=true; return }
+    if (!active || tileSize<=0) { dragWorld.remove(bodyKey); return }
     var body=dragWorld.body(bodyKey)
     if (body && (body.width!==tileSize || body.height!==tileSize+tail))
       dragWorld.sync(bodyKey,body.x,body.y,tileSize,tileSize+tail)
     if (body && (body.held || body.moving || body.frozen)) { placementPending=true; return }
     placementPending=false
-    var point=Model.floatingPosition(pendingPosition || savedPosition,width,height,usableArea,snapEdges,tileSize+tail)
+    var point=Model.floatingPosition(pendingPosition || savedPosition,width,height,usableArea,snapEdges,tileSize+tail,tileSize)
     if (!body) dragWorld.add(bodyKey,point[0],point[1],tileSize,tileSize+tail)
     else dragWorld.sync(bodyKey,point[0],point[1],tileSize,tileSize+tail)
     freezeUpdate.restart()
@@ -321,6 +351,7 @@ Item {
     icons.sort(function(a,b) { return presentationKeys.indexOf(a.key)-presentationKeys.indexOf(b.key) })
     var front=frontActor()
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",style:activeAnimation,animating:animating,progress:reveal,
+      size:{preset:String(config.sizePreset || "100"),requested:requestedTileSize,active:tileSize,pending:sizePending,tailStep:tailStep,gap:gap},
       createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
       chain:{progress:chainProgress,count:chainCount,moving:chainAnimation.running,stage:Math.min(Math.max(0,chainCount-1),Math.floor(chainProgress*Math.max(0,chainCount-1)))},
       dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
@@ -351,6 +382,7 @@ Item {
     if (pendingPosition && JSON.stringify(pendingPosition)===JSON.stringify(savedPosition)) pendingPosition=null
     schedulePlacement(false)
   }
+  onRequestedTileSizeChanged: { sizePending=requestedTileSize!==tileSize; if (sizePending) { if (preview) preview.dismiss(true); schedulePlacement(true) } }
   onSnapEdgesChanged:schedulePlacement(true)
   onAreaKeyChanged:schedulePlacement(true)
   onTailChanged:schedulePlacement(false)
@@ -381,7 +413,7 @@ Item {
     } else closingFrames=0
   }
   Timer { id:grabDelay; interval:100; onTriggered:dock.grabReady=dock.open }
-  Component.onCompleted: { horizontal=requestedHorizontal; motionReady=true; schedulePlacement(false) }
+  Component.onCompleted: { horizontal=requestedHorizontal; tileSize=requestedTileSize; sizePending=false; motionReady=true; schedulePlacement(false) }
   Component.onDestruction:if (dragWorld) dragWorld.remove(bodyKey)
   Connections {
     target:Hyprland
@@ -393,10 +425,10 @@ Item {
   }
 
   readonly property var inputRegions:!active ? [] : open ? actorRegions.concat([panelRegion]) : stackFollow.active ? [frontRegion] : [frontRegion,middleRegion,backRegion]
-  StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:48; iconShape:dock.config.iconFrame==="hidden" ? "square" : dock.config.iconShape || "auto"
-    cornerRadius:dock.config.iconFrame==="hidden" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",48,true,Style.cornerRadius) }
-  StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(4,dock.stackTail); size:dock.stackTail>0 ? 48 : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
-  StashIconRegion { id:backRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(8,dock.stackTail); size:dock.stackTail>4 ? 48 : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
+  StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:dock.tileSize; iconShape:dock.config.iconFrame==="hidden" ? "square" : dock.config.iconShape || "auto"
+    cornerRadius:dock.config.iconFrame==="hidden" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",dock.tileSize,true,Style.cornerRadius) }
+  StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(dock.tailStep,dock.stackTail); size:dock.stackTail>0 ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
+  StashIconRegion { id:backRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(2*dock.tailStep,dock.stackTail); size:dock.stackTail>dock.tailStep ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
   Region { id:panelRegion; item:panel; radius:panel.radius }
   StashDockSurface {
     id:panel
@@ -455,7 +487,7 @@ Item {
       readonly property var slot:Model.fanSlot(dock.geometry,ordinal,dock.firstIndex)
       destinationX:slot.x; destinationY:slot.y
       slotVisible:slot.shown
-      stackX:dock.anchorX; stackY:dock.anchorY+Math.min(ordinal,2)*4
+      stackX:dock.anchorX; stackY:dock.anchorY+Math.min(ordinal,2)*dock.tailStep
       readonly property var follower:stackFollow.pose(ordinal)
       stackLagX:follower.x-stackX; stackLagY:follower.y-stackY
       stackSettling:ordinal>0 && stackFollow.active && lagWeight>0
@@ -483,7 +515,7 @@ Item {
       onPointerPressed:if (dock.preview) dock.preview.dismiss(true)
       onInputChanged: { dock.inputChanged(); motionUpdate.restart() }
       onExited:function(frames) { dock.iconExited(groupKey,frames) }
-      property Region hitRegion:StashIconRegion { originX:actor.x; originY:actor.y; size:actor.interactive ? 48 : 0; iconShape:actor.icon.inputShape; cornerRadius:actor.icon.hitRadius }
+      property Region hitRegion:StashIconRegion { originX:actor.x; originY:actor.y; size:actor.interactive ? dock.tileSize : 0; iconShape:actor.icon.inputShape; cornerRadius:actor.icon.hitRadius }
       Component.onCompleted: { dock.createdIcons++; var next=dock.actorRegions.slice(); next.push(hitRegion); dock.actorRegions=next }
       Component.onDestruction:dock.actorRegions=dock.actorRegions.filter(function(region) { return region!==hitRegion })
     }
@@ -492,7 +524,7 @@ Item {
     id:handle
     readonly property var group:dock.groups[0] || null
     z:20000
-    x:dock.anchorX; y:dock.anchorY; width:48; height:stackFollow.active ? 48 : 48+dock.stackTail
+    x:dock.anchorX; y:dock.anchorY; width:dock.tileSize; height:stackFollow.active ? dock.tileSize : dock.tileSize+dock.stackTail
     enabled:dock.active && !dock.open
     readonly property bool previewReady:enabled && !dock.animating && !dock.held && !dock.bodyMoving && !drag.pressed
     onPreviewReadyChanged:if (stackHover.hovered && dock.preview) dock.preview.request(dock.groups[0],handle,previewReady,"floating",null)
@@ -518,13 +550,21 @@ Item {
         var dx=mouse.x-start.x,dy=mouse.y-start.y
         if (dragging || Math.abs(dx)+Math.abs(dy)>6) {
           dragging=true
-          var point=Model.floatingAnchor([dock.anchorX+dx,dock.anchorY+dy],dock.width,dock.height)
+          var point=Model.floatingAnchor([dock.anchorX+dx,dock.anchorY+dy],dock.width,dock.height,dock.tileSize,dock.tileSize+dock.tail)
           dock.dragWorld.drag(dock.bodyKey,point[0],point[1])
         }
       }
       function finishDrag() { dock.dragWorld.release(dock.bodyKey) }
-      onCanceled:if (dock.held) finishDrag()
+      onCanceled: {
+        if (dock.sizePending) { dock.dragWorld.cancel(dock.bodyKey,false); Qt.callLater(function() { dock.positionUpdateForSize() }) }
+        else if (dock.held) finishDrag()
+      }
       onReleased:function(mouse) {
+        if (dock.sizePending) {
+          dock.dragWorld.cancel(dock.bodyKey,false)
+          Qt.callLater(function() { dock.positionUpdateForSize() })
+          return
+        }
         if (dragging) { finishDrag(); return }
         if (mouse.button===Qt.LeftButton && dock.stash.groupClosing(dock.groups[0])) return
         dock.dragWorld.cancel(dock.bodyKey,false)
