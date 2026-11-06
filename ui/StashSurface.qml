@@ -52,6 +52,7 @@ PanelWindow {
   readonly property var usableArea: Model.usableArea(canvasWidth, canvasHeight, monitor ? monitor.reserved : [])
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: config.presentation === "floating"
+  readonly property bool floatingDockOpen:floatingDock.open
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})

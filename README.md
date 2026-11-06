@@ -16,9 +16,13 @@ Click the floating stack to fan out the same icons beneath the pointer. The
 newest window is immediately under the cursor; older icons follow the configured
 axis toward available screen space. Full animations use curved, staggered motion
 and a restrained settling curve. Dismissal folds the icons back to their saved
-stack position. Outside clicks reach the underlying window; focus or workspace
+stack position. Leaving the fan starts an 800 ms grace period; returning cancels
+it. Outside clicks fold it immediately and reach the underlying window. Workspace
 changes also collapse the fan. Scroll or drag along the fan to reach overflow;
 arrow keys follow its physical direction. Reduced uses fades; Off is immediate.
+Outside-click detection uses non-consuming runtime mouse bindings while a fan is
+open. They are disabled on close/removal and reused until the next Hyprland config
+reload; existing mouse bindings are preserved.
 
 Uses Omarchy's theme and shared controls. Configure grouping, visibility, icon
 shapes, frames, corners, placement, and motion. Empty stashes occupy no screen

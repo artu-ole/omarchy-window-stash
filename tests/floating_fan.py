@@ -14,6 +14,7 @@ from stash import Stash,atomic_json,read_json,monitor_identity
 @desktop_test('Cursor-first floating fan test')
 def main():
     original=h.read('activewindow');original_ws=h.read('activeworkspace')['id']
+    originalBinds=[b for b in h.read('binds') if b.get('description')!='Window Stash click observer']
     snapshot=command('list');settings=dict(snapshot['settings']);baseline={w['id'] for w in snapshot['windows']}
     positions=snapshot['positions'];monitor=next(m for m in h.read('monitors') if m['focused'])
     processes=[];addresses=[];output=None;changed=set();pointer=Pointer();workspace=1000000+os.getpid()*10
@@ -105,13 +106,48 @@ def main():
         under=spawn();target='address:'+under
         h.dispatch('window.float',window=target,action='on');h.dispatch('window.resize',window=target,x=640,y=420,relative=False)
         h.dispatch('window.move',window=target,x=monitor['x']+100,y=monitor['y']+100,relative=False)
-        d=expand();pointer.click(*point(250,220))
-        settle(False)
-        wait(lambda:h.client(under)['title'].endswith(' clicked'),'Outside click was swallowed')
-        expand();h.dispatch('focus',window=target);settle(False)
+        for direction in ('horizontal','vertical'):
+            configure('floatingDirection',direction)
+            d=expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not arm')
+            pointer.move(*point(250,220))
+            wait(lambda:dock()['dismissal']['pending'],'Leaving did not arm timeout')
+            time.sleep(.15)
+            assert dock()['expanded'],'Pointer movement collapsed fan before grace period'
+            r=dock()['icons'][0];pointer.move(*point(r['x']+24,r['y']+24))
+            wait(lambda:not dock()['dismissal']['pending'],'Re-entry did not cancel timeout')
+            time.sleep(.9);assert dock()['expanded'],'Cancelled leave timer still closed the fan'
+            left=time.monotonic();pointer.move(*point(250,220))
+            wait(lambda:not dock()['expanded'],'Leave timeout did not close fan',timeout=2)
+            assert .6<time.monotonic()-left<2,'Incorrect leave grace duration'
+            settle(False)
+            expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not rearm')
+            pointer.move(*point(250,220));time.sleep(.15)
+            assert dock()['expanded'],'Focus follows mouse bypassed timeout'
+            beforeClick=shell('status')['clickObserverCount']
+            clicked=time.monotonic();pointer.button(True);time.sleep(.02);pointer.button(False)
+            try:wait(lambda:not dock()['expanded'],'Outside click did not collapse fan immediately',timeout=.5)
+            except AssertionError:
+                print('Click observer diagnostics:',beforeClick,shell('status')['clickObserverCount'],json.dumps(dock()),flush=True)
+                raise
+            assert time.monotonic()-clicked<.5 and dock()['lastDismissal']=='outside-click'
+            wait(lambda:h.client(under)['title'].endswith(' clicked'),'Outside click was swallowed')
+            settle(False)
+            # Clicking unused desktop space must also bypass the delay.
+            expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not rearm')
+            pointer.click(*point(1000,220))
+            wait(lambda:not dock()['expanded'],'Desktop click did not close fan',timeout=.5)
+            assert dock()['lastDismissal']=='outside-click'
+            settle(False)
+            expand();wait(lambda:shell('status')['clickObserverActive'],'Click observer did not rearm')
+            p=dock()['panel'];assert p['radius']>4
+            pointer.click(*point(p['x']+1,p['y']+1))
+            wait(lambda:not dock()['expanded'],'Transparent corner click did not close fan',timeout=.5)
+            assert dock()['lastDismissal']=='outside-click'
+            settle(False)
+        print('PASS 800 ms leave grace, re-entry cancellation, immediate app/desktop outside clicks and click-through in both orientations',flush=True)
         expand();h.dispatch('focus',workspace=str(workspace+1));wait(lambda:not dock()['expanded'],'Workspace interaction did not close fan')
         h.dispatch('focus',workspace=str(workspace));settle(False)
-        print('PASS newest restore, spatial keyboard selection, one-click outside interaction, external focus and workspace dismissal',flush=True)
+        print('PASS newest restore, spatial keyboard selection, one-click outside interaction and workspace dismissal',flush=True)
 
         subprocess.run(['omarchy','restart','shell'],check=True)
         deadline=time.monotonic()+15
@@ -172,6 +208,8 @@ def main():
         h.dispatch('focus',workspace=str(original_ws))
         if original.get('address') and h.client(original['address']):h.dispatch('focus',window='address:'+original['address'])
         pointer.close();assert {r['id'] for r in command('list')['windows']}==baseline
+        wait(lambda:not shell('status')['clickObserverActive'],'Click observer stayed active after cleanup')
+        assert [b for b in h.read('binds') if b.get('description')!='Window Stash click observer']==originalBinds,'Existing mouse/key bindings changed'
 
 
 if __name__=='__main__':main()

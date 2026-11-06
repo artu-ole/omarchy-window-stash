@@ -24,6 +24,13 @@ Item {
   property string dialogDestination: ""
   property var surfaces: []
 
+  signal pointerClicked(real x,real y)
+  StashClickObserver {
+    id:clickObserver
+    watching:root.surfaces.some(function(s) { return s.floatingDockOpen })
+    onClicked:function(x,y) { root.pointerClicked(x,y) }
+  }
+
   function refresh() { refreshDelay.restart() }
   function enqueue(args) {
     var next = queue.slice()
@@ -171,6 +178,7 @@ Item {
     target: "window-stash"
     function status(): string {
       return JSON.stringify({loaded: true, windows: root.snapshot.windows.length, settings: root.snapshot.settings,
+        clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,
         screens: root.snapshot.monitors.map(function(m) { return m.name }), dialog: root.dialogKind, error: root.lastError,
         queueLength: root.queue.length, controllerBusy: worker.running,
         surfaces: root.surfaces.map(function(s) { return s.details() })})

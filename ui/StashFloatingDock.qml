@@ -80,7 +80,27 @@ Item {
   signal iconExited(string key,int frames)
   visible:present
   focus:open
-  HoverHandler { id:fanHover }
+  HoverHandler { id:fanHover; onHoveredChanged:dock.updateLeaveTimer() }
+  readonly property int leaveTimeout:800
+  function updateLeaveTimer() {
+    if (!open || fanHover.hovered || pan.active) leaveDelay.stop()
+    else if (!leaveDelay.running) leaveDelay.start()
+  }
+  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !fanHover.hovered && !pan.active) dock.close("pointer-leave") }
+  Connections {
+    target:dock.stash
+    function onPointerClicked(x,y) {
+      if (!dock.open || !dock.monitor) return
+      var px=x-dock.monitor.x,py=y-dock.monitor.y
+      if (!dock.panelContains(px,py)) dock.close("outside-click")
+    }
+  }
+  function panelContains(x,y) {
+    var px=x-panel.x,py=y-panel.y,r=panel.radius
+    if (px<0 || py<0 || px>panel.width || py>panel.height) return false
+    var dx=Math.max(r-px,0,px-panel.width+r),dy=Math.max(r-py,0,py-panel.height+r)
+    return dx*dx+dy*dy<=r*r
+  }
   Keys.onEscapePressed:close("escape")
   Keys.onReturnPressed:if (open && currentIndex>=0) activate(iconModel.dataByKey[selectedKey])
   // Navigation follows the physical direction of the fan.
@@ -134,7 +154,7 @@ Item {
     if (index<firstIndex) firstIndex=index
     else if (index>=firstIndex+geometry.capacity) firstIndex=Math.min(maxFirst,index-geometry.capacity+1)
   }
-  function navigate(delta) { if (open) selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))) }
+  function navigate(delta) { if (open) { selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))); if (!fanHover.hovered) leaveDelay.restart() } }
   function setFirst(index) {
     firstIndex=Math.max(0,Math.min(maxFirst,index))
     if (currentIndex<firstIndex || currentIndex>=firstIndex+geometry.capacity) selectedKey=iconModel.activeKeys[firstIndex] || ""
@@ -148,7 +168,7 @@ Item {
     fanSign=geometry.sign; fanCurve=geometry.curveSign
     expanded=true
   }
-  function close(reason) { if (expanded) lastDismissal=reason || "dismiss"; expanded=false }
+  function close(reason) { leaveDelay.stop(); if (expanded) lastDismissal=reason || "dismiss"; expanded=false }
   function finishClose() {
     if (!open && !actorsMoving && reveal===0) {
       horizontal=requestedHorizontal; fanSign=0; fanCurve=0; firstIndex=0
@@ -185,6 +205,7 @@ Item {
     var front=frontActor()
     return {active:active,expanded:open,orientation:horizontal ? "horizontal" : "vertical",animating:animating,progress:reveal,
       createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
+      dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
       animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:snapXAnimation.running || snapYAnimation.running,windows:windows.length,groups:groups.length,
       handle:{held:held,x:anchorX,y:anchorY,width:tileSize,height:tileSize+stackTail,opacity:handleOpacity,appearance:front ? front.icon.appearance() : null},
@@ -196,7 +217,7 @@ Item {
   onAnchorXChanged:inputChanged()
   onAnchorYChanged:inputChanged()
   onStackTailChanged:inputChanged()
-  onWindowActiveChanged:if (open && grabReady && !windowActive) close("focus")
+  onWindowActiveChanged:if (open && grabReady && !windowActive) updateLeaveTimer()
   Timer { id:motionUpdate; interval:0; onTriggered: { dock.actorsMoving=dock.hasMovingActors(); dock.finishClose() } }
   onSavedPositionChanged: {
     if (pendingPosition && JSON.stringify(pendingPosition)===JSON.stringify(savedPosition)) pendingPosition=null
@@ -220,7 +241,7 @@ Item {
     motionUpdate.restart()
   }
   onOpenChanged: {
-    inputChanged(); grabReady=false
+    inputChanged(); grabReady=false; updateLeaveTimer()
     if (open) {
       openingFrames=0; grabDelay.restart()
       Qt.callLater(function() { if (dock.open) dock.forceActiveFocus() })
@@ -232,8 +253,8 @@ Item {
     target:Hyprland
     function onRawEvent(event) {
       if (!dock.open || !event) return
-      if ((event.name==="activewindowv2" && String(event.data || "").length>0)
-          || event.name==="focusedmon" || event.name==="workspace" || event.name==="workspacev2") dock.close(event.name)
+      if (event.name==="workspace" || event.name==="workspacev2") dock.close(event.name)
+      else if (event.name==="activewindowv2" || event.name==="focusedmon") dock.updateLeaveTimer()
     }
   }
 
@@ -275,7 +296,7 @@ Item {
     target:null
     acceptedButtons:Qt.LeftButton
     property int beganAt:0
-    onActiveChanged:if (active) beganAt=dock.firstIndex
+    onActiveChanged: { if (active) beganAt=dock.firstIndex; dock.updateLeaveTimer() }
     onActiveTranslationChanged:if (active) {
       var delta=dock.horizontal ? activeTranslation.x : activeTranslation.y
       dock.setFirst(beganAt-Math.round(delta/(dock.geometry.step*dock.geometry.sign)))
