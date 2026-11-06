@@ -6,8 +6,9 @@ Window minimization for tiling layouts in Omarchy/Hyprland. Stash live windows a
 restore them to their original or current workspace. Floating windows retain size
 and position; tiled windows rejoin the layout with saved width in scrolling layouts.
 
-A QML frontend inside Omarchy's shell and a standard-library Python controller.
-No compiled compositor plugin or separate daemon. Defaults: floating dock, edge
+A QML frontend inside Omarchy's shell and a standard-library Python controller,
+with optional native support for live previews of suspended applications.
+Defaults: floating dock, edge
 gravity, transparent dock background, frameless icons, Normal animation speed.
 
 | Presentation | Behavior |
@@ -21,8 +22,7 @@ and per-window or per-app grouping. An empty stash takes no screen space or inpu
 
 ## Install, update, remove
 
-Tested stack: Omarchy 4.0.6-1, Hyprland 0.56.2-4 (Lua API), Quickshell 0.3.2.r7,
-Qt 6.12.0 and Python 3.14.8. The shell must provide `qs.Commons`, `qs.Ui`,
+Works on Omarchy 4 and 4.5. The shell must provide `qs.Commons`, `qs.Ui`,
 `Quickshell.Widgets`, `QtQuick.Effects` and `Quickshell.Wayland`.
 Have `omarchy`, `omarchy-shell`, `hyprctl`, `~/.config/hypr/bindings.lua` and
 `~/.config/omarchy/shell.json` available. Run as your normal desktop user:
@@ -45,6 +45,9 @@ reloads Hyprland while preserving runtime monitor geometry, and rescans plugins.
 It uses no root privileges or packaged-file edits. `community.window-switcher`, if
 present, is patched for restoration; incompatible anchors abort installation.
 Tested with switcher 1.0.0.
+
+Window Stash uses its own hidden workspace. Updating migrates only verified
+plugin-owned legacy entries; other minimized windows stay untouched.
 
 Update with `git pull`, rerun the helper, then `omarchy restart shell`. Existing
 preferences persist. Remove from the checkout:
@@ -129,6 +132,7 @@ omarchy-shell window-stash configure hoverPreview live
 | `animations` | `full` | `full`: spatial motion and feedback; `reduced`: fades/color without movement or scaling; `off`: immediate |
 | `animationSpeed` | `normal` | `slow` (0.5×), `relaxed` (0.75×), `normal` (1×), `fast` (1.5×), `ultrafast` (2.5×) |
 | `hoverPreview` | `off` | `off`, `still`, `live` |
+| `livePreviewCompatibility` | `standard` | `standard`: capture supplied frames; `enhanced`: keep previewed suspended apps drawing with the optional native bridge |
 | `previewSize` | `medium` | `small`, `medium`, `large`; maximum image widths 200/280/380 logical px, reduced to fit |
 | `previewPlacement` | `auto` | `auto`, `above`, `below`, `left`, `right`; flips/shrinks when space is limited |
 | `previewTitles` | `shown` | `shown`, `hidden`; title strips include a per-window × close button |
@@ -173,11 +177,21 @@ Grabbing, menus or unfolding stop momentum; Direct and Reduced/Off keep a rigid
 stack. Motion remains in the usable work area; only resting positions persist.
 
 Still previews capture once when a thumbnail becomes visible; Live refreshes
-visible thumbnails when the application supplies new frames. Some applications
-stop drawing on hidden workspaces. Ghostty 1.4.0 on Hyprland 0.56.2 pauses its
-renderer when the compositor marks the window suspended, so terminal previews
-(including btop) remain still. Enabling `render_unfocused` for that window
-does not override suspension. This remains a known limitation.
+visible thumbnails when the application supplies new frames. Standard mode can
+freeze when an application stops drawing on hidden workspaces.
+
+For suspended applications such as Ghostty, select **Live** and **Enhanced** in
+Settings → Previews. This builds and loads a small local Hyprland bridge on
+first use. It requires an x86-64 system, a C++26 compiler, `pkg-config` and
+development headers matching the running Hyprland build. Missing or incompatible
+build support leaves standard previews available and reports the error in Settings.
+No global rendering settings or application profiles are changed.
+
+Enhanced mode resumes only verified stash windows with visible live thumbnails,
+at up to 15 FPS. Closing a preview, switching modes, or unloading the bridge
+releases its rendering lease; expired helpers lose their lease within 2.5 seconds.
+An application's own background-content throttling can still limit updates.
+See [native/README.md](native/README.md) for the bridge API and build details.
 
 App groups display windows side by side and scroll when
 needed. Click a thumbnail to restore that window, right-click for its menu,
@@ -231,7 +245,7 @@ helpers: `position MONITOR KEY X Y`, `rebase OLD_ID NEW_ID`. Frontend IPC expose
 
 [Service.qml](Service.qml) serializes requests and watches compositor/config state;
 [ui/](ui/) owns surfaces, keyed actors, input regions and frame-driven physics.
-[controller/stash.py](controller/stash.py) parks windows on `special:minimized` with
+[controller/stash.py](controller/stash.py) parks windows on `special:window-stash` with
 ownership tags and address-reuse guards. Its locked, atomic ledger retains interrupted
 restores for retry. [controller/shortcuts.py](controller/shortcuts.py) owns runtime bindings.
 
@@ -239,6 +253,7 @@ restores for retry. [controller/shortcuts.py](controller/shortcuts.py) owns runt
 |---|---|
 | Session ledger | `$XDG_RUNTIME_DIR/omarchy-window-stash/<sanitized compositor signature>/state.json` |
 | Floating positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
+| Optional bridge build cache | `$XDG_CACHE_HOME/omarchy/window-stash/preview-bridge/<Hyprland commit>/` |
 | Settings / empty shortcut lock | `$XDG_CONFIG_HOME/omarchy/shell.json` / `.window-stash-shortcuts.lock` |
 
 XDG config/state default to `~/.config` and `~/.local/state`. Records contain titles,
@@ -264,6 +279,9 @@ including `tests/live.py`, need an empty, isolated test desktop; read their setu
 requirements first. Input automation announces itself **five seconds before starting**;
 follow [AGENTS.md](AGENTS.md).
 Small-display settings regression: `python3 tests/settings_fit.py`.
+Enhanced pixel checks: `python3 tests/live_compatibility.py` (Ghostty/btop, Chromium
+and Brave with disposable profiles). Lease lifecycle checks:
+`python3 tests/preview_bridge_native.py`.
 
 Copyright © 2026 **artu-ole** · [AGPL-3.0-only](LICENSE) ·
 [Third-party notices](THIRD_PARTY_NOTICES.md).

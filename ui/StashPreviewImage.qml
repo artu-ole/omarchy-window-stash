@@ -12,6 +12,7 @@ import "PreviewCapture.js" as Capture
 Item {
   id: image
   property var record:null
+  property var stash:null
   property string mode:"still"
   property bool active:false
   property string animations:"full"
@@ -39,6 +40,12 @@ Item {
   property int requestSerial:0
   readonly property bool eligible:active && !failed && !!acceptedHandle && sourceHandle===acceptedHandle
     && Capture.matches(record,verifiedClient) && Capture.matches(record,candidateIpc)
+  readonly property string compatibilityKey:"preview:"+String(Date.now())+":"+String(Math.random())
+  readonly property bool compatibilityRequested:eligible && mode==="live" && !!stash
+    && stash.snapshot.settings.livePreviewCompatibility==="enhanced"
+  function syncCompatibility() { if (stash) stash.previewCompatibilityRequest(compatibilityKey,compatibilityRequested && record ? record.id : "") }
+  onCompatibilityRequestedChanged:syncCompatibility()
+  onIdentityKeyChanged: { begin(); syncCompatibility() }
   readonly property CaptureItem captureView:captureLoader.item as CaptureItem
   readonly property bool hasContent:!!captureView && captureView.hasContent
   readonly property string status:!active || failed ? "unavailable" : hasContent ? "ready" : "loading"
@@ -86,7 +93,6 @@ Item {
         mapped:!!candidateIpc && candidateIpc.mapped===true,
         tags:!!candidateIpc && !!candidateIpc.tags ? candidateIpc.tags.length : 0}}
   }
-  onIdentityKeyChanged:begin()
   onActiveChanged:begin()
   onCandidateIpcChanged: {
     if (acceptedHandle && !Capture.matches(record,candidateIpc)) unavailable()
@@ -100,7 +106,14 @@ Item {
     if (hasContent) { captured=true; deadline.stop() }
     else if (captured && active) unavailable()
   }
-  Timer { id:deadline; interval:1000; onTriggered:if (!image.hasContent) image.unavailable(image.acceptedHandle ? "frame-timeout" : "window-handle-unavailable") }
+  Timer {
+    id:deadline; interval:1000
+    onTriggered: {
+      if (image.compatibilityRequested && image.stash
+          && ["starting","building","loading"].indexOf(image.stash.previewCompatibilityStatus.state)>=0) { restart(); return }
+      if (!image.hasContent) image.unavailable(image.acceptedHandle ? "frame-timeout" : "window-handle-unavailable")
+    }
+  }
   Connections {
     target:Hyprland
     function onRawEvent(event) {
@@ -206,5 +219,6 @@ Item {
       font.pixelSize:image.fonts.caption
     }
   }
-  Component.onCompleted:begin()
+  Component.onCompleted: { begin(); syncCompatibility() }
+  Component.onDestruction:if (stash) stash.previewCompatibilityRequest(compatibilityKey,"")
 }

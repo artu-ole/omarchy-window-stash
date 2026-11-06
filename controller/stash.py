@@ -21,7 +21,7 @@ SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
-                hoverPreview="off", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
+                hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
@@ -31,7 +31,7 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "w
                floatingPlacement=("edges", "free"), dockCorners=("theme", "custom"),
                dockCornerRadius=range(65), iconFrame=("shown", "hidden"), dockFrame=("shown", "hidden"),
                animations=("full", "reduced", "off"), animationSpeed=("slow", "relaxed", "normal", "fast", "ultrafast"), dockOpacity=range(101), iconOpacity=range(101),
-               hoverPreview=("off", "still", "live"), previewSize=("small", "medium", "large"),
+               hoverPreview=("off", "still", "live"), livePreviewCompatibility=("standard", "enhanced"), previewSize=("small", "medium", "large"),
                previewPlacement=("auto", "above", "below", "left", "right"), previewTitles=("shown", "hidden"),
                previewDelay=range(1501), previewHideDelay=range(1001))
 

@@ -330,7 +330,7 @@ ShellRoot {
 def main():
     with NativeSession() as session:
         for key, value in dict(scope='workspace', animations='off', presentation='floating', iconFrame='shown', dockFrame='shown',
-                               dockCorners='custom', hoverPreview='still', sizePreset='100').items():
+                               dockCorners='custom', hoverPreview='live', livePreviewCompatibility='standard', sizePreset='100').items():
             configure(key, value)
         before_outputs = {m['name'] for m in h.read('monitors')}
         h.call('output', 'create', 'headless')
@@ -377,7 +377,7 @@ def main():
                     long_error(session)
                 assert shell('status')['settings'] == before, 'Accessibility checks changed preferences'
                 assert {w['id'] for w in command('list')['windows']} == session.baseline, 'Accessibility checks changed the stash'
-                print(('PASS %dx%d @ %.2f: '+('six sections/all28 controls, bounded9-option popup and wrapped error; ' if index == 1 else 'bottom shortcuts/actions and preview controls; ')+
+                print(('PASS %dx%d @ %.2f: '+('six sections/all29 controls, bounded9-option popup and wrapped error; ' if index == 1 else 'bottom shortcuts/actions and preview controls; ')+
                        'reserved bounds, Tab/wheel/drag/scrollbar and tiny reset cancellation') %
                       (width, height, scale), flush=True)
                 shell('dismiss')

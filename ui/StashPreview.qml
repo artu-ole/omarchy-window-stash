@@ -248,6 +248,7 @@ Item {
     }
     StashPreviewImage {
       id:thumbnail
+      stash:preview.stash
       x:0; y:preview.layout.headerHeight
       width:preview.layout.imageWidth; height:preview.layout.imageHeight
       record:tile.windowData

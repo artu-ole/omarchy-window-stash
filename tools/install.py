@@ -311,11 +311,13 @@ def main():
                 if original not in data and modified not in data:
                     raise RuntimeError("Window switcher changed; missing integration anchor in " + name)
         target.mkdir(parents=True, exist_ok=True)
-        for name in ("manifest.json", "Service.qml", "ui", "controller", "window-stash", "README.md", "assets", "LICENSE", "THIRD_PARTY_NOTICES.md", "VALIDATION.md"):
+        for name in ("manifest.json", "Service.qml", "ui", "controller", "native", "tools/build-preview-bridge.py", "window-stash", "README.md", "assets", "LICENSE", "THIRD_PARTY_NOTICES.md", "VALIDATION.md"):
             source = SOURCE / name
             dest = target / name
             if source.is_dir(): shutil.copytree(source, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
-            else: shutil.copy2(source, dest)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, dest)
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text('#!/usr/bin/env python3\nimport runpy\nrunpy.run_path(' + repr(str(target / "controller/stash.py")) + ', run_name="__main__")\n')
         binary.chmod(0o755)

@@ -11,7 +11,7 @@ Item {
   property var shell: null
   readonly property string pluginId: "community.window-stash"
   readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "hidden", dockFrame: "hidden", animations: "full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "hidden", dockFrame: "hidden", animations: "full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -23,6 +23,17 @@ Item {
   property var dialogGroup: null
   property string dialogDestination: ""
   property var surfaces: []
+  property var previewCompatibilityRequests: ({})
+  property var previewCompatibilityStatus: ({state:"idle",ids:[]})
+  property string previewCompatibilityError:""
+  readonly property var previewCompatibilityIds: {
+    if (snapshot.settings.hoverPreview!=="live" || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
+    var ids=Object.keys(previewCompatibilityRequests).map(function(key) { return root.previewCompatibilityRequests[key] })
+    return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort()
+  }
+  readonly property string previewCompatibilityStamp:JSON.stringify(previewCompatibilityIds)
+  readonly property PreviewKeeperHost previewCompatibilityWorker:previewKeeper.item as PreviewKeeperHost
+  onPreviewCompatibilityStampChanged:if (previewCompatibilityWorker) previewCompatibilityWorker.send()
   property bool contextOpen:false
   property string contextScreen:""
   property int contextWorkspace:1
@@ -57,6 +68,52 @@ Item {
   }
 
   function refresh() { refreshDelay.restart() }
+  function previewCompatibilityRequest(key,id) {
+    var requests=Object.assign({},previewCompatibilityRequests)
+    if (id) requests[key]=id
+    else delete requests[key]
+    previewCompatibilityRequests=requests
+  }
+  // The pipe lifetime owns the optional native lease. Hiding the final Live
+  // thumbnail destroys the process; EOF/SIGTERM and the native TTL release it.
+  Loader {
+    id:previewKeeper
+    active:root.previewCompatibilityIds.length>0
+    sourceComponent:PreviewKeeperHost {}
+  }
+  component PreviewKeeperHost:Item {
+      id:keeperHost
+      readonly property bool running:keeper.running
+      function send() { if (keeper.running) keeper.write(root.previewCompatibilityStamp+"\n") }
+      Process {
+        id:keeper
+        command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/preview.py").toString().replace(/^file:\/\//,""))]
+        stdinEnabled:true
+        running:true
+        onStarted: {
+          root.previewCompatibilityError=""
+          root.previewCompatibilityStatus={state:"starting",ids:[]}
+          keeperHost.send()
+        }
+        stdout:SplitParser {
+          onRead:function(line) {
+            try {
+              var value=JSON.parse(line)
+              if (["idle","disabled","building","loading","ready","unavailable"].indexOf(value.state)<0) return
+              root.previewCompatibilityStatus=value
+              if (value.error) root.previewCompatibilityError=String(value.error)
+            } catch (error) { root.previewCompatibilityError="Could not read live preview support status" }
+          }
+        }
+        onExited:function(code) {
+          if (code!==0 && !root.previewCompatibilityError) root.previewCompatibilityError="Live preview support is unavailable; standard previews remain available"
+        }
+      }
+      Component.onDestruction: {
+        root.previewCompatibilityStatus={state:"idle",ids:[]}
+        if (!root.previewCompatibilityIds.length) root.previewCompatibilityRequests={}
+      }
+  }
   function enqueue(args) {
     var next = queue.slice()
     next.push(args)
@@ -231,7 +288,7 @@ Item {
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
       iconShape:["auto","circle","square","rounded","squircle"], sizePreset:["50","75","100","125","150","175","200","250","300"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop","jumping"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"],animationSpeed:["slow","relaxed","normal","fast","ultrafast"]}
-    options.hoverPreview=["off","still","live"]; options.previewSize=["small","medium","large"]
+    options.hoverPreview=["off","still","live"]; options.livePreviewCompatibility=["standard","enhanced"]; options.previewSize=["small","medium","large"]
     options.previewPlacement=["auto","above","below","left","right"]; options.previewTitles=["shown","hidden"]
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
     if (numericLimits[key] !== undefined) {
@@ -371,6 +428,7 @@ Item {
       return JSON.stringify({loaded: true, windows: root.snapshot.windows.length,
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
+        previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
         clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,
         screens: root.snapshot.monitors.map(function(m) { return m.name }), dialog: root.contextOpen ? "menu" : root.dialogKind, context:{open:root.contextOpen,screen:root.contextScreen,workspace:root.contextWorkspace,ids:root.contextIds}, pendingCloseIds:Object.keys(root.pendingCloseIds), error: root.lastError,
         queueLength: root.queue.length, controllerBusy: worker.running,

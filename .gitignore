@@ -29,3 +29,8 @@ backups/
 /shell.json
 .DS_Store
 /assets/title-prompt.txt
+
+# Locally compiled optional compositor support
+*.so
+*.o
+/native/build/

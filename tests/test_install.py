@@ -65,9 +65,10 @@ class InstallerShortcutTests(unittest.TestCase):
         self.source.mkdir()
         for name in ('manifest.json','Service.qml','window-stash','README.md','LICENSE','THIRD_PARTY_NOTICES.md','VALIDATION.md'):
             (self.source/name).write_text('fixture')
-        for name in ('ui','controller','assets'):
+        for name in ('ui','controller','assets','native','tools'):
             (self.source/name).mkdir()
             (self.source/name/'fixture').write_text('fixture')
+        (self.source/'tools/build-preview-bridge.py').write_text('fixture builder')
         self.monitor=dict(name='TEST-1',width=1920,height=1080,refreshRate=60,x=-300,y=20,scale=1.25,transform=0)
         self.calls=[]
         self.disabled=[]
@@ -147,6 +148,12 @@ class InstallerShortcutTests(unittest.TestCase):
         self.assertEqual(entry['customValue'],'keep')
         self.assertEqual(saved['plugins'][1],self.data['plugins'][1])
         self.assertEqual(saved['other'],self.data['other'])
+
+    def test_install_includes_optional_native_bridge_source_and_builder(self):
+        self.invoke()
+        self.assertEqual((self.target/'native/fixture').read_text(), 'fixture')
+        self.assertEqual((self.target/'tools/build-preview-bridge.py').read_text(), 'fixture builder')
+        self.assertFalse((self.target/'tools/fixture').exists(), 'Only the bridge builder belongs in runtime tools')
 
     def test_switcher_integration_upgrades_legacy_workspace_and_uninstalls_cleanly(self):
         switcher = self.config/'omarchy/plugins/community.window-switcher'

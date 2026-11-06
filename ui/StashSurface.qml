@@ -358,6 +358,7 @@ PanelWindow {
     required property var modelData
     readonly property alias selector:settingDropdown
     visible:(["previewSize","previewPlacement","previewTitles"].indexOf(modelData.key)<0 || surface.previewsEnabled)
+      && (modelData.key!=="livePreviewCompatibility" || surface.config.hoverPreview==="live")
       && ((modelData.key!=="floatingDirection" && modelData.key!=="floatingAnimation") || surface.floatingMode)
       && (modelData.key!=="dockSide" || surface.config.presentation==="dock")
       && (modelData.key!=="floatingPlacement" || surface.bubbleMode || surface.floatingMode)
@@ -1025,11 +1026,20 @@ PanelWindow {
             id:previewRows
             model:[
               {key: "hoverPreview", label: "Hover preview", values: ["off", "still", "live"], labels: ["Off", "Still image", "Live"], section: "previews"},
+              {key: "livePreviewCompatibility", label: "Live preview support", values: ["standard", "enhanced"], labels: ["Standard", "Enhanced"], section: "previews"},
               {key: "previewSize", label: "Preview size", values: ["small", "medium", "large"], labels: ["Small", "Medium", "Large"], section: "previews"},
               {key: "previewPlacement", label: "Preview placement", values: ["auto", "above", "below", "left", "right"], labels: ["Automatic", "Above", "Below", "Left", "Right"], section: "previews"},
               {key: "previewTitles", label: "Preview titles", values: ["shown", "hidden"], labels: ["Shown", "Hidden"], section: "previews"}
             ]
             delegate:SettingChoice {}
+          }
+          Text {
+            visible:surface.config.hoverPreview==="live" && surface.config.livePreviewCompatibility==="enhanced"
+            text:surface.stash.previewCompatibilityError || "Keeps previewed apps rendering while hidden using an optional Hyprland extension. Other windows are unaffected."
+            textFormat:Text.PlainText
+            color:surface.stash.previewCompatibilityError ? Commons.Color.urgent : surface.popupColors.text
+            font.family:surface.fonts.family; font.pixelSize:surface.fonts.caption
+            wrapMode:Text.Wrap; Layout.fillWidth:true; Layout.minimumWidth:0
           }
           Repeater {
             id:previewTimingRows
