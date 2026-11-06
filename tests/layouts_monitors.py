@@ -4,7 +4,7 @@ import json
 import subprocess
 import time
 import live
-from live import h, shell, command, configure, spawn, stash, wait
+from live import h, shell, command, configure, spawn, stash, wait,fixture_settings,require_empty_stash
 from desktop_test import desktop_test
 
 
@@ -16,9 +16,11 @@ def plugin_call(method,arg=''):
 @desktop_test('Window Stash layout and monitor tests')
 def main():
     old_window=h.read('activewindow');old_ws=h.read('activeworkspace')['id']
-    monitors=h.read('monitors');settings=command('list')['settings']
+    monitors=h.read('monitors');snapshot=command('list');settings=snapshot['settings']
     virtual=[]
+    require_empty_stash(snapshot)
     try:
+        fixture_settings()
         assert not command('list')['windows'],'Restore your stash before running live tests'
         first=spawn('Stash layout alpha');second=spawn('Stash layout beta');third=spawn('Stash layout gamma')
         for a in (first,second,third):h.dispatch('window.float',window='address:'+a,action='off')

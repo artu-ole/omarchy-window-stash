@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from live import ROOT, h, command, shell, configure, wait
+from live import ROOT, h, command, shell, configure, wait,fixture_settings
 from desktop_test import desktop_test
 from pointer import Pointer
 from stash import Stash, atomic_json, read_json, monitor_identity
@@ -56,13 +56,13 @@ def main():
     def expand():
         click(dock()['handle'])
         try:
-        configure('dragMotion','direct')
             return wait(lambda:dock() if dock()['expanded'] and dock()['icons'] and not dock()['animating'] else None,'Stack did not expand')
         except AssertionError:
             print('Floating dock diagnostics:',json.dumps(dock()),flush=True)
             raise
 
     try:
+        fixture_settings()
         configure("animations","full")
         configure("floatingPlacement","free")
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial controller snapshot did not load')
@@ -193,17 +193,30 @@ def main():
         h.eval('hl.monitor({output=%s,mode="640x360@60",position=%s,scale=1})'%(json.dumps(output),json.dumps('%dx0'%end)))
         monitor=next(m for m in h.read('monitors') if m['name']==output)
         h.dispatch('focus',monitor=output);h.dispatch('focus',workspace=str(workspace+2))
-        for i in range(5):park(spawn('Stash floating overflow %s %s'%(os.getpid(),i)))
+        # Empty surfaces are unmapped and can retain a 100x100 placeholder.
+        # No right/bottom bar is used here, so work-area far edges give the
+        # screen dimensions before there are any icons to map its surface.
+        wait(lambda:any(s['screen']==output and s['workspaceId']==workspace+2
+                        and s['usableArea']['x']+s['usableArea']['width']==640
+                        and s['usableArea']['y']+s['usableArea']['height']==360
+                        for s in shell('status')['surfaces']),
+             'Small screen geometry and fixture workspace did not settle')
+        # Eight 48-pixel icons cannot fit in 360 pixels even at an extreme
+        # anchor. Five can fit when the saved stack unfolds toward the top.
+        overflow_count=8
+        for i in range(overflow_count):park(spawn('Stash floating overflow %s %s'%(os.getpid(),i)))
+        wait(lambda:surface()['width']==640 and surface()['height']==360,'Mapped small surface geometry did not settle')
         expanded=expand();p=expanded['panel'];s=surface()
         assert p['y']>=0 and p['y']+p['height']<=s['height']
-        assert expanded['contentHeight']>expanded['viewportHeight']
+        assert expanded['contentHeight']>expanded['viewportHeight'], {
+            key:expanded[key] for key in ('groups','capacity','contentHeight','viewportHeight','handle')}
         x=p['x']+p['width']/2;y=p['y']+min(expanded['viewportHeight']/2+6,30)
         pointer.move(*point(x,y));pointer.button(True)
         for step in range(1,7):pointer.move(*point(x,max(1,min(surface()['height']-1,y-expanded['fan']['sign']*step*12))));time.sleep(.04)
         pointer.button(False)
         wait(lambda:dock()['contentY']>10,'Floating dock could not scroll')
         configure('scope','global')
-        wait(lambda:all(s['floatingDock']['windows']==len(baseline)+7 for s in shell('status')['surfaces']),'Global stack missing on a monitor')
+        wait(lambda:all(s['floatingDock']['windows']==len(baseline)+2+overflow_count for s in shell('status')['surfaces']),'Global stack missing on a monitor')
         print('PASS small-screen vertical overflow and global stack on two monitors',flush=True)
     finally:
         pointer.button(False)

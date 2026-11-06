@@ -178,36 +178,53 @@ def reversal(session):
 
 
 def airborne_restore(session, records):
-    configure('floatingAnimation', 'arc')
-    configure('floatingDirection', 'horizontal')
+    # Swing's slower, staggered curve and a vertical fan leave a wider input
+    # interval than Arc above a row's existing downward stack offsets.
+    configure('animationSpeed', 'slow')
+    configure('floatingAnimation', 'swing')
+    configure('floatingDirection', 'vertical')
     configure('dockCornerRadius', 0)
     session.resting()
-    cycle = begin(session)
+    # Monitor lookup is an IPC round trip. Do it before the animation starts,
+    # so a valid sampled airborne point is pressed without another status read.
+    origin_x, origin_y, width, height = session.point(0, 0)
     selected = None
-    deadline = time.monotonic()+2
-    while time.monotonic() < deadline:
-        dock = cycle.inspect(session.dock())
-        panel = dock['panel']
-        for actor in reversed(dock['actors']):
-            if not actor.get('interactive') or not .855 < actor['progress'] < .92:
-                continue
-            top = panel['y']-actor['y']
-            bottom = actor['y']+actor['height']-panel['y']-panel['height']
-            if max(top, bottom) < 3:
-                continue
-            x = actor['x']+actor['width']/2
-            y = panel['y']-1.5 if top > bottom else panel['y']+panel['height']+1.5
-            selected = actor['key']
-            session.move(x, y)
-            # Pointer.click deliberately waits 50 ms before pressing, which
-            # would miss this short, already-interactive airborne interval.
-            session.pointer.button(True)
-            session.pointer.button(False)
-            break
+    samples = []
+    # Missing a short visual phase says nothing about input correctness. Retry
+    # only observation with different poll alignment; a failed click never
+    # retries and must restore the exact window selected in that frame.
+    for attempt in range(3):
+        cycle = begin(session)
+        time.sleep(.025*attempt)
+        deadline = time.monotonic()+2
+        while time.monotonic() < deadline:
+            dock = cycle.inspect(session.dock())
+            panel = dock['panel']
+            samples.append([(a['ordinal'], round(a['progress'], 3)) for a in dock['actors']])
+            for actor in reversed(dock['actors']):
+                if not actor['ordinal'] or not actor.get('interactive') or not actor['moving']:
+                    continue
+                left = panel['x']-actor['x']
+                right = actor['x']+actor['width']-panel['x']-panel['width']
+                if max(left, right) < 3:
+                    continue
+                x = panel['x']-1.5 if left > right else panel['x']+panel['width']+1.5
+                y = actor['y']+actor['height']/2
+                assert actor['x'] < x < actor['x']+actor['width'], 'Airborne target missed its icon'
+                assert x < panel['x'] or x > panel['x']+panel['width'], 'Airborne target was inside the panel'
+                selected = actor['key']
+                session.pointer.move(origin_x+x, origin_y+y, width, height)
+                # Pointer.click deliberately waits 50 ms before pressing.
+                session.pointer.button(True)
+                session.pointer.button(False)
+                break
+            if selected or not dock['animating']:
+                break
+            time.sleep(.001)
         if selected:
             break
-        time.sleep(.001)
-    assert selected, 'No interactive airborne icon extended outside the straight panel'
+        collapse(session)
+    assert selected, ('No interactive airborne icon extended outside the straight panel', samples)
     record = next(r for r in records if 'window:'+str(r.get('stableId') or r['id']) == selected)
     wait(lambda: all(w['id'] != record['id'] for w in command('list')['windows']), 'Clicking an airborne icon was treated as an outside click')
     remaining = {w['id'] for w in command('list')['windows']}
@@ -269,6 +286,7 @@ def overflow(session):
 def main(small=False):
     with NativeSession() as session:
         for key, value in dict(presentation='floating', grouping='window', scope='workspace',
+                               sizePreset='100',
                                animations='full', animationSpeed='slow', hoverPreview='off',
                                dragMotion='physics', floatingPlacement='free', iconShape='square',
                                iconFrame='shown', dockFrame='shown', dockCorners='custom',

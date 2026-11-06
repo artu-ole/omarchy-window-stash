@@ -5,7 +5,7 @@ import os
 import subprocess
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 from stash import Stash,atomic_json,read_json,monitor_identity
@@ -45,6 +45,7 @@ def main():
         wait(lambda:dock()['windows']==expected and not dock()['animating'] and not dock()['snapping'],'Dock count lagged')
 
     try:
+        fixture_settings()
         configure("floatingPlacement","free")
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial controller snapshot did not load')
         configure('presentation','floating');configure('floatingDirection','vertical')

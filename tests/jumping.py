@@ -123,6 +123,7 @@ def reverse(session):
 def main():
     with NativeSession() as session:
         for key, value in dict(presentation='floating', grouping='window', scope='workspace',
+                               sizePreset='100',
                                animations='full', animationSpeed='slow', hoverPreview='off',
                                dragMotion='physics', floatingPlacement='free', iconShape='square',
                                iconFrame='shown', dockFrame='shown', dockCorners='custom',

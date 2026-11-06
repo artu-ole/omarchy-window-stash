@@ -15,6 +15,7 @@ def window_key(record):return 'window:'+str(record.get('stableId') or record['id
 @desktop_test('Middle-click close and confirmed lifecycle test')
 def main():
     with NativeSession() as t:
+        configure('sizePreset','100');configure('animationSpeed','normal');configure('hoverPreview','off')
         configure('animations','full');configure('floatingPlacement','free')
         configure('grouping','window');configure('iconShape','square')
         if 'dragMotion' in shell('status')['settings']:configure('dragMotion','direct')

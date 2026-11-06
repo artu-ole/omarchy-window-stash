@@ -5,7 +5,7 @@ import os
 import subprocess
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 from stash import Stash,atomic_json,read_json,monitor_identity
@@ -79,6 +79,7 @@ def main():
         time.sleep(.1)
 
     try:
+        fixture_settings()
         configure('animations','full');configure('dragMotion','direct')
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot did not load')
         configure('scope','workspace');configure('grouping','window');configure('presentation','bubbles');configure('floatingPlacement','free')

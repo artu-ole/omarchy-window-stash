@@ -20,13 +20,15 @@ def near(actual, expected, message, tolerance=1.1):
 
 
 def native_select(session, speed):
+    from settings_fit import reveal
+
     shell('settings')
     wait(lambda: session.surface()['dialog']['visible'], 'Speed settings did not open')
 
     def control():
         return next(c for c in session.surface()['settingControls'] if c['key'] == 'animationSpeed')
 
-    session.click(control()['rect'])
+    session.click(reveal(session, lambda: control()['rect']))
     wait(lambda: control()['open'], 'Animation speed dropdown did not open')
     session.keys(*(['-k', 'Up']*len(PRESETS)),
                  *(['-k', 'Down']*PRESETS.index(speed)), '-k', 'Return')
@@ -122,6 +124,7 @@ def feedback(appearance, speed, mode='full'):
 def main():
     with NativeSession() as session:
         for key, value in dict(presentation='floating', grouping='window', scope='workspace',
+                               sizePreset='100', animationSpeed='normal',
                                animations='full', hoverPreview='off', floatingPlacement='free',
                                floatingDirection='horizontal', floatingAnimation='arc',
                                iconShape='square').items():

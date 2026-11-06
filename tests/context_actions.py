@@ -11,6 +11,7 @@ from native_session import NativeSession
 @desktop_test('Pointer context menu and scoped actions test')
 def main():
     with NativeSession() as t:
+        configure('sizePreset','100');configure('animationSpeed','normal');configure('hoverPreview','off')
         configure('animations','full');configure('presentation','bubbles');configure('floatingPlacement','free')
         if 'dragMotion' in shell('status')['settings']:configure('dragMotion','direct')
         configure('iconShape','square')
@@ -26,6 +27,25 @@ def main():
             return m
         def dismiss():
             t.keys('-k','Escape');wait(lambda:not t.menu()['rendered'],'Escape did not dismiss context menu')
+        def restore_diagnostics(record,workspace,menu):
+            status=shell('status');client=h.client(record['address'])
+            print('Restore invocation diagnostics:',{'expectedWorkspace':workspace,'expectedId':record['id'],
+                  'surfaceWorkspace':t.surface()['workspaceId'],'activeWorkspace':h.read('activeworkspace')['id'],
+                  'clientWorkspace':client['workspace']['id'] if client else None,
+                  'menuWorkspace':menu['workspace'],'menuIds':menu['targetIds'],'context':status['context'],
+                  'controllerBusy':status['controllerBusy'],'queueLength':status['queueLength'],'error':status['error'],
+                  'ledger':[{'id':w['id'],'originWorkspace':w['origin']['id']} for w in command('list')['windows']]},flush=True)
+        def invocation_menu(record,workspace):
+            h.dispatch('focus',workspace=str(workspace))
+            wait(lambda:t.surface()['workspaceId']==workspace and h.read('activeworkspace')['id']==workspace,
+                 'Invoking workspace did not reach the UI before opening its menu')
+            menu_key='window:'+str(record.get('stableId') or record['id'])
+            m=open_menu(t.icon(menu_key))
+            if m['targetIds']!=[record['id']] or m['workspace']!=workspace:
+                restore_diagnostics(record,workspace,m)
+            assert m['targetIds']==[record['id']],'Restore menu captured a stale stash record'
+            assert m['workspace']==workspace,'Restore menu captured the wrong invoking workspace'
+            return m
         for x,y in ((20,60),(t.surface()['width']-70,60),(20,t.surface()['height']-90),(t.surface()['width']-70,t.surface()['height']-90)):
             t.position(key,x,y);r=t.icon(key);px=r['x']+24;py=r['y']+24
             m=open_menu(r);p=m['rect'];area=t.surface()['usableArea']
@@ -63,12 +83,15 @@ def main():
                 dismiss()
         print('PASS static dock, expanded fan, and collapsed front-icon menus',flush=True)
 
-        configure('presentation','bubbles');configure('scope','global');h.dispatch('focus',workspace=str(t.workspace+1))
-        open_menu(t.icon(key));t.click(t.action('original')['rect'])
+        configure('presentation','bubbles');configure('scope','global')
+        m=invocation_menu(rb,t.workspace+1);t.click(t.action('original')['rect'])
         wait(lambda:h.client(b)['workspace']['id']==t.workspace,'Original-workspace action restored wrong destination')
         rb=t.park(b);key='window:'+str(rb.get('stableId') or rb['id'])
-        h.dispatch('focus',workspace=str(t.workspace+1));open_menu(t.icon(key));t.click(t.action('here')['rect'])
-        wait(lambda:h.client(b)['workspace']['id']==t.workspace+1,'Restore-here action ignored invoking workspace')
+        m=invocation_menu(rb,t.workspace+1);t.click(t.action('here')['rect'])
+        try:wait(lambda:h.client(b)['workspace']['id']==t.workspace+1,'Restore-here action ignored invoking workspace')
+        except AssertionError:
+            restore_diagnostics(rb,t.workspace+1,m)
+            raise
         h.dispatch('focus',workspace=str(t.workspace));configure('scope','workspace')
         h.dispatch('window.move',window='address:'+b,workspace=str(t.workspace),follow=True)
         rb=t.park(b);key='window:'+str(rb.get('stableId') or rb['id'])

@@ -12,6 +12,7 @@ from stash import monitor_identity
 @desktop_test('Floating drag physics and collision test')
 def main():
     with NativeSession() as t:
+        configure('sizePreset','100');configure('animationSpeed','normal');configure('hoverPreview','off')
         configure('presentation','bubbles');configure('iconShape','square');configure('animations','full')
         configure('floatingPlacement','free');configure('dragMotion','physics')
         records=[t.park(t.spawn()[0]) for _ in range(3)]
@@ -44,10 +45,11 @@ def main():
             b=body(key);identity=monitor_identity(t.monitor)
             wait(lambda:all(abs(x-y)<1 for x,y in zip(command('list')['positions'].get(identity,{}).get(key,[-999,-999]),[b['x'],b['y']])),'Resting coordinates were not saved')
         shell('settings');wait(lambda:t.surface()['dialog']['visible'],'Drag settings did not open')
+        from settings_fit import reveal
         def control():return next(c for c in t.surface()['settingControls'] if c['key']=='dragMotion')
-        t.click(control()['rect']);wait(lambda:control()['open'],'Drag motion dropdown did not open')
+        t.click(reveal(t,lambda:control()['rect']));wait(lambda:control()['open'],'Drag motion dropdown did not open')
         t.keys('-k','Down','-k','Return');wait(lambda:shell('status')['settings']['dragMotion']=='direct','Native Direct option did not save')
-        t.click(control()['rect']);wait(lambda:control()['open'],'Drag motion dropdown did not reopen')
+        t.click(reveal(t,lambda:control()['rect']));wait(lambda:control()['open'],'Drag motion dropdown did not reopen')
         t.keys('-k','Up','-k','Return');wait(lambda:shell('status')['settings']['dragMotion']=='physics','Native Physics option did not save')
         shell('dismiss');asleep()
         print('PASS native Physics/Direct selector and deferred frozen-body configuration',flush=True)

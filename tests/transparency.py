@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 
@@ -62,6 +62,7 @@ def main():
             and not surface()['motion']['shelfBusy'] and all(i['appearance']['presence']>.999 for i in surface()['shelf']['icons']),'Static dock did not settle')
 
     try:
+        fixture_settings()
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial snapshot missing')
         configure('scope','workspace');configure('grouping','window');configure('presentation','dock')
         configure('dockSide','bottom');configure('dockFrame','shown');configure('iconFrame','shown');configure('iconShape','square')

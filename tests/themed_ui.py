@@ -3,7 +3,7 @@
 import subprocess
 import time
 
-from live import h, command, shell, configure, spawn, stash, wait, processes, addresses
+from live import h, command, shell, configure, spawn, stash, wait, processes, addresses,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 
@@ -15,14 +15,20 @@ def main():
     settings = dict(shell('status')['settings'])
     baseline = {w['id'] for w in command('list')['windows']}
     pointer = Pointer()
+    monitor_name=next(m['name'] for m in h.read('monitors') if m['focused'])
 
     def surface():
-        return next(s for s in shell('status')['surfaces'] if s['visible'])
+        return next(s for s in shell('status')['surfaces'] if s['screen']==monitor_name)
+
+    def point(x,y):
+        monitors=h.read('monitors');monitor=next(m for m in monitors if m['name']==monitor_name)
+        left=min(m['x'] for m in monitors);top=min(m['y'] for m in monitors)
+        right=max(m['x']+round(m['width']/m['scale']) for m in monitors)
+        bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
+        return monitor['x']+x-left,monitor['y']+y-top,right-left,bottom-top
 
     def click(rect, button=272):
-        s = surface()
-        pointer.click(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2,
-                      s['width'], s['height'], button)
+        pointer.click(*point(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2),button=button)
         time.sleep(.15)
 
     def keys(*args):
@@ -30,6 +36,7 @@ def main():
         time.sleep(.15)
 
     try:
+        fixture_settings()
         shell('settings')
         wait(lambda: shell('status')['dialog'] == 'settings', 'Settings did not open')
         time.sleep(.3)
@@ -84,9 +91,9 @@ def main():
         last = stash(second)
         configure('dockSide', 'bottom')
         configure('presentation', 'dock')
-        s = wait(lambda: next((s for s in shell('status')['surfaces'] if s['visible']), None), 'Dock missing')
+        s = wait(lambda: surface() if surface()['visible'] else None, 'Dock missing')
         r = s['shelf']
-        pointer.click(r['x'] + 31, r['y'] + r['height']/2, s['width'], s['height'])
+        pointer.click(*point(r['x'] + 31, r['y'] + r['height']/2))
         wait(lambda: all(w['id'] != last for w in command('list')['windows']), 'Themed dock click failed')
         assert not shell('status')['error'], shell('status')
         assert {w['id'] for w in command('list')['windows']} == baseline

@@ -4,7 +4,7 @@ import json
 import subprocess
 import time
 
-from live import h, shell, command, configure, spawn, stash, wait, processes, addresses
+from live import h, shell, command, configure, spawn, stash, wait, processes, addresses,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 
@@ -40,6 +40,8 @@ def main():
         return all(w['address'] != target for w in command('list')['windows'])
 
     try:
+        fixture_settings()
+        expected_settings=dict(shell('status')['settings'])
         configure('dragMotion','direct')
         configure("floatingPlacement","free")
         configure("iconFrame","shown")
@@ -55,7 +57,7 @@ def main():
         wait(lambda: setting_control()['open'], 'Native shape dropdown did not open')
         subprocess.run(['wtype', *sum((['-k', 'Down'] for _ in range(4)), []), '-k', 'Return'], check=True)
         wait(lambda: shell('status')['settings']['iconShape'] == 'squircle', 'Shape dropdown did not save')
-        assert all(shell('status')['settings'][k] == v for k, v in settings.items() if k not in ('iconShape','floatingPlacement','iconFrame'))
+        assert all(shell('status')['settings'][k] == v for k, v in expected_settings.items() if k!='iconShape')
         shell('dismiss')
         print('PASS native shape dropdown; other preferences preserved', flush=True)
 

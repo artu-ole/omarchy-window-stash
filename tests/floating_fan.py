@@ -5,7 +5,7 @@ import os
 import subprocess
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 from stash import Stash,atomic_json,read_json,monitor_identity
@@ -73,6 +73,7 @@ def main():
         subprocess.run(['wtype','-k',key],check=True)
 
     try:
+        fixture_settings()
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot missing')
         configure('presentation','floating');configure('scope','workspace');configure('grouping','window')
         configure('floatingPlacement','free');configure('animations','full');configure('floatingAnimation','arc');configure('iconShape','square')

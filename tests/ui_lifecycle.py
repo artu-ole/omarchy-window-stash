@@ -5,31 +5,43 @@ from pathlib import Path
 import subprocess
 import time
 import live
-from live import h, shell, command, configure, spawn, stash, wait, Pointer
+from live import h, shell, command, configure, spawn, stash, wait, Pointer,fixture_settings,require_empty_stash
 from desktop_test import desktop_test
 
+monitor_name=None
 
 def surface():
-    return next(s for s in shell('status')['surfaces'] if s['screen']=='eDP-2')
+    return next(s for s in shell('status')['surfaces'] if s['screen']==monitor_name)
+
+
+def point(x,y):
+    monitors=h.read('monitors');monitor=next(m for m in monitors if m['name']==monitor_name)
+    left=min(m['x'] for m in monitors);top=min(m['y'] for m in monitors)
+    right=max(m['x']+round(m['width']/m['scale']) for m in monitors)
+    bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
+    return monitor['x']+x-left,monitor['y']+y-top,right-left,bottom-top
 
 
 def click(pointer,rect,button=272):
-    s=surface()
-    pointer.click(rect['x']+rect['width']/2,rect['y']+rect['height']/2,s['width'],s['height'],button)
+    pointer.click(*point(rect['x']+rect['width']/2,rect['y']+rect['height']/2),button=button)
 
 
 @desktop_test('Window Stash UI lifecycle tests')
 def main():
+    global monitor_name
     original=h.read('activewindow');original_ws=h.read('activeworkspace')['id']
-    settings=command('list')['settings'];pointer=None
+    monitor_name=next(m['name'] for m in h.read('monitors') if m['focused'])
+    snapshot=command('list');settings=snapshot['settings'];pointer=None
+    require_empty_stash(snapshot)
     try:
+        fixture_settings()
         configure("floatingPlacement","free")
         assert not command('list')['windows']
         first=spawn('Stash UI alpha');second=spawn('Stash UI beta')
         for address in (first,second):
             h.dispatch('window.float',window='address:'+address,action='on')
             h.dispatch('window.resize',window='address:'+address,x=640,y=420,relative=False)
-            m=next(m for m in h.read('monitors') if m['name']=='eDP-2')
+            m=next(m for m in h.read('monitors') if m['name']==monitor_name)
             h.dispatch('window.move',window='address:'+address,x=m['x']+120,y=m['y']+160,relative=False)
         first_id=stash(first)
         configure('presentation','bubbles')
@@ -39,7 +51,7 @@ def main():
         h.dispatch('focus',window='address:'+second)
         pointer=Pointer()
         # The full-screen transparent bubble surface must pass this input to GTK.
-        s=surface();pointer.click(420,350,s['width'],s['height'])
+        pointer.click(*point(420,350))
         wait(lambda:h.client(second)['title'].endswith('clicked'),'Bubble surface swallowed an outside click')
         click(pointer,surface()['bubbles'][0])
         wait(lambda:not command('list')['windows'],'Bubble click did not restore')
@@ -48,8 +60,8 @@ def main():
         first_id=stash(first);second_id=stash(second)
         configure('presentation','dock');configure('grouping','app')
         wait(lambda:surface()['groups']==1,'App group missing')
-        shelf=surface()['shelf'];s=surface()
-        pointer.click(shelf['x']+32,shelf['y']+32,s['width'],s['height'])
+        shelf=surface()['shelf']
+        pointer.click(*point(shelf['x']+32,shelf['y']+32))
         wait(lambda:shell('status')['dialog']=='picker' and surface()['pickerCount']==2,'Grouped icon did not open chooser')
         # The dialog must own keyboard focus, and Enter must restore its filtered row.
         subprocess.run(['wtype','Stash UI alpha'],check=True)

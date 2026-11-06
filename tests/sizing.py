@@ -41,43 +41,15 @@ def appearance(value, size):
 
 
 def native_select(session, preset):
+    from settings_fit import reveal
+
     shell('settings')
     wait(lambda: session.surface()['dialog']['visible'], 'Size settings did not open')
 
     def control():
         return next(c for c in session.surface()['settingControls'] if c['key'] == 'sizePreset')
 
-    for _ in range(12):
-        surface = session.surface()
-        viewport = surface['settingsScroll']['rect']
-        rect = control()['rect']
-        if rect['x'] >= viewport['x'] and rect['x']+rect['width'] <= viewport['x']+viewport['width'] \
-                and rect['y'] >= viewport['y']+2 and rect['y']+rect['height'] <= viewport['y']+viewport['height']-2:
-            break
-        down = rect['y']+rect['height'] > viewport['y']+viewport['height']
-        preferred = viewport['y']+viewport['height']*(.8 if down else .2)
-        labels = [c['rect']['y']+c['rect']['height']/2 for c in surface['settingControls'] if c['visible']]
-        labels = [y for y in labels if viewport['y']+14 < y < viewport['y']+viewport['height']-14]
-        start = min(labels, key=lambda y: abs(y-preferred)) if labels else preferred
-        end = viewport['y']+8 if down else viewport['y']+viewport['height']-8
-        session.move(viewport['x']+3, start)
-        session.pointer.button(True)
-        for step in range(1, 7):
-            session.move(viewport['x']+3, start+(end-start)*step/6)
-            time.sleep(.02)
-        session.pointer.button(False)
-        previous = None
-        stable = 0
-        deadline = time.monotonic()+2
-        while time.monotonic() < deadline and stable < 3:
-            current = session.surface()['settingsScroll']['contentY']
-            stable = stable+1 if previous is not None and abs(current-previous)<.1 else 0
-            previous = current
-            time.sleep(.05)
-    else:
-        raise AssertionError(('Size selector stayed outside settings viewport', control(), session.surface()['settingsScroll']))
-
-    session.click(control()['rect'])
+    session.click(reveal(session, lambda: control()['rect']))
     wait(lambda: control()['open'], 'Size dropdown did not open')
     session.keys(*(['-k', 'Up']*len(PRESETS)), *(['-k', 'Down']*PRESETS.index(preset)), '-k', 'Return')
     wait(lambda: shell('status')['settings'].get('sizePreset') == preset, 'Native size selection did not save '+preset)
@@ -262,6 +234,7 @@ def small_output(session, records):
 def main():
     with NativeSession() as session:
         for key, value in dict(presentation='dock', grouping='app', scope='workspace', animations='off',
+                               sizePreset='100', animationSpeed='normal',
                                hoverPreview='off', dragMotion='direct', floatingPlacement='free',
                                iconShape='square', iconFrame='shown', dockFrame='shown', dockSide='bottom').items():
             configure(key, value)

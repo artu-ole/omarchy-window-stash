@@ -86,6 +86,8 @@ def defaults_active():
 @desktop_test('Window Stash reset settings test')
 def main():
     with NativeSession() as session:
+        configure('sizePreset', '100')
+        configure('animationSpeed', 'normal')
         configure('scope', 'workspace')
         configure('animations', 'off')
         configure('hoverPreview', 'off')

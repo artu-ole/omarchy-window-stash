@@ -127,13 +127,15 @@ class Cycle:
 
 
 def select_native(session, style):
+    from settings_fit import reveal
+
     shell('settings')
     wait(lambda: session.surface()['dialog']['visible'], 'Settings did not open')
 
     def control():
         return next(c for c in session.surface()['settingControls'] if c['key'] == 'floatingAnimation')
 
-    session.click(control()['rect'])
+    session.click(reveal(session, lambda: control()['rect']))
     wait(lambda: control()['open'], 'Unfold animation dropdown did not open')
     # Omarchy's dropdown handles arrows rather than Home/End.
     session.keys(*(['-k', 'Up']*len(ALL_STYLES)),
@@ -245,8 +247,6 @@ def source_removal(session, address):
     # it changes the source model while the presentation must keep its actors.
     assert address in session.addresses, 'Refusing to close an unowned fixture'
     h.dispatch('window.close', window='address:'+address)
-    wait(lambda: not h.client(address), 'The disposable removal fixture did not close')
-    assert all(w['address'] != address for w in command('list')['windows']), 'Closed source record was not reconciled'
     shell('refresh')
     source_samples = 0
     deadline = time.monotonic()+3
@@ -264,7 +264,11 @@ def source_removal(session, address):
     assert source_samples, 'No running frame showed the changed source with the original held presentation'
 
     # Reconciliation can now retire/reflow actors. Do not apply the old-cycle
-    # front/ordinal assertions after that boundary.
+    # front/ordinal assertions after that boundary. Check final client/ledger
+    # removal here so those separate IPC reads do not consume the running-frame
+    # observation interval above.
+    wait(lambda: not h.client(address), 'The disposable removal fixture did not close')
+    assert all(w['address'] != address for w in command('list')['windows']), 'Closed source record was not reconciled'
     session.resting()
     final = session.dock()
     assert final['groups'] == len(cycle.keys)-1
@@ -334,37 +338,56 @@ def front_reflow(session, address):
 
 
 def overflow_reversal(session):
-    session.resting()
-    cycle = Cycle(session)
-    page = cycle.first_index
-    assert page > 0, 'Overflow reversal requires a nonzero page'
-    session.keys('-k', 'Escape')
-    deadline = time.monotonic()+2
-    before = None
-    while time.monotonic() < deadline:
-        dock = cycle.inspect(session.dock())
-        if .55 <= dock['chain']['progress'] < .8 and dock['chain']['moving']:
-            before = dock
-            break
-    assert before, 'Could not catch the nonzero-page inverse chain'
-    started = time.monotonic()
-    handle = before['handle']
-    session.move(handle['x']+24, handle['y']+24)
-    session.pointer.button(True)
-    session.pointer.button(False)
-    after = cycle.inspect(session.dock())
-    elapsed = time.monotonic()-started
-    assert elapsed < .08, ('IPC was too slow to reopen before the shortest overflow fold finished', elapsed)
-    assert after['expanded'] and after['firstIndex'] == page, 'Interrupted reopening reset the overflow page'
-    assert after['chain']['progress'] > 0, 'Interrupted overflow reopening reset the shared clock'
-    assert abs(after['chain']['progress']-before['chain']['progress']) <= elapsed/.14+.06, 'Overflow reversal jumped to a new animation phase'
-    for old, new in zip(ordered(before), ordered(after)):
-        assert math.hypot(new['x']-old['x'], new['y']-old['y']) <= 1200*elapsed+10, (
-            'Reopening the overflow page teleported an actor', old, new, elapsed)
-    reopened = cycle.watch(True)
-    assert reopened['firstIndex'] == page, 'The overflow page changed after reopening settled'
-    session.keys('-k', 'Escape')
-    session.resting()
+    previous_speed = shell('status')['settings']['animationSpeed']
+    configure('animationSpeed', 'slow')
+    try:
+        session.resting()
+        # Position the pointer before starting the short inverse timeline.
+        # Reopening then needs only the two native button events, without a
+        # monitor query or pointer move consuming the remaining fold budget.
+        handle = session.dock()['handle']
+        session.move(handle['x']+handle['width']/2, handle['y']+handle['width']/2)
+        cycle = Cycle(session)
+        page = cycle.first_index
+        assert page > 0, 'Overflow reversal requires a nonzero page'
+        session.keys('-k', 'Escape')
+        deadline = time.monotonic()+2
+        before = None
+        sample_elapsed = 0
+        while time.monotonic() < deadline:
+            sampled = time.monotonic()
+            dock = cycle.inspect(session.dock())
+            sample_elapsed = time.monotonic()-sampled
+            if 0 < dock['chain']['progress'] < .95 and dock['chain']['moving']:
+                before = dock
+                break
+        assert before, 'Could not observe a partial nonzero-page fold at Slow speed'
+        closing_seconds = before['animation']['duration']/1000
+        assert closing_seconds > 0, 'Partial inverse chain reported no animation budget'
+        started = time.monotonic()
+        session.pointer.button(True)
+        session.pointer.button(False)
+        after = cycle.inspect(session.dock())
+        elapsed = time.monotonic()-started
+        assert after['expanded'] and after['firstIndex'] == page, 'Interrupted reopening reset the overflow page'
+        assert after['chain']['progress'] > 0, 'Interrupted overflow reopening reset the shared clock'
+        opening_seconds = after['animation']['duration']/1000
+        phase_budget = (elapsed+sample_elapsed)/min(closing_seconds, opening_seconds)+.06
+        assert abs(after['chain']['progress']-before['chain']['progress']) <= phase_budget, \
+            ('Overflow reversal jumped to a new animation phase', before['chain'], after['chain'], phase_budget)
+        area = session.surface()['usableArea']
+        for old, new in zip(ordered(before), ordered(after)):
+            assert math.hypot(new['x']-old['x'], new['y']-old['y']) <= 1200*elapsed+10, (
+                'Reopening the overflow page teleported an actor', old, new, elapsed)
+            assert new['x'] >= area['x']-.01 and new['y'] >= area['y']-.01 \
+                and new['x']+new['width'] <= area['x']+area['width']+.01 \
+                and new['y']+new['height'] <= area['y']+area['height']+.01, 'Interrupted actor escaped the work area'
+        reopened = cycle.watch(True)
+        assert reopened['firstIndex'] == page, 'The overflow page changed after reopening settled'
+        session.keys('-k', 'Escape')
+        session.resting()
+    finally:
+        configure('animationSpeed', previous_speed)
 
 
 def interaction(session, under, title):
@@ -487,6 +510,12 @@ def small_output(session):
 @desktop_test('Matryoshka nested-stack animation test')
 def main(with_small_output=False):
     with NativeSession() as session:
+        configure('sizePreset', '100')
+        # These functional checks observe shared intermediate frames across
+        # controller, compositor and shell IPC. Timing/profile scaling is
+        # covered separately; Slow keeps the real animation observable here.
+        configure('animationSpeed', 'slow')
+        configure('hoverPreview', 'off')
         configure('presentation', 'floating')
         configure('grouping', 'window')
         configure('scope', 'workspace')

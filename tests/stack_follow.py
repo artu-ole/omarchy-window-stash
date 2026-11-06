@@ -105,6 +105,7 @@ def close_fan(session):
 def main():
     with NativeSession() as session:
         for key, value in dict(presentation='floating', grouping='window', scope='workspace',
+                               sizePreset='100',
                                animations='full', animationSpeed='slow', hoverPreview='off',
                                dragMotion='physics', floatingPlacement='free', floatingDirection='horizontal',
                                floatingAnimation='arc', iconShape='square').items():

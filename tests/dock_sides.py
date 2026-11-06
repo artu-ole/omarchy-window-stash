@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 
@@ -19,6 +19,7 @@ def main():
     baseline={w['id'] for w in snapshot['windows']}
     monitor=next(m for m in h.read('monitors') if m['focused'])
     workspace=1000000+os.getpid()*10
+    fixture_workspace=workspace
     assert all(w['id'] not in range(workspace,workspace+2) for w in h.read('workspaces'))
     processes=[];addresses=[];output=None;bar=None;pointer=Pointer()
 
@@ -31,15 +32,27 @@ def main():
         return monitor['x']+x-left,monitor['y']+y-top,right-left,bottom-top
     def click(rect,button=272):pointer.click(*point(rect['x']+rect['width']/2,rect['y']+rect['height']/2),button=button)
     def spawn():
+        h.dispatch('focus',monitor=monitor['name']);h.dispatch('focus',workspace=str(fixture_workspace))
         title='Stash dock sides %s %s'%(os.getpid(),len(addresses))
         p=subprocess.Popen(['/usr/bin/python3',str(ROOT/'tests/test-window.py'),title],
             env=dict(os.environ,GDK_BACKEND='wayland',PYTHONDONTWRITEBYTECODE='1'),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         processes.append(p)
         c=wait(lambda:next((c for c in h.read('clients') if c['title']==title),None),'Test window missing')
+        if c['workspace']['id']!=fixture_workspace:
+            h.dispatch('window.move',window='address:'+c['address'],workspace=str(fixture_workspace),follow=True)
         addresses.append(c['address']);return c['address']
     def park(address,count):
         command('minimize','--address',address)
-        wait(lambda:surface()['groups']==count and not surface()['shelf']['animating'] and not surface()['motion']['shelfBusy'],'Dock group count did not settle')
+        try:
+            wait(lambda:surface()['groups']==count and not surface()['shelf']['animating'] and not surface()['motion']['shelfBusy'],'Dock group count did not settle')
+        except AssertionError:
+            s=surface()
+            print('Dock side fixture diagnostics:',{'expected':count,'fixtureWorkspace':fixture_workspace,
+                'surface':{key:s[key] for key in ('screen','workspaceId','groups','width','height','usableArea')},
+                'shelfAnimating':s['shelf']['animating'],'shelfBusy':s['motion']['shelfBusy'],
+                'ownedOrigins':[w['origin'] for w in command('list')['windows'] if w['address'] in addresses],
+                'monitors':[{key:m[key] for key in ('name','focused','activeWorkspace')} for m in h.read('monitors')]},flush=True)
+            raise
     def bounds(side):
         wait(lambda:not surface()['shelf']['animating'],'Dock resize did not settle')
         s=surface();p=s['shelf'];a=s['usableArea']
@@ -57,6 +70,7 @@ def main():
         return p
 
     try:
+        fixture_settings()
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot did not load')
         configure('presentation','dock');configure('scope','workspace');configure('grouping','window');configure('dockSide','bottom')
         configure('dockFrame','shown');configure('dockCorners','custom');configure('dockCornerRadius',64)
@@ -106,10 +120,19 @@ def main():
         output=monitor['name'];end=max(m['x']+round(m['width']/m['scale']) for m in h.read('monitors') if m['name']!=output)
         h.eval('hl.monitor({output=%s,mode="400x300@60",position=%s,scale=1.25})'%(json.dumps(output),json.dumps('%dx0'%end)))
         monitor=next(m for m in h.read('monitors') if m['name']==output)
-        h.dispatch('focus',monitor=output);h.dispatch('focus',workspace=str(workspace+1))
+        fixture_workspace=workspace+1
+        h.dispatch('focus',monitor=output);h.dispatch('focus',workspace=str(fixture_workspace))
+        # The empty layer surface is unmapped; use actual screen geometry via
+        # the work area's far edges until the fixture icons map that surface.
+        wait(lambda:any(s['screen']==output and s['workspaceId']==fixture_workspace
+                        and s['usableArea']['x']+s['usableArea']['width']==320
+                        and s['usableArea']['y']+s['usableArea']['height']==240
+                        for s in shell('status')['surfaces']),
+             'Scaled screen geometry and fixture workspace did not settle')
         configure('dockSide','top')
-        for i in range(6):park(spawn(),i+1)
-        wait(lambda:surface()['width']==320 and surface()['height']==240,'Scaled surface did not settle')
+        overflow_count=8
+        for i in range(overflow_count):park(spawn(),i+1)
+        wait(lambda:surface()['width']==320 and surface()['height']==240,'Mapped scaled surface did not settle')
         p=bounds('top');initial_y=p['y']
         initial_reserved=surface()['usableArea']['y']
         with tempfile.TemporaryDirectory(prefix='stash-test-bar-') as directory:
@@ -149,7 +172,7 @@ ShellRoot {
                 pointer.move(*point(x if vertical else max(1,x-step*10),max(1,y-step*10) if vertical else y));time.sleep(.04)
             pointer.button(False)
             wait(lambda:surface()['shelf']['contentY' if vertical else 'contentX']>10,'Could not scroll '+side+' dock')
-            assert len(command('list')['windows'])==len(baseline)+9,'Scrolling restored an unintended window'
+            assert len(command('list')['windows'])==len(baseline)+3+overflow_count,'Scrolling restored an unintended window'
         print('PASS all four dock sides scroll along their edge on a 1.25-scale small output',flush=True)
     finally:
         pointer.button(False)

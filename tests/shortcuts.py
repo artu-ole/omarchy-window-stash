@@ -80,29 +80,9 @@ def contained(rect, viewport):
 
 
 def reveal(session, key, part='fieldRect'):
-    for _ in range(12):
-        surface = session.surface()
-        viewport = surface['settingsScroll']['rect']
-        item = control(session, key)[part]
-        if contained(item, viewport):
-            return item
-        down = item['y']+item['height'] > viewport['y']+viewport['height']
-        preferred = viewport['y']+viewport['height']*(.8 if down else .2)
-        # Start over a label, rather than a text input or a dropdown.
-        labels = [c['rect']['y']+c['rect']['height']/2 for c in surface['settingControls'] if c['visible']]
-        labels += [c['fieldRect']['y']-10 for c in surface['shortcutControls']]
-        labels = [y for y in labels if viewport['y']+14 < y < viewport['y']+viewport['height']-14]
-        start = min(labels, key=lambda y: abs(y-preferred)) if labels else preferred
-        end = viewport['y']+8 if down else viewport['y']+viewport['height']-8
-        session.move(viewport['x']+3, start)
-        session.pointer.button(True)
-        for step in range(1, 7):
-            session.move(viewport['x']+3, start+(end-start)*step/6)
-            time.sleep(.02)
-        session.pointer.button(False)
-        time.sleep(.15)
-    raise AssertionError(('Shortcut control stayed outside the settings viewport', key, part,
-                          control(session, key), session.surface()['settingsScroll']))
+    from settings_fit import reveal as reveal_rect
+
+    return reveal_rect(session, lambda: control(session, key)[part])
 
 
 def open_settings(session):
@@ -169,6 +149,8 @@ def restored(address, before):
 @desktop_test('Configurable shortcuts and FIFO restore test')
 def main():
     with NativeSession() as session:
+        configure('sizePreset', '100')
+        configure('animationSpeed', 'normal')
         assert not any(w['origin']['id'] in range(session.workspace, session.workspace+5)
                        for w in session.snapshot['windows']), 'Test workspace overlaps an existing stash origin'
         configure('presentation', 'dock')

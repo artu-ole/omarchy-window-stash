@@ -23,11 +23,24 @@ origin_ws=None
 
 def wait(predicate, message, timeout=8):
     end=time.monotonic()+timeout
+    last_shell_error=None
     while time.monotonic()<end:
-        value=predicate()
+        try:
+            value=predicate()
+        except subprocess.CalledProcessError as error:
+            args=error.cmd
+            command=list(args[1:]) if isinstance(args,(tuple,list)) else []
+            status_poll=((len(command)>=2 and command[1]=='status')
+                         or (len(command)>=4 and command[:2]==['shell','call'] and command[3]=='status'))
+            if not command or Path(str(args[0])).name!='omarchy-shell' or not status_poll:
+                raise
+            # A shell restart briefly removes IPC targets. Retry status reads
+            # within the existing deadline; mutations and other tools fail fast.
+            last_shell_error=str(error.stderr or error.output or error).strip()
+            value=None
         if value:return value
         time.sleep(.08)
-    raise AssertionError(message)
+    raise AssertionError(message+(f'; last shell status error: {last_shell_error}' if last_shell_error else ''))
 
 
 def command(*args):
@@ -45,6 +58,32 @@ def shell(method,*args):
 def configure(key,value):
     shell('configure',key,str(value))
     wait(lambda:shell('status')['settings'].get(key)==value,'Setting did not update: '+key)
+
+
+def fixture_settings():
+    """Use deterministic legacy fixture geometry, motion and visible chrome.
+
+    Call inside a suite's preserving try/finally, after saving its preferences.
+    Domain-specific settings can then be exercised without inheriting unrelated
+    preferences from another suite or an interactive session.
+    """
+    values=dict(sizePreset='100',animationSpeed='normal',hoverPreview='off',
+                animations='full',dockOpacity=100,iconOpacity=100,
+                iconFrame='shown',dockFrame='shown',dragMotion='direct',
+                floatingPlacement='free',floatingAnimation='arc',
+                floatingDirection='vertical',iconShape='auto',dockCorners='theme',
+                dockCornerRadius=12,scope='global',restoreDestination='current',
+                grouping='window',presentation='dock',dockSide='bottom')
+    current=shell('status')['settings']
+    for key,value in values.items():
+        if current.get(key)!=value:configure(key,value)
+
+
+def require_empty_stash(snapshot):
+    """Refuse unsafe legacy fixtures before their destructive cleanup is armed."""
+    if snapshot['windows']:
+        raise RuntimeError('Run this legacy suite in an isolated desktop with an empty stash; '
+                           'existing stashed windows were left untouched')
 
 
 def spawn(title,xwayland=False):
@@ -71,6 +110,7 @@ def main():
     global original,origin_ws
     original=h.read('activewindow');origin_ws=h.read('activeworkspace')['id']
     assert not command('list')['windows'],'Restore your stash before running live tests'
+    fixture_settings()
     shell('dismiss')
     native=spawn('Window Stash native test')
     target='address:'+native
@@ -186,7 +226,8 @@ def main():
 
 @desktop_test('Window Stash live tests')
 def run():
-    settings=command('list')['settings']
+    snapshot=command('list');settings=snapshot['settings']
+    require_empty_stash(snapshot)
     try:main()
     finally:
         subprocess.run([binary,'restore-all','--to','current'],capture_output=True)

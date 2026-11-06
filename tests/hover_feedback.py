@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 
@@ -53,6 +53,7 @@ def main():
     def geom(r):return tuple(r[k] for k in ('x','y','width','height'))
 
     try:
+        fixture_settings()
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial snapshot missing')
         configure('animations','full');configure('scope','workspace');configure('grouping','window');configure('presentation','dock')
         configure('dockSide','bottom');configure('dockFrame','hidden');configure('iconShape','square')

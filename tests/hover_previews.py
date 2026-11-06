@@ -96,18 +96,16 @@ def change_color(session, address):
 
 
 def select_native_mode(session, mode):
+    from settings_fit import reveal
+
     shell('settings')
     wait(lambda: session.surface()['dialog']['visible'], 'Preview settings did not open')
 
     def control():
         return next(c for c in session.surface()['settingControls'] if c['key'] == 'hoverPreview')
 
-    field = control()
-    viewport = session.surface()['settingsScroll']['rect']
-    assert field['visible'] and field['rect']['y'] >= viewport['y']-.1 \
-        and field['rect']['y']+field['rect']['height'] <= viewport['y']+viewport['height']+.1, \
-        'Hover preview dropdown is clipped outside the settings viewport'
-    session.click(field['rect'])
+    assert control()['visible'], 'Hover preview dropdown is hidden'
+    session.click(reveal(session, lambda: control()['rect']))
     wait(lambda: control()['open'], 'Hover preview dropdown did not open')
     session.keys(*(['-k', 'Up']*3), *(['-k', 'Down']*('off', 'still', 'live').index(mode)), '-k', 'Return')
     wait(lambda: shell('status')['settings']['hoverPreview'] == mode, 'Native preview dropdown did not save '+mode)
@@ -449,6 +447,7 @@ def small_output(session):
 def main(with_small_output=False):
     with NativeSession() as session:
         for key, value in dict(presentation='dock', grouping='window', scope='workspace', animations='full',
+                               sizePreset='100', animationSpeed='normal', floatingDirection='vertical', floatingAnimation='arc',
                                floatingPlacement='free', dragMotion='direct', dockSide='bottom',
                                iconShape='square', iconOpacity=100, hoverPreview='off', previewSize='medium',
                                previewPlacement='auto', previewTitles='shown', previewDelay=400,

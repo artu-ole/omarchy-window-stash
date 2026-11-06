@@ -4,15 +4,17 @@ import json
 import subprocess
 import time
 import live
-from live import h,shell,command,configure,spawn,stash,wait,Pointer
+from live import h,shell,command,configure,spawn,stash,wait,Pointer,fixture_settings,require_empty_stash
 
 from desktop_test import desktop_test
 
 @desktop_test('Window Stash dock overflow test')
 def main():
     old=h.read('activewindow');old_ws=h.read('activeworkspace')['id']
-    monitors=h.read('monitors');settings=command('list')['settings'];virtual=None;pointer=None
+    monitors=h.read('monitors');snapshot=command('list');settings=snapshot['settings'];virtual=None;pointer=None
+    require_empty_stash(snapshot)
     try:
+        fixture_settings()
         assert not command('list')['windows']
         before={m['name'] for m in monitors}
         h.call('output','create','headless')
@@ -27,7 +29,13 @@ def main():
         def get_surface():return next(s for s in shell('status')['surfaces'] if s['screen']==virtual)
         s=wait(lambda:get_surface() if get_surface()['groups']==14 else None,'All dock entries did not appear')
         assert s['shelf']['contentWidth']>s['shelf']['viewportWidth'],s
-        assert s['shelf']['width']<=s['width']-32,s
+        shelf=s['shelf'];area=s['usableArea']
+        left=shelf['x']-area['x'];right=area['x']+area['width']-shelf['x']-shelf['width']
+        # The theme controls the outside margin. Verify actual centered space
+        # and usable-area containment instead of assuming a 16-pixel padding.
+        assert left>=0 and right>=0 and abs(left-right)<=1,s
+        assert shelf['width']<=area['width'],s
+        assert shelf['y']>=area['y'] and shelf['y']+shelf['height']<=area['y']+area['height'],s
         pointer=Pointer()
         all_monitors=h.read('monitors')
         left=min(m['x'] for m in all_monitors);top=min(m['y'] for m in all_monitors)

@@ -5,7 +5,7 @@ import os
 import subprocess
 import time
 
-from live import ROOT,h,command,shell,configure,wait
+from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
 
@@ -55,6 +55,7 @@ def main():
         subprocess.run(['grim','-g','%d,%d %dx%d'%(monitor['x']+rect['x']-2,monitor['y']+rect['y']-2,rect['width']+4,rect['height']+4),name],check=True)
 
     try:
+        fixture_settings()
         wait(lambda:monitor['name'] in shell('status')['screens'],'Initial snapshot missing')
         configure('presentation','dock');configure('dockSide','bottom');configure('scope','workspace');configure('grouping','window')
         configure('animations','full');configure('dockFrame','shown');configure('iconFrame','shown');configure('iconShape','square')
