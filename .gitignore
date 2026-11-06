@@ -28,3 +28,4 @@ backups/
 /bubbles.json
 /shell.json
 .DS_Store
+/assets/title-prompt.txt

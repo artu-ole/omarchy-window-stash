@@ -1,50 +1,31 @@
 # Window Stash
 
-![Diagram of Window Stash's static dock, floating bubbles, and expandable floating dock, with icon-shape and opacity samples.](assets/title.png)
+![Illustrated overview of tiling-window minimization: floating dock, static dock, floating bubbles, window previews, size and appearance presets, and motion controls.](assets/title.png)
 
-Window minimization for Omarchy. Park live Hyprland windows, then restore them to
-the current or original workspace. A QML frontend and standard-library Python
-controller; no compiled compositor plugin or additional daemon.
+Window minimization for tiling layouts in Omarchy/Hyprland. Stash live windows and
+restore them to their original or current workspace. Floating windows retain size
+and position; tiled windows rejoin the layout with saved width in scrolling layouts.
+
+A QML frontend inside Omarchy's shell and a standard-library Python controller.
+No compiled compositor plugin or separate daemon. Defaults: floating dock, edge
+gravity, transparent dock background, frameless icons, Normal animation speed.
 
 | Presentation | Behavior |
 |---|---|
-| **Static dock** | A slim dock on any screen edge. Respects bar reservations; long lists scroll. |
-| **Floating bubbles** | Separate draggable icons, starting at the middle right. Snap to edges or place freely. |
-| **Floating dock** | One draggable stack. A single window restores directly; multiple windows fan into a row or column, newest under the pointer. |
+| Static dock | Any of four screen edges; respects bar reservations and scrolls on overflow. |
+| Floating icons | Individual draggable icons, initially at the middle right; edge gravity or free placement. |
+| Floating dock | One draggable stack; one window restores directly, multiple windows unfold into a row or column. |
 
-Click the floating stack to fan out the same icons. The front icon stays at its
-original position, with only a small pulse or tilt depending on the style; the
-other icons follow the configured axis toward available screen space. Choose an
-unfold style in Settings: Arc (curved motion), Glide (straight slide), Cascade
-(staggered icons), Spring (weighted overshoot), Swing (a wider arc and tilt),
-Matryoshka / Matryoshka hops (successive stack deposits), or Jumping (squash, hop
-and landing bounce). Dismissal folds the icons back to their saved
-stack position. Leaving the fan starts an 800 ms grace period; returning cancels
-it. Outside clicks fold it immediately and reach the underlying window. Workspace
-changes also collapse the fan. Scroll or drag along the fan to reach overflow;
-arrow keys follow its physical direction. Reduced uses fades; Off is immediate.
-Outside-click detection uses non-consuming runtime mouse bindings while a fan is
-open. They are disabled on close/removal and reused until the next Hyprland config
-reload; existing mouse bindings are preserved.
+All modes use Omarchy's theme and controls, with global or per-workspace visibility
+and per-window or per-app grouping. An empty stash takes no screen space or input.
 
-Defaults to a floating dock with edge gravity, a transparent background, frameless
-icons and Normal animation speed.
+## Install, update, remove
 
-Uses Omarchy's theme and shared controls. Configure grouping, visibility, icon
-shapes, frames, corners, placement, and motion. Empty stashes occupy no screen
-space or input; floating surfaces leave the surrounding desktop click-through.
-
-## Setup
-
-Requires **Omarchy 4.0**, **Hyprland 0.56.2 with its Lua API**, and **Python 3.9+**.
-Tested on Omarchy 4.0.6-1. The shell must provide Quickshell, Qt 6.7+,
-`qs.Commons`, `qs.Ui`, `Quickshell.Widgets`, and `QtQuick.Effects`.
-Hover previews use the shell's `Quickshell.Wayland` module; no additional capture
-package is needed.
-Have `omarchy`, `omarchy-shell`, and `hyprctl` on `PATH`, with existing
-`~/.config/hypr/bindings.lua` and `~/.config/omarchy/shell.json`.
-
-Run as your normal user in an unlocked desktop session:
+Tested stack: Omarchy 4.0.6-1, Hyprland 0.56.2-4 (Lua API), Quickshell 0.3.2.r7,
+Qt 6.12.0 and Python 3.14.8. The shell must provide `qs.Commons`, `qs.Ui`,
+`Quickshell.Widgets`, `QtQuick.Effects` and `Quickshell.Wayland`.
+Have `omarchy`, `omarchy-shell`, `hyprctl`, `~/.config/hypr/bindings.lua` and
+`~/.config/omarchy/shell.json` available. Run as your normal desktop user:
 
 ```sh
 git clone https://github.com/artu-ole/omarchy-window-stash.git
@@ -53,295 +34,232 @@ python3 tools/install.py
 omarchy restart shell
 ```
 
-**Use the helper: generic Omarchy plugin installation does not install the
-controller or shortcuts.** Keep this separate checkout for updates and removal;
-the helper itself is not installed.
+**Use the helper.** Generic Omarchy plugin installation does not install the
+controller or shortcuts. Keep this checkout for updates and removal.
 
 The helper previews changes and asks for confirmation (`--yes` for automation).
-It installs `community.window-stash` under `~/.config/omarchy/plugins/`, creates
-`~/.local/bin/window-stash`, adds a marked shortcut loader to `bindings.lua`, and
-enables the plugin in `shell.json`. It checks shortcut conflicts, backs up
-configuration, reloads Hyprland while preserving runtime monitor geometry, and
-rescans shell plugins. It uses no root privileges, downloads, or packaged-file
-edits. If installed, `community.window-switcher` is patched for restoration;
-incompatible integration anchors abort installation. Tested with switcher 1.0.0.
+It installs `community.window-stash` in `~/.config/omarchy/plugins/`, creates
+`~/.local/bin/window-stash`, enables the plugin in `shell.json`, and adds a marked
+shortcut loader to `bindings.lua`. It checks shortcut conflicts, backs up config,
+reloads Hyprland while preserving runtime monitor geometry, and rescans plugins.
+It uses no root privileges or packaged-file edits. `community.window-switcher`, if
+present, is patched for restoration; incompatible anchors abort installation.
+Tested with switcher 1.0.0.
 
-Update with `git pull`, rerun the helper, then restart the shell. Settings persist.
-Remove from this checkout:
+Update with `git pull`, rerun the helper, then `omarchy restart shell`. Existing
+preferences persist. Remove from the checkout:
 
 ```sh
 python3 tools/install.py --uninstall
 ```
 
-Removal restores parked windows and removes the plugin, wrapper, binding block,
-and known switcher edits; saved positions remain. Run this **before** generic
-`omarchy plugin remove`, which does not run cleanup hooks. Configuration backups
-live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
+Removal restores parked windows and removes the plugin, wrapper, managed binding
+block and known switcher edits; saved positions remain. Run it **before** generic
+`omarchy plugin remove`, which does not run cleanup hooks. Backups are under
+`$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 `~/.local/state/omarchy/window-stash/backups`).
 
-## Controls
+## Use
 
 | Action | Input |
 |---|---|
-| Stash focused window | **Super+A** |
-| Restore last eligible window | **Super+Z** by default; newest first, obeys visibility scope |
-| Restore oldest eligible window | Assign **Restore oldest** in Settings; first in, first out, obeys visibility scope |
-| Restore / choose a grouped window | Click an icon; app groups open a searchable chooser |
-| Restore destination, close, settings, all windows | Right-click an icon or floating stack |
-| Close represented stashed window(s) | Middle-click an icon; collapsed stacks target their front icon |
-| Move bubbles / floating dock | Drag the icon / stack handle; positions persist per monitor |
-| Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
-| Collapse floating dock | Click outside, switch focus/workspace, or press Escape |
-| Preview a window | Hover an icon, floating stack, or chooser row; enable previews in Settings |
-| Use a preview | Click a thumbnail to restore its window, middle-click or use × to close, right-click for its window menu; wheel or drag to scroll large app groups |
+| Stash focused window | Super+A |
+| Restore newest eligible window | Super+Z; last in, first out |
+| Restore oldest eligible window | Assign Restore oldest in Settings; first in, first out |
+| Restore / choose an app-group window | Click an icon; groups open a searchable chooser |
+| Window actions and global actions | Right-click an icon or stack; pointer-positioned context menu |
+| Close represented stashed window(s) | Middle-click an icon; collapsed stacks target the front icon |
+| Move floating icons / dock | Drag; positions persist per monitor |
+| Navigate chooser / unfolded dock | Arrow keys and Enter; navigation follows dock direction |
+| Fold floating dock | Escape, outside click or workspace change |
+| Preview a window | Hover an icon, stack or chooser row; enable previews in Settings |
 
-Edit shortcuts in Settings using chords such as `SUPER + SHIFT + Z`. Apply saves
-and activates the binding; × disables it and ↺ restores its default. Minimize
-defaults to Super+A, restore newest to Super+Z, and restore oldest is unbound.
-Duplicate and existing desktop shortcuts are rejected without replacing them.
-Bindings survive shell restarts and compositor reloads. Updates migrate the
-installer's old shortcut block while preserving other personal bindings.
-Explicit overrides already in that block are retained until uninstallation.
-
-Settings are grouped into General, Placement, Appearance, Motion, Previews, and
-Keyboard shortcuts. Controls follow the selected mode; preview timing and dock
-corner controls stay with their related options.
-Reset all settings asks for confirmation, then restores every preference and
-default shortcut. Parked windows and saved floating positions are retained.
-The CLI equivalent is `window-stash reset-settings --confirm`. A conflict with
-another desktop shortcut leaves the existing settings and bindings intact.
-Open settings or the global recovery chooser even when the stash is empty:
+Context menus separate window/app actions from Settings, recovery and scope-aware
+Close all; outside clicks dismiss and reach the underlying window. Open Settings
+or recovery with an empty stash:
 
 ```sh
 omarchy-shell window-stash settings
 omarchy-shell window-stash all
 ```
 
-## Configuration
+Edit shortcuts in Settings: Apply saves and activates, × disables, ↺ restores
+its default. Restore oldest starts unbound; duplicate/occupied chords are rejected.
+Bindings survive shell/compositor reloads; installation preserves personal bindings
+and migrates the managed block's explicit overrides.
 
-Settings belong to the `community.window-stash` entry in
-`~/.config/omarchy/shell.json`. Use the UI or the shell's plugin-scoped API:
+Settings are grouped by purpose. Reset all settings requires confirmation and
+restores every preference and default shortcut atomically. Conflicts leave
+settings and bindings intact; parked windows and positions are retained.
+CLI equivalent: `window-stash reset-settings --confirm`.
+
+## Configuration reference
+
+Settings live in the `community.window-stash` entry in `~/.config/omarchy/shell.json`.
+Use Settings or plugin-scoped IPC; changes apply without a shell restart:
 
 ```sh
-omarchy-shell window-stash configure presentation floating
-omarchy-shell window-stash configure iconShape squircle
-omarchy-shell window-stash configure animations reduced
-omarchy-shell window-stash configure animationSpeed fast
-omarchy-shell window-stash configure dockOpacity 60
-omarchy-shell window-stash configure iconOpacity 75
+omarchy-shell window-stash configure presentation dock
+omarchy-shell window-stash configure sizePreset 150
+omarchy-shell window-stash configure floatingAnimation jumping
 omarchy-shell window-stash configure hoverPreview live
 ```
 
 | Key | Default | Values / meaning |
 |---|---|---|
 | `presentation` | `floating` | `dock`, `bubbles`, `floating` |
-| `scope` | `global` | `global`: repeat the stash on every monitor; `workspace`: filter by each screen's active workspace |
+| `scope` | `global` | `global`: repeat stash on every monitor; `workspace`: filter by each monitor's active workspace |
 | `restoreDestination` | `current` | `current`, `original` |
-| `grouping` | `window` | `window`, `app` (count badge and window chooser) |
-| `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
-| `sizePreset` | `100` | `50`, `75`, `100`, `125`, `150`, `175`, `200`, `250`, `300` percent; icon and dock size across all presentations |
-| `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock only |
-| `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
-| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`, `jumping`; unfold/fold style, overridden by Reduced/Off |
+| `grouping` | `window` | `window`, `app`; app groups have a count badge and searchable chooser |
+| `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle`; retained while frameless |
+| `sizePreset` | `100` | `50`, `75`, `100`, `125`, `150`, `175`, `200`, `250`, `300` percent; all presentations |
+| `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock |
+| `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock |
+| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`, `jumping` |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
-| `dragMotion` | `physics` | `physics`: momentum and gentle collisions; `direct`: direct placement with the existing edge glide |
-| `iconFrame` | `hidden` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
-| `dockFrame` | `hidden` | `shown`, `hidden`; static and expanded floating docks |
-| `dockOpacity` | `100` | Integer `0`–`100`%; dock background and border at rest |
-| `iconOpacity` | `100` | Integer `0`–`100`%; icons, frames and badges at rest, across all presentations |
+| `dragMotion` | `physics` | `physics`: momentum/collisions; `direct`: direct placement and edge glide |
+| `iconFrame` | `hidden` | `shown`, `hidden`; hidden removes background/border and enlarges artwork |
+| `dockFrame` | `hidden` | `shown`, `hidden`; static and floating docks |
+| `dockOpacity` | `100` | Integer 0–100%; dock background and border at rest |
+| `iconOpacity` | `100` | Integer 0–100%; artwork, frames and badges at rest |
 | `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |
-| `dockCornerRadius` | `12` | Integer `0`–`64` pixels in custom mode, clamped to panel dimensions |
-| `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
-| `animationSpeed` | `normal` | `slow` (0.5×), `relaxed` (0.75×), `normal` (1×), `fast` (1.5×), `ultrafast` (2.5×) playback speed |
-| `hoverPreview` | `off` | `off`, `still`, `live`; Still captures each thumbnail when it becomes visible, Live updates visible thumbnails while the card is open |
-| `previewSize` | `medium` | `small`, `medium`, `large`; maximum image widths of 200, 280, or 380 logical pixels, reduced to fit the work area |
-| `previewPlacement` | `auto` | `auto`, `above`, `below`, `left`, `right`; flips or shrinks when the requested side has insufficient room |
-| `previewTitles` | `shown` | `shown`, `hidden` |
-| `previewDelay` | `400` | Integer `0`–`1500` ms before showing a preview |
-| `previewHideDelay` | `200` | Integer `0`–`1000` ms grace period when moving between the source icon and its card |
-| `minimizeShortcut` | `SUPER + A` | Minimize the focused window; empty disables |
-| `restoreLastShortcut` | `SUPER + Z` | Restore the newest eligible window; empty disables |
-| `restoreOldestShortcut` | empty | Restore the longest-stashed eligible window; empty disables |
+| `dockCornerRadius` | `12` | Integer 0–64 px in custom mode; clamped to panel dimensions |
+| `animations` | `full` | `full`: spatial motion and feedback; `reduced`: fades/color without movement or scaling; `off`: immediate |
+| `animationSpeed` | `normal` | `slow` (0.5×), `relaxed` (0.75×), `normal` (1×), `fast` (1.5×), `ultrafast` (2.5×) |
+| `hoverPreview` | `off` | `off`, `still`, `live` |
+| `previewSize` | `medium` | `small`, `medium`, `large`; maximum image widths 200/280/380 logical px, reduced to fit |
+| `previewPlacement` | `auto` | `auto`, `above`, `below`, `left`, `right`; flips/shrinks when space is limited |
+| `previewTitles` | `shown` | `shown`, `hidden`; title strips include a per-window × close button |
+| `previewDelay` | `400` | Integer 0–1500 ms before opening |
+| `previewHideDelay` | `200` | Integer 0–1000 ms grace between source and preview |
+| `minimizeShortcut` | `SUPER + A` | Minimize focused window; empty disables |
+| `restoreLastShortcut` | `SUPER + Z` | Restore newest eligible window; empty disables |
+| `restoreOldestShortcut` | empty | Restore oldest eligible window; empty disables |
 
-Size presets scale the static dock, floating icons and floating dock together.
-The 100% default keeps 44-pixel static icons and 48-pixel floating icons; larger
-sizes cap to fit the output's usable area.
+At 100%, static icons are 44 logical px and floating icons 48 px. Larger presets
+cap to the usable output area. Frames can be hidden independently; large corner
+radii retain icon clearance. Hover restores full opacity; pressed and selected
+icons stay opaque. At 0% opacity, elements retain their usual input regions.
 
-Preview cards follow the Omarchy popup theme and work across all presentations
-and chooser rows. A collapsed stack previews its front window or app group;
-app groups show their windows side by side, each with its own title and × close
-button when titles are shown. Middle-click closes a window with titles hidden
-as well. Larger groups resize evenly, then scroll horizontally when they exceed
-the available space. Hovering never focuses, moves, or restores a window.
-Pressing or dragging an icon, source motion,
-context menus, settings, and workspace changes dismiss previews. Settings scroll
-on shorter displays.
+## Motion and previews
 
-Hover smoothly restores full opacity; pressed and keyboard-selected icons stay
-opaque. Dock and icon opacity are independent. Transparent elements retain their
-normal input regions, including at 0%; menus and settings keep their theme opacity.
-Fades follow the animation setting.
+| Unfold style | Motion |
+|---|---|
+| Arc | Curved travel with a small overshoot. |
+| Glide | Synchronized straight slide. |
+| Cascade | Staggered icons; folding starts at the far end. |
+| Spring | Weighted overshoot. |
+| Swing | Wider arc with a small tilt. |
+| Matryoshka | Remaining stack moves together, leaving one icon at each stop. |
+| Matryoshka hops | The same deposits through successive arches. |
+| Jumping | Individual jumps from the stack with squash/stretch and damped landing rebounds. |
 
-Animation speed scales transitions and staggering across all fan styles, icon
-arrivals/exits, reflow, artwork, previews, hover/button feedback, Direct edge
-glides, and final settling. Easing and destinations stay the same. Preview hover
-delays, capture timeouts, and physical momentum use real time. The fan's 800 ms
-pointer-leave grace starts after unfolding finishes; outside clicks still dismiss
-immediately. Reduced continues to suppress spatial motion; Off stays immediate
-at every speed.
+The original front stays fixed; other icons expand toward available space.
+Horizontal curves arch upward, flattening near the top edge; folding returns icons
+to the stack. The background grows along the row/column with fixed thickness.
+Matryoshka variants use a 1.5× base rate, multiplied by the speed preset.
 
-Matryoshka moves the remaining stack together to each next slot, leaving one
-icon behind at every stop. Matryoshka hops uses the same sequence with an arch
-between stops. The original front icon stays fixed; folding collects the icons
-in reverse. Both follow the floating direction and keep movement inside the
-work area. Both variants use a 1.5× base playback rate, scaled by the animation
-speed preset. Reduced/Off use immediate positions instead.
+An unfolded dock has an 800 ms pointer-leave grace after animation completes;
+returning cancels it. Outside clicks fold immediately and reach the window below.
+Scroll or drag for overflow. Speed scales transitions/staggering; hover delays,
+capture timeouts and physical momentum use real time. Full/Reduced/Off apply throughout.
 
-Jumping sends each trailing icon from the stack to its own slot with slight
-squash and stretch and a damped landing bounce. The front icon stays fixed;
-animation speed and Reduced/Off apply as with the other styles.
+Physics dragging supports flicks, damped coasting and gentle collisions. Edge
+gravity settles at a screen edge; free mode coasts to rest. Back icons trail the
+dragged stack on damped springs, affected by animation speed, then restack.
+Grabbing, menus or unfolding stop momentum; Direct and Reduced/Off keep a rigid
+stack. Motion remains in the usable work area; only resting positions persist.
 
-Horizontal curved styles always arch above the row, whether unfolding left or
-right. Near the top of the work area, arches flatten to fit the available room.
+Still previews capture once when a thumbnail becomes visible; Live refreshes
+visible thumbnails. App groups display windows side by side and scroll when
+needed. Click a thumbnail to restore that window, right-click for its menu,
+middle-click or use the title's × to close it. Hover never focuses, moves or
+restores windows. Dragging, source motion, menus, settings and workspace changes
+dismiss previews; hidden/offscreen captures are released.
 
-The floating dock background keeps a fixed thickness while growing along the
-row or column; jumping icons move freely above it without stretching its frame.
+## Restoration and controller API
 
-With Physics and Full animations, floating icons and the collapsed stack's front
-icon track the pointer directly, then coast after a flick. Icons gently nudge one
-another; edge mode docks near the predicted stopping point and free mode coasts
-to rest.
-Grabbing, opening a menu, or unfolding stops momentum immediately. Only resting
-positions are saved, including nudged neighbors. Motion stays inside the current
-monitor's usable area. Reduced/Off suppress inertia and collisions.
+- Floating windows restore logical size and monitor-relative position, bounded
+  by the destination work area and application limits.
+- Tiled windows rejoin the layout. Scrolling layouts append a column in their
+  configured direction and recover saved width, subject to layout/application limits.
+  Dwindle uses normal insertion.
+- Maximized, fullscreen and pinned state is restored after geometry. A stashed
+  Hyprland group member restores as a separate window.
+- Empty original workspaces can be recreated. For a missing monitor, its local
+  workspace slot maps to the invoking monitor's bank, honoring `hypr/monitor-workspaces.lua`.
+  Workspace-ID changes update origins; arbitrary external merges cannot be reversed.
+- Closed windows leave the stash. Shell restarts retain records; logout or a
+  compositor restart does not restore application sessions. Other tools' scratchpads
+  and minimized windows are outside plugin ownership.
 
-A collapsed floating dock's visible back icons trail the front on damped springs
-in both axes during dragging and coasting, then restack. Slow gives a heavier
-trail; Fast and Ultrafast tighten the follow. The followers stay within the work
-area and add no input regions or saved positions. Unfolding continues smoothly
-from a trail that is still settling. Direct dragging and Reduced/Off keep a rigid
-stack.
-
-Frames can be hidden independently. Automatic shapes and theme corners follow
-the desktop; custom choices persist when their frames are hidden. Rounded docks
-reserve space at their ends so large radii keep icons intact without increasing
-dock thickness. Placement
-still applies with animations off. Changes take effect without a shell restart.
-
-## Restoration contract
-
-- **Floating:** restore logical size and monitor-relative position, clamped to
-  the destination work area and application size limits.
-- **Tiled:** insert a new tile. Scrolling layouts append a column in the
-  configured direction and restore the saved visible width, subject to layout
-  policy and application limits. Dwindle uses normal insertion.
-- **State:** restore maximized, fullscreen, and pinned state after geometry.
-  Stashing one Hyprland group member restores it as a separate window.
-- **Workspaces:** recreate an empty original workspace when needed. If its
-  monitor is missing, map its local slot to the invoking screen's workspace bank,
-  honoring `hypr/monitor-workspaces.lua`. Workspace-ID changes update origins;
-  arbitrary external workspace merges cannot be reversed automatically.
-- **Lifetime:** closed windows leave the stash. Shell restarts preserve it;
-  logout/compositor restart does not restore application sessions. Existing
-  scratchpads and windows minimized by other tools are outside plugin ownership.
-
-Right-click opens a pointer-positioned context menu. Restore and close actions
-above the separator target that icon's window or app group; a collapsed stack
-targets its front icon. Global actions below the separator include Settings,
-the recovery chooser, and Close all (following Stash visibility). Outside clicks
-dismiss the menu and reach the underlying window.
-
-## Controller API and recovery
-
-The controller works without the QML frontend. Commands return JSON (`ok` plus
-result/error); failures exit nonzero.
+The controller works without QML. Commands return JSON (`ok` and result/error);
+failures exit nonzero:
 
 ```sh
-window-stash minimize                          # optional: --address ADDRESS
-window-stash restore-last                      # optional: --to current|original
-window-stash restore-oldest                    # FIFO; same scope and destination options
+window-stash minimize                         # optional --address ADDRESS
+window-stash restore-last                     # newest; optional --to current|original
+window-stash restore-oldest                   # oldest; same scope/destination options
+window-stash restore ID --to original         # ID or live address
+window-stash restore-all --to current         # recovery; ignores visibility scope
+window-stash close ID [ID ...]                # owned stashed windows only
+window-stash close-all                        # follows visibility scope
 window-stash shortcut restoreOldestShortcut 'SUPER + ALT + Z'
-window-stash shortcut restoreOldestShortcut '' # disable this shortcut
-window-stash restore ID --to original          # ID or live window address
-window-stash restore-all --to current          # global recovery, ignores scope
-window-stash close ID [ID ...]                 # only owned stashed windows
-window-stash close-all                         # follows global/workspace scope
-window-stash list                              # reconciled windows/settings/positions
-window-stash status                            # alias of list
+window-stash shortcut restoreOldestShortcut '' # disable
+window-stash shortcuts-sync
+window-stash reset-settings --confirm
+window-stash list                             # reconciled windows/settings/positions
+window-stash status                           # alias of list
 ```
 
-Close commands send normal window-close requests and confirm disappearance. A
-batch shares a 750 ms grace period; remaining windows restore to the invoking
-workspace for save prompts. Unstashed windows are untouched; failures return
-per-window results and leave recoverable records.
+Restore/close accept `--monitor OUTPUT --workspace ID` to preserve context.
+Close requests confirm disappearance with a shared 750 ms batch grace; survivors
+restore for save prompts. Failures retain records; unstashed windows are untouched.
+`activate ADDRESS` restores an owned window or focuses an unmanaged one. Internal
+helpers: `position MONITOR KEY X Y`, `rebase OLD_ID NEW_ID`. Frontend IPC exposes
+`status`, `refresh` and `dismiss` via `omarchy-shell window-stash`.
 
-Restore and close commands accept `--monitor OUTPUT --workspace ID` to pin invocation
-context before a chooser takes focus. `activate ADDRESS` restores an owned
-window or focuses an unmanaged one. Internal helpers: `position MONITOR KEY X Y`
-and `rebase OLD_ID NEW_ID`. Frontend IPC also exposes `status`, `refresh`, and
-`dismiss` through `omarchy-shell window-stash`.
+## Implementation and local data
 
-## Internals and local data
-
-[Service.qml](Service.qml) serializes controller requests and watches compositor
-events and state/config files. Visible edge surfaces refresh bar reservations
-every 1.5 seconds. [ui/](ui/) contains the themed surfaces, placement model,
-feedback, and keyed animation lifecycles. The shared drag world uses a
-frame-driven fixed-step simulation with bounded momentum and soft collisions. [controller/stash.py](controller/stash.py)
-parks windows on `special:minimized` with ownership tags, validates client
-identity, and writes an atomic, locked ledger before moving windows. Interrupted
-restores retain records for retry.
+[Service.qml](Service.qml) serializes requests and watches compositor/config state;
+[ui/](ui/) owns surfaces, keyed actors, input regions and frame-driven physics.
+[controller/stash.py](controller/stash.py) parks windows on `special:minimized` with
+ownership tags and address-reuse guards. Its locked, atomic ledger retains interrupted
+restores for retry. [controller/shortcuts.py](controller/shortcuts.py) owns runtime bindings.
 
 | Data | Location |
 |---|---|
 | Session ledger | `$XDG_RUNTIME_DIR/omarchy-window-stash/<sanitized compositor signature>/state.json` |
-| Persistent bubble / stack positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
-| Plugin settings | `$XDG_CONFIG_HOME/omarchy/shell.json` |
-| Shortcut synchronization lock (empty) | `$XDG_CONFIG_HOME/omarchy/.window-stash-shortcuts.lock` |
+| Floating positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
+| Settings / empty shortcut lock | `$XDG_CONFIG_HOME/omarchy/shell.json` / `.window-stash-shortcuts.lock` |
 
-XDG config/state fall back to `~/.config` and `~/.local/state`. Runtime records
-include window titles, application IDs, monitor identity, and geometry; persistent
-positions can include monitor identifiers. These stay local. No telemetry or
-network requests. App icons resolve from installed desktop entries and themes.
+XDG config/state default to `~/.config` and `~/.local/state`. Records contain titles,
+app IDs, monitor identifiers and geometry; persistent positions can identify monitors.
+These stay local; no telemetry or network requests. Icons come from local themes.
+Preview frames stay in memory and are discarded on close; no thumbnail files are
+saved. Background apps may stop drawing, leaving their last frame; capture failure
+falls back to an icon and respects compositor restrictions. Keep runtime data out of commits.
 
-Previews use native [ScreencopyView](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/ScreencopyView/)
-with each visible thumbnail captured independently. Sources must match the stash's exact
-window identity and ownership; hidden windows stay in their special workspace.
-Offscreen thumbnails release their capture; returning to one refreshes its Still
-image. Frames remain in memory and are released when the card closes; no thumbnail files
-are saved. Background applications may stop drawing, so a live card can retain
-its last frame. Capture failures or timeouts show the app icon, and compositor
-capture restrictions are respected.
-
-## Development
+## Development and attribution
 
 ```sh
-python3 tools/check.py             # unit/model checks, offscreen Qt, manifest, qmllint
-python3 tests/live.py              # controller + desktop integration
-python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
-python3 tests/animation_speed.py   # speed presets, duration scaling and live changes
-python3 tests/shortcuts.py         # settings, conflicts, live bindings and FIFO/LIFO restore
-python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
-python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
-python3 tests/floating_panel.py --small-output # fixed background thickness, jumping icons and input
-python3 tests/matryoshka.py --small-output # nested-stack stages, inverse folding, both axes and overflow
-python3 tests/jumping.py           # squash/stretch, landing rebounds, reversal and accessibility
-python3 tests/hover_previews.py --small-output # native captures, hover lifecycle, grouping and bounded placement
-python3 tests/close_actions.py     # isolated ledger: closure, scope and native save prompts
-python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-through and scaled output
-python3 tests/middle_close.py      # pending icons, grouped close and cancellation
-python3 tests/drag_physics.py      # real flicks, collisions, catching, edges and saved positions
-python3 tests/stack_follow.py      # trailing stack springs, speed presets and unfold handoff
-python3 tests/sizing.py            # size presets, artwork/input, resizing and small-output overflow
-python3 tests/reset_settings.py    # confirmation, cancellation, defaults and preserved window state
+python3 tools/check.py # Python/Node checks, offscreen Qt, manifest, qmllint
 ```
 
-Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator
-(with `jq`); standalone `lua` enables the owned-handle tests. Desktop suites also require an unlocked session, the installed
-plugin, `/usr/bin/python3` with GTK4 introspection, `wtype`, `notify-send`, and
-`grim`. Start with an empty stash. Suites use disposable windows/virtual outputs,
-notify **five seconds before taking input**, and restore desktop state in cleanup.
-See [tests/](tests/) and [VALIDATION.md](VALIDATION.md) for coverage and commands.
+See [tests/](tests/) and [VALIDATION.md](VALIDATION.md) for native suites and coverage.
+Checks need Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator with `jq`;
+standalone `lua` enables handle tests. Native suites need an unlocked installed
+session, GTK4 introspection, `wtype`, `notify-send` and `grim`.
 
-Copyright © 2026 **artu-ole** · [AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md).
-Header diagram: [generation prompt](assets/title-prompt.txt).
+NativeSession-based suites preserve windows, stash and preferences. Legacy suites,
+including `tests/live.py`, need an empty, isolated test desktop; read their setup
+requirements first. Input automation announces itself **five seconds before starting**;
+follow [AGENTS.md](AGENTS.md).
+
+Copyright © 2026 **artu-ole** · [AGPL-3.0-only](LICENSE) ·
+[Third-party notices](THIRD_PARTY_NOTICES.md).
+
+**AI assistance.** OpenAI Codex was used extensively for implementation, tests,
+documentation and debugging. The header illustration was generated with OpenAI
+image generation. The plugin makes no AI service
+calls at runtime.
