@@ -4,7 +4,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 
 | Requirement | Evidence |
 |---|---|
-| Controller state, settings, LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 42 passing Python controller tests |
+| Controller state, settings, FIFO/LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 47 passing Python controller tests |
 | Grouping, filtering, ordering and bubble placement | Passing Node model checks |
 | Valid plugin and QML | Omarchy manifest validator and Qt6 qmllint pass without warnings |
 | Exact floating size and position | Live native Wayland GTK test |
@@ -47,6 +47,8 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Input regions | A click outside bubbles reaches a GTK window underneath |
 | Icon shapes | Live native dropdown, all five bubble shapes, corner input, squircle dragging, dock restore and saved choice after shell restart; model checks cover exact squircle input pixels and legacy setting defaults |
 | Desktop test notice | All desktop suites notify before a five-second countdown; unit checks verify ordering, refusal without a notification, and completion on failure |
+| Configurable shortcuts and FIFO restoration | Native Settings Apply/Return normalization, Clear/Default, duplicate/foreign conflict rejection with unchanged settings and active handles, retained failed drafts and error recovery; actual configured minimize, newest and oldest key presses restore only eligible owned fixtures in LIFO/FIFO order with exact floating geometry; rebinding disables the prior chord and empty oldest disables FIFO. A non-default shortcut survives both shell restart and compositor configuration reload |
+| Shortcut migration and ownership | 12 isolated backend tests cover canonical chords, exact owned-handle identities, conflicts, serialization, atomic persistence/rollback, and Lua bootstrap/handle reuse. 17 installer tests cover consent, recognized legacy calls/paired overrides, byte-preserved outside configuration, duplicate lookalikes, customized blocks, loader updates and uninstall; live migration retains the existing Super+A override and A/Z defaults |
 | App grouping and chooser | Group two windows, open chooser by mouse, search by keyboard and restore with Enter |
 | Restore destination | Live original/current destination checks and original-workspace context action |
 | Global/workspace scope | Live one-, two-, and three-output checks in dock and bubble modes |
@@ -68,7 +70,7 @@ Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
 `python3 tests/scrolling_width.py`, `python3 tests/icon_shapes.py`, and
-`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, and `python3 tests/animation_speed.py`, and `python3 tests/stack_follow.py`, and `python3 tests/floating_panel.py --small-output`. Pinned restoration and workspace-ID event handling
+`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, and `python3 tests/animation_speed.py`, and `python3 tests/stack_follow.py`, and `python3 tests/floating_panel.py --small-output`, and `python3 tests/shortcuts.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 Validation did not upgrade system packages or modify packaged Omarchy files.
@@ -84,14 +86,14 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.19.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.20.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
 | Consent before configuration edits | Helper displays its plan and prompts before any writes; non-interactive runs require explicit `--yes`; refusal and consent tests pass |
 | File layout | No symlinks, bundled executables, credentials, or private runtime data in the source folder |
 | Shared UI | Uses installed Omarchy theme tokens and UI components; icons are looked up locally rather than bundled |
-| Checks after publishing preparation | 49 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
+| Checks after publishing preparation | 80 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
 
 The current installation path requires manual setup. Generic `omarchy plugin
 add` does not install the controller wrapper or shortcuts, and generic removal

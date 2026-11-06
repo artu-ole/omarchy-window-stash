@@ -33,8 +33,16 @@ Item {
   property var pendingCloseIds:({})
   property var runningArgs:[]
   property bool closeNotified:false
+  readonly property var shortcutKeys:["minimizeShortcut","restoreLastShortcut","restoreOldestShortcut"]
+  readonly property bool shortcutsBusy:(worker.running && runningArgs[0]==="shortcut") || queue.some(function(args) { return args[0]==="shortcut" })
+  readonly property string shortcutStamp:JSON.stringify(shortcutKeys.map(function(key) { return snapshot.settings[key] }))
+  property var deferredSettings:[]
+  property string shortcutSyncError:""
+  onShortcutStampChanged:shortcutSyncDelay.restart()
 
   signal pointerClicked(real x,real y)
+  signal shortcutConfigured(string key,string value)
+  Timer { id:shortcutSyncDelay; interval:0; onTriggered:root.enqueue(["shortcuts-sync"]) }
   StashClickObserver {
     id:clickObserver
     watching:root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
@@ -142,6 +150,7 @@ Item {
         notifyCloseError(lastError)
       }
     }
+    if (runningArgs[0]==="shortcut") pendingRefresh=true
     Qt.callLater(pump)
   }
   function openDialog(kind, name, windows, group) {
@@ -184,6 +193,16 @@ Item {
   }
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
+    shortcutSyncError=""
+    if (shortcutKeys.indexOf(key)>=0) {
+      lastError=""
+      enqueue(["shortcut",key,String(value)])
+      return
+    }
+    if (shortcutsBusy) {
+      deferredSettings=deferredSettings.concat([[key,value]])
+      return
+    }
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
       iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"],animationSpeed:["slow","relaxed","normal","fast","ultrafast"]}
@@ -209,6 +228,11 @@ Item {
     snapshot = next
     shell.updateEntryInline(pluginId, patch)
     refresh()
+  }
+  function applyDeferredSettings() {
+    if (shortcutsBusy || !deferredSettings.length) return
+    var edits=deferredSettings.slice(); deferredSettings=[]
+    edits.forEach(function(edit) { root.setting(edit[0],edit[1]) })
   }
   function positionPending(key) {
     function targets(args) { return args[0]==="position" && args[2]===key }
@@ -246,13 +270,29 @@ Item {
       onStreamFinished: {
         try {
           var result = JSON.parse(text)
-          if (result.windows) root.snapshot = result
+          if (result.windows) { root.snapshot = result; Qt.callLater(root.applyDeferredSettings) }
           if (result.action==="close" && result.restored>0) { root.closeContext(); root.closeDialog() }
           if (result.ok === false) {
-            root.lastError = result.error || "Window action failed"
+            var message=result.error || "Window action failed"
+            if (root.runningArgs[0]==="shortcuts-sync") {
+              var previous=root.shortcutSyncError; root.shortcutSyncError=message
+              if (!root.lastError || root.lastError===previous) root.lastError=message
+            } else root.lastError=message
             if (root.runningArgs[0]==="close") root.notifyCloseError(root.lastError)
           }
-          else if (!result.windows) { root.lastError = ""; root.pendingRefresh = true }
+          else if (!result.windows) {
+            if (root.runningArgs[0]!=="shortcuts-sync") root.lastError = ""
+            else {
+              if (root.lastError===root.shortcutSyncError) root.lastError=""
+              root.shortcutSyncError=""
+            }
+            root.pendingRefresh = true
+            if (root.runningArgs[0]==="shortcut" && result.key!==undefined && result.binding!==undefined) {
+              var next=Object.assign({},root.snapshot), settings=Object.assign({},root.snapshot.settings)
+              settings[result.key]=result.binding; next.settings=settings; root.snapshot=next
+              root.shortcutConfigured(result.key,result.binding)
+            }
+          }
           if (root.runningArgs[0]==="close") root.pendingRefresh=true
         } catch (error) {
           root.lastError = "Could not read controller response: " + String(error)
@@ -276,6 +316,7 @@ Item {
     target: Hyprland
     function onRawEvent(event) {
       if (!event) return
+      if (event.name==="configreloaded") shortcutSyncDelay.restart()
       if (root.contextOpen && (event.name==="workspace" || event.name==="workspacev2" || event.name==="monitorremoved")) root.closeContext()
       if (event.name === "changeworkspaceid") {
         var parts = String(event.data || "").split(",")

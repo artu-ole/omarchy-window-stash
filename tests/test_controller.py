@@ -219,7 +219,8 @@ class ControllerTests(unittest.TestCase):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
             grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
-            hoverPreview="off",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200))
+            hoverPreview="off",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
+            minimizeShortcut="SUPER + A",restoreLastShortcut="SUPER + Z",restoreOldestShortcut=""))
 
     def test_hover_preview_defaults_and_legacy_settings(self):
         self.settings(presentation="bubbles", scope="workspace", iconOpacity=72)

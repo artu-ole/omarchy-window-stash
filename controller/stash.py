@@ -13,11 +13,15 @@ import tempfile
 import time
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import shortcuts
+
 PLUGIN = "community.window-stash"
 SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
 DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
+DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
@@ -170,8 +174,10 @@ class Stash:
     def settings(self):
         config = read_json(self.config, {})
         entry = next((p for p in config.get("plugins", []) if p.get("id") == PLUGIN), {})
-        return {k: entry.get(k) if (not isinstance(CHOICES[k], range) or type(entry.get(k)) is int)
-                and entry.get(k) in CHOICES[k] else v for k, v in DEFAULTS.items()}
+        result={k: entry.get(k) if (not isinstance(CHOICES[k], range) or type(entry.get(k)) is int)
+                and entry.get(k) in CHOICES[k] else v for k, v in DEFAULTS.items() if k not in shortcuts.DEFAULT_SHORTCUTS}
+        result.update(shortcuts.settings(entry))
+        return result
 
     def snapshot(self):
         return self.hypr.read("clients"), self.hypr.read("monitors"), self.hypr.read("workspaces")
@@ -534,6 +540,10 @@ def main(argv=None):
         p.add_argument("--workspace", type=int)
     for action in ("list", "status"):
         sub.add_parser(action)
+    shortcut=sub.add_parser("shortcut",help="Set or disable one managed keyboard shortcut")
+    shortcut.add_argument("key",choices=tuple(shortcuts.DEFAULT_SHORTCUTS))
+    shortcut.add_argument("binding")
+    sub.add_parser("shortcuts-sync",help="Synchronize managed shortcuts with saved settings")
     pos = sub.add_parser("position")
     pos.add_argument("monitor")
     pos.add_argument("key")
@@ -545,6 +555,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         stash = Stash()
+        if args.command in ("shortcut","shortcuts-sync"):
+            result=shortcuts.configure(stash.config,args.key,args.binding) if args.command=="shortcut" else shortcuts.sync(stash.config)
+            print(json.dumps(result))
+            return 0
         with stash.locked():
             if args.command == "minimize": result=stash.minimize(args.address)
             elif args.command == "restore": result=stash.restore(args.id,args.to,args.monitor,args.workspace)

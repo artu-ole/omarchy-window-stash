@@ -198,6 +198,11 @@ PanelWindow {
       if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
       // qmllint enable missing-property
     }
+    var shortcutControls=[]
+    for (var n=0;n<shortcutRows.count;n++) {
+      var shortcut=shortcutRows.itemAt(n) as StashShortcutField
+      if (shortcut) shortcutControls.push(shortcut.details(surface.contentItem))
+    }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
       motion:{mode:animations,speed:animationSpeed,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal,dragWorld:motionWorld.details()},
@@ -212,7 +217,7 @@ PanelWindow {
       dialog:currentDialog,contextMenu:menuDetails,
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
-      settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight},
+      settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight},shortcutControls:shortcutControls,
       opacityControls:opacityControls,
       cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
       floatingDock:floatingDock.details(),
@@ -787,12 +792,18 @@ PanelWindow {
           }
         }
         Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }
-        Text {
-          text: "Super+A: minimize focused window\nSuper+Z: restore most recently minimized"
-          wrapMode:Text.Wrap; Layout.fillWidth:true
-          color: Qt.darker(surface.popupColors.text, 1.4)
-          font.family: surface.fonts.family
-          font.pixelSize: surface.fonts.caption
+        Repeater {
+          id:shortcutRows
+          model:[{key:"minimizeShortcut",label:"Minimize window",defaultValue:"SUPER + A"},
+            {key:"restoreLastShortcut",label:"Restore newest (last in, first out)",defaultValue:"SUPER + Z"},
+            {key:"restoreOldestShortcut",label:"Restore oldest (first in, first out)",defaultValue:""}]
+          delegate:StashShortcutField {
+            required property var modelData
+            stash:surface.stash; settingKey:modelData.key; label:modelData.label
+            binding:surface.config[modelData.key]===undefined ? modelData.defaultValue : surface.config[modelData.key]
+            defaultBinding:modelData.defaultValue
+            animations:surface.animations; animationSpeed:surface.animationSpeed; foreground:surface.popupColors.text
+          }
         }
         StashButton { animations:surface.animations; animationSpeed:surface.animationSpeed; text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }

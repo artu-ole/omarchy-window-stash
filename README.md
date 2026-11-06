@@ -55,7 +55,7 @@ the helper itself is not installed.
 
 The helper previews changes and asks for confirmation (`--yes` for automation).
 It installs `community.window-stash` under `~/.config/omarchy/plugins/`, creates
-`~/.local/bin/window-stash`, adds a marked binding block to `bindings.lua`, and
+`~/.local/bin/window-stash`, adds a marked shortcut loader to `bindings.lua`, and
 enables the plugin in `shell.json`. It checks shortcut conflicts, backs up
 configuration, reloads Hyprland while preserving runtime monitor geometry, and
 rescans shell plugins. It uses no root privileges, downloads, or packaged-file
@@ -80,7 +80,8 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Action | Input |
 |---|---|
 | Stash focused window | **Super+A** |
-| Restore last eligible window | **Super+Z**; newest first, obeys visibility scope |
+| Restore last eligible window | **Super+Z** by default; newest first, obeys visibility scope |
+| Restore oldest eligible window | Assign **Restore oldest** in Settings; first in, first out, obeys visibility scope |
 | Restore / choose a grouped window | Click an icon; app groups open a searchable chooser |
 | Restore destination, close, settings, all windows | Right-click an icon or floating stack |
 | Close represented stashed window(s) | Middle-click an icon; collapsed stacks target their front icon |
@@ -90,8 +91,13 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Preview a window | Hover an icon, floating stack, or chooser row; enable previews in Settings |
 | Use a preview | Click a thumbnail to restore its window, middle-click or use × to close, right-click for its window menu; wheel or drag to scroll large app groups |
 
-Shortcuts are ordinary Hyprland bindings to `window-stash minimize` and
-`window-stash restore-last`; change them in your personal bindings as needed.
+Edit shortcuts in Settings using chords such as `SUPER + SHIFT + Z`. Apply saves
+and activates the binding; × disables it and ↺ restores its default. Minimize
+defaults to Super+A, restore newest to Super+Z, and restore oldest is unbound.
+Duplicate and existing desktop shortcuts are rejected without replacing them.
+Bindings survive shell restarts and compositor reloads. Updates migrate the
+installer's old shortcut block while preserving other personal bindings.
+Explicit overrides already in that block are retained until uninstallation.
 Open settings or the global recovery chooser even when the stash is empty:
 
 ```sh
@@ -140,6 +146,9 @@ omarchy-shell window-stash configure hoverPreview live
 | `previewTitles` | `shown` | `shown`, `hidden` |
 | `previewDelay` | `400` | Integer `0`–`1500` ms before showing a preview |
 | `previewHideDelay` | `200` | Integer `0`–`1000` ms grace period when moving between the source icon and its card |
+| `minimizeShortcut` | `SUPER + A` | Minimize the focused window; empty disables |
+| `restoreLastShortcut` | `SUPER + Z` | Restore the newest eligible window; empty disables |
+| `restoreOldestShortcut` | empty | Restore the longest-stashed eligible window; empty disables |
 
 Preview cards follow the Omarchy popup theme and work across all presentations
 and chooser rows. A collapsed stack previews its front window or app group;
@@ -225,6 +234,8 @@ result/error); failures exit nonzero.
 window-stash minimize                          # optional: --address ADDRESS
 window-stash restore-last                      # optional: --to current|original
 window-stash restore-oldest                    # FIFO; same scope and destination options
+window-stash shortcut restoreOldestShortcut 'SUPER + ALT + Z'
+window-stash shortcut restoreOldestShortcut '' # disable this shortcut
 window-stash restore ID --to original          # ID or live window address
 window-stash restore-all --to current          # global recovery, ignores scope
 window-stash close ID [ID ...]                 # only owned stashed windows
@@ -260,6 +271,7 @@ restores retain records for retry.
 | Session ledger | `$XDG_RUNTIME_DIR/omarchy-window-stash/<sanitized compositor signature>/state.json` |
 | Persistent bubble / stack positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
 | Plugin settings | `$XDG_CONFIG_HOME/omarchy/shell.json` |
+| Shortcut synchronization lock (empty) | `$XDG_CONFIG_HOME/omarchy/.window-stash-shortcuts.lock` |
 
 XDG config/state fall back to `~/.config` and `~/.local/state`. Runtime records
 include window titles, application IDs, monitor identity, and geometry; persistent
@@ -282,6 +294,7 @@ python3 tools/check.py             # unit/model checks, offscreen Qt, manifest, 
 python3 tests/live.py              # controller + desktop integration
 python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 python3 tests/animation_speed.py   # speed presets, duration scaling and live changes
+python3 tests/shortcuts.py         # settings, conflicts, live bindings and FIFO/LIFO restore
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
 python3 tests/floating_panel.py --small-output # fixed background thickness, jumping icons and input
@@ -295,7 +308,7 @@ python3 tests/stack_follow.py      # trailing stack springs, speed presets and u
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator
-(with `jq`). Desktop suites also require an unlocked session, the installed
+(with `jq`); standalone `lua` enables the owned-handle tests. Desktop suites also require an unlocked session, the installed
 plugin, `/usr/bin/python3` with GTK4 introspection, `wtype`, `notify-send`, and
 `grim`. Start with an empty stash. Suites use disposable windows/virtual outputs,
 notify **five seconds before taking input**, and restore desktop state in cleanup.
