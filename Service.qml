@@ -11,7 +11,7 @@ Item {
   property var shell: null
   readonly property string pluginId: "community.window-stash"
   readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "shown", dockFrame: "shown", animations: "full", dockOpacity:100, iconOpacity:100}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "dock", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "shown", dockFrame: "shown", animations: "full", dockOpacity:100, iconOpacity:100, hoverPreview:"off", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -37,7 +37,7 @@ Item {
   signal pointerClicked(real x,real y)
   StashClickObserver {
     id:clickObserver
-    watching:root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen })
+    watching:root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
     onClicked:function(x,y) { root.pointerClicked(x,y) }
   }
 
@@ -166,6 +166,17 @@ Item {
     closeDialog()
     enqueue(args)
   }
+  function restorePreviewWindow(id,name) {
+    if (!screenMonitor(name) || pendingCloseIds[id] || !snapshot.windows.some(function(w) { return w.id===id })) return
+    if (dialogKind==="picker" && dialogScreen===name && dialogWindows.some(function(w) { return w.id===id })) {
+      restoreWindow(id,""); return
+    }
+    closeContext(); closeDialog()
+    enqueue(["restore",id,"--monitor",name,"--workspace",String(invocationWorkspace(name))])
+  }
+  function dismissPreviews(exceptScreen) {
+    surfaces.forEach(function(s) { if (s.screen.name!==exceptScreen) s.dismissPreview() })
+  }
   function selectGroup(group, name) {
     if (group.windows.length > 1) { openDialog("picker", name, group.windows, group); return }
     openDialog("restore", name, group.windows, group)
@@ -176,10 +187,14 @@ Item {
     var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
       iconShape:["auto","circle","square","rounded","squircle"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"]}
-    var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100}
+    options.hoverPreview=["off","still","live"]; options.previewSize=["small","medium","large"]
+    options.previewPlacement=["auto","above","below","left","right"]; options.previewTitles=["shown","hidden"]
+    var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
     if (numericLimits[key] !== undefined) {
-      if (!/^(0|[1-9][0-9]{0,2})$/.test(String(value)) || Number(value) > numericLimits[key]) {
-        lastError = key === "dockCornerRadius" ? "Dock corner radius must be 0–64 pixels" : "Opacity must be a whole percentage from 0 to 100"
+      if (!/^(0|[1-9][0-9]{0,3})$/.test(String(value)) || Number(value) > numericLimits[key]) {
+        lastError = key === "dockCornerRadius" ? "Dock corner radius must be 0–64 pixels"
+          : key === "previewDelay" || key === "previewHideDelay" ? key+" must be a whole number from 0 to "+numericLimits[key]+" milliseconds"
+          : "Opacity must be a whole percentage from 0 to 100"
         return
       }
       value = Number(value)

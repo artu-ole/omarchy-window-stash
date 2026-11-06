@@ -20,6 +20,9 @@ Item {
   property bool frameVisible:true
   property string iconShape:"auto"
   property string animations:"full"
+  property bool previewEnabled:false
+  readonly property bool previewReady:interactive && !moving
+  onPreviewReadyChanged:if (previewEnabled && graphic.pointerHovered) hovered(previewReady)
   property string unfoldStyle:"arc"
   readonly property var timing:Motion.fanProfile(unfoldStyle)
   readonly property bool chainStyle:Motion.chain(unfoldStyle)
@@ -62,6 +65,7 @@ Item {
   signal closeRequested()
   signal contextRequested(real x,real y)
   signal hovered(bool value)
+  signal pointerPressed()
   signal inputChanged()
   signal exited(int frames)
   onXChanged:inputChanged()
@@ -104,6 +108,7 @@ Item {
     width:actor.width; height:actor.height
     group:actor.displayGroup
     animations:actor.animations
+    previewEnabled:actor.previewEnabled
     idleOpacity:actor.idleOpacity
     retiring:actor.retiring
     bubble:true
@@ -118,6 +123,7 @@ Item {
     onCloseRequested:actor.closeRequested()
     onContextRequested:function(x,y) { actor.contextRequested(x,y) }
     onHovered:function(value) { actor.hovered(value) }
+    onPointerPressed:actor.pointerPressed()
     onExited:function(frames) { actor.exited(frames) }
   }
   Component.onCompleted: { ready=true; retarget() }

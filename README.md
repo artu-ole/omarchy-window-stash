@@ -35,6 +35,8 @@ space or input; floating surfaces leave the surrounding desktop click-through.
 Requires **Omarchy 4.0**, **Hyprland 0.56.2 with its Lua API**, and **Python 3.9+**.
 Tested on Omarchy 4.0.6-1. The shell must provide Quickshell, Qt 6.7+,
 `qs.Commons`, `qs.Ui`, `Quickshell.Widgets`, and `QtQuick.Effects`.
+Hover previews use the shell's `Quickshell.Wayland` module; no additional capture
+package is needed.
 Have `omarchy`, `omarchy-shell`, and `hyprctl` on `PATH`, with existing
 `~/.config/hypr/bindings.lua` and `~/.config/omarchy/shell.json`.
 
@@ -85,6 +87,8 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Move bubbles / floating dock | Drag the icon / stack handle; positions persist per monitor |
 | Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
 | Collapse floating dock | Click outside, switch focus/workspace, or press Escape |
+| Preview a window | Hover an icon, floating stack, or chooser row; enable previews in Settings |
+| Use a preview | Click to restore, middle-click to close, right-click for its window menu; wheel or arrow buttons browse app groups, **All windows** opens their chooser |
 
 Shortcuts are ordinary Hyprland bindings to `window-stash minimize` and
 `window-stash restore-last`; change them in your personal bindings as needed.
@@ -106,6 +110,7 @@ omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash configure animations reduced
 omarchy-shell window-stash configure dockOpacity 60
 omarchy-shell window-stash configure iconOpacity 75
+omarchy-shell window-stash configure hoverPreview live
 ```
 
 | Key | Default | Values / meaning |
@@ -127,6 +132,19 @@ omarchy-shell window-stash configure iconOpacity 75
 | `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |
 | `dockCornerRadius` | `12` | Integer `0`–`64` pixels in custom mode, clamped to panel dimensions |
 | `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
+| `hoverPreview` | `off` | `off`, `still`, `live`; still captures once when opening or choosing another window, live updates while the card is open |
+| `previewSize` | `medium` | `small`, `medium`, `large`; maximum image widths of 200, 280, or 380 logical pixels, reduced to fit the work area |
+| `previewPlacement` | `auto` | `auto`, `above`, `below`, `left`, `right`; flips or shrinks when the requested side has insufficient room |
+| `previewTitles` | `shown` | `shown`, `hidden` |
+| `previewDelay` | `400` | Integer `0`–`1500` ms before showing a preview |
+| `previewHideDelay` | `200` | Integer `0`–`1000` ms grace period when moving between the source icon and its card |
+
+Preview cards follow the Omarchy popup theme and work across all presentations
+and chooser rows. A collapsed stack previews its front window or app group;
+app groups use one card with a window counter and navigation. Hovering never
+focuses, moves, or restores a window. Pressing or dragging an icon, source motion,
+context menus, settings, and workspace changes dismiss previews. Settings scroll
+on shorter displays.
 
 Hover smoothly restores full opacity; pressed and keyboard-selected icons stay
 opaque. Dock and icon opacity are independent. Transparent elements retain their
@@ -224,6 +242,14 @@ include window titles, application IDs, monitor identity, and geometry; persiste
 positions can include monitor identifiers. These stay local. No telemetry or
 network requests. App icons resolve from installed desktop entries and themes.
 
+Previews use native [ScreencopyView](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/ScreencopyView/)
+with one selected window captured at a time. Sources must match the stash's exact
+window identity and ownership; hidden windows stay in their special workspace.
+Frames remain in memory and are released when the card closes; no thumbnail files
+are saved. Background applications may stop drawing, so a live card can retain
+its last frame. Capture failures or timeouts show the app icon, and compositor
+capture restrictions are respected.
+
 ## Development
 
 ```sh
@@ -233,6 +259,7 @@ python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
 python3 tests/matryoshka.py --small-output # nested-stack stages, inverse folding, both axes and overflow
+python3 tests/hover_previews.py --small-output # native captures, hover lifecycle, grouping and bounded placement
 python3 tests/close_actions.py     # isolated ledger: closure, scope and native save prompts
 python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-through and scaled output
 python3 tests/middle_close.py      # pending icons, grouped close and cancellation

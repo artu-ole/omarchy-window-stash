@@ -21,7 +21,7 @@ PanelWindow {
   readonly property var monitor: stash.screenMonitor(screen.name)
   readonly property var liveMonitor:Hyprland.monitorFor(screen)
   readonly property int activeWorkspaceId:liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : monitor ? monitor.activeWorkspace.id : -1
-  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
+  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
@@ -55,6 +55,11 @@ PanelWindow {
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: config.presentation === "floating"
   readonly property bool floatingDockOpen:floatingDock.open
+  readonly property bool previewOpen:windowPreview.opened
+  readonly property bool previewsEnabled:(config.hoverPreview || "off")!=="off"
+  readonly property string previewLayoutKey:JSON.stringify([config.presentation,config.scope,config.grouping,config.dockSide,config.floatingDirection])
+  onPreviewLayoutKeyChanged:if (windowPreview) windowPreview.dismiss(true)
+  function dismissPreview() { windowPreview.dismiss(true) }
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen
   onContextMenuOpenChanged: {
@@ -182,7 +187,7 @@ PanelWindow {
       // Repeater.itemAt() is typed as Item; its delegate adds these properties.
       // qmllint disable missing-property
       if (row) controls.push({key:row.modelData.key, value:row.selector.value,
-        open:row.selector.popupOpen, rect:itemRect(row.selector)})
+        open:row.selector.popupOpen,visible:row.visible, rect:itemRect(row.selector)})
       // qmllint enable missing-property
     }
     var opacityControls=[]
@@ -206,9 +211,11 @@ PanelWindow {
       dialog:currentDialog,contextMenu:menuDetails,
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
+      settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight},
       opacityControls:opacityControls,
       cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
       floatingDock:floatingDock.details(),
+      preview:windowPreview.details(),
       actions:{here:contextMenu.actionRect("here"),original:contextMenu.actionRect("original"),settings:contextMenu.actionRect("settings")},
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
         accent:String(Commons.Color.accent),fontFamily:surface.fonts.family,bodySize:surface.fonts.body,radius:Style.cornerRadius}}
@@ -247,7 +254,7 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
-  visible: shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || contextMenu.visible
+  visible: shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || contextMenu.visible || windowPreview.visible
   mask: Region {
     id: inputMask
     // Keep motion on this surface during a drag, including the gaps between
@@ -256,11 +263,13 @@ PanelWindow {
       : (surface.floatingMode ? floatingDock.inputRegions : surface.bubbleMode ? surface.bubbleRegions
           : surface.config.presentation==="dock" && surface.groups.length>0 ? [shelfRegion] : [])
         .concat(surface.contextMenuOpen ? [contextRegion] : [])
+        .concat(windowPreview.opened ? [previewRegion] : [])
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
   // open, its surface owns the screen, just like Omarchy's keyboard panels.
   Region { id: dialogRegion; width: surface.width; height: surface.height }
   Region { id: shelfRegion; item: shelf; radius:shelf.radius }
+  Region { id:previewRegion; item:windowPreview; radius:windowPreview.cornerRadius }
   Region { id: contextRegion; item:contextMenu; radius:contextMenu.radius }
 
   StashDockSurface {
@@ -360,6 +369,9 @@ PanelWindow {
               enabled:!retiring && surface.config.presentation==="dock"
               frameVisible: surface.config.iconFrame !== "hidden"
               iconShape: surface.config.iconShape || "auto"
+              previewEnabled:surface.previewsEnabled
+              onHovered:function(value) { windowPreview.request(group,shelfIcon,value,"dock",surface.itemRect(shelf)) }
+              onPointerPressed:windowPreview.dismiss(true)
               onActivated: surface.stash.selectGroup(group, surface.screen.name)
               onCloseRequested:surface.stash.closeGroup(group,surface.screen.name)
       onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,shelfIcon.mapToItem(surface.contentItem,x,y)) }
@@ -380,6 +392,8 @@ PanelWindow {
       group:bubblesModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
       animations:surface.animations
       idleOpacity:surface.iconIdleOpacity
+      previewEnabled:surface.previewsEnabled
+      onHovered:function(value) { windowPreview.request(group,bubbleIcon,value,"bubble",null) }
       onExited:function(frames) { surface.recordExit("bubbles",groupKey,frames) }
       enabled:!retiring && surface.bubbleMode
       onRetiringChanged: {
@@ -445,7 +459,7 @@ PanelWindow {
         var at=bubblesModel.activeKeys.indexOf(groupKey),target=at>=0 ? surface.bubbleTargets[at] : null
         if (target) surface.dragWorld.sync(groupKey,target[0],target[1],width,height)
       }
-      onPointerPressed:function(button) { if (registered && button!==Qt.LeftButton) surface.dragWorld.cancel(groupKey,false) }
+      onPointerPressed:function(button) { windowPreview.dismiss(true); if (registered && button!==Qt.LeftButton) surface.dragWorld.cancel(groupKey,false) }
       onDragHeld:function(pressed) {
         if (!registered) return
         if (pressed && !surface.stash.groupClosing(group)) surface.dragWorld.press(groupKey)
@@ -489,6 +503,7 @@ PanelWindow {
     width:surface.canvasWidth
     height:surface.canvasHeight
     stash:surface.stash
+    preview:windowPreview
     dragWorld:surface.dragWorld
     hostWindow:surface
     monitor:surface.monitor
@@ -594,6 +609,9 @@ PanelWindow {
           width: picker.width
           height: implicitHeight
           windowData: modelData
+          previewEnabled:surface.previewsEnabled
+          onHovered:function(value) { windowPreview.request({key:"window:"+modelData.id,app:modelData.app,title:modelData.title,windows:[modelData]},savedWindowRow,value,"picker",surface.itemRect(dialog)) }
+          onPointerPressed:windowPreview.dismiss(true)
           hasCursor: ListView.isCurrentItem
           onPointed: picker.currentIndex = index
           onActivated: surface.stash.restoreWindow(modelData.id, "")
@@ -636,6 +654,10 @@ PanelWindow {
           model: [
             {key:"presentation", label:"Appearance", values:["dock","bubbles","floating"],
               labels:["Static dock","Floating bubbles","Floating dock"]},
+            {key:"hoverPreview",label:"Hover preview",values:["off","still","live"],labels:["Off","Still image","Live"]},
+            {key:"previewSize",label:"Preview size",values:["small","medium","large"],labels:["Small","Medium","Large"]},
+            {key:"previewPlacement",label:"Preview placement",values:["auto","above","below","left","right"],labels:["Automatic","Above","Below","Left","Right"]},
+            {key:"previewTitles",label:"Preview titles",values:["shown","hidden"],labels:["Shown","Hidden"]},
             {key:"animations", label:"Animations", values:["full","reduced","off"], labels:["Full","Reduced","Off"]},
             {key:"iconFrame", label:"Icon border/background", values:["shown","hidden"], labels:["Shown","Hidden (larger icons)"]},
             {key:"dockFrame", label:"Dock border/background", values:["shown","hidden"], labels:["Shown","Hidden"]},
@@ -655,7 +677,8 @@ PanelWindow {
             id: settingRow
             required property var modelData
             readonly property alias selector: settingDropdown
-            visible:((modelData.key !== "floatingDirection" && modelData.key !== "floatingAnimation") || surface.floatingMode)
+            visible:(["previewSize","previewPlacement","previewTitles"].indexOf(modelData.key)<0 || surface.previewsEnabled)
+              && ((modelData.key !== "floatingDirection" && modelData.key !== "floatingAnimation") || surface.floatingMode)
               && (modelData.key !== "dockSide" || surface.config.presentation === "dock")
               && (modelData.key !== "floatingPlacement" || surface.bubbleMode || surface.floatingMode)
               && (modelData.key !== "dragMotion" || surface.bubbleMode || surface.floatingMode)
@@ -738,6 +761,29 @@ PanelWindow {
             }
           }
         }
+        Repeater {
+          id:previewTimingRows
+          model:[{key:"previewDelay",label:"Preview delay (ms)",maximum:1500,defaultValue:400},
+            {key:"previewHideDelay",label:"Preview hide delay (ms)",maximum:1000,defaultValue:200}]
+          delegate:RowLayout {
+            id:timingRow
+            required property var modelData
+            readonly property alias numberField:timingField
+            visible:surface.previewsEnabled
+            Layout.fillWidth:true
+            Text { text:timingRow.modelData.label; wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
+              color:surface.popupColors.text; font.family:surface.fonts.family; font.pixelSize:surface.fonts.body }
+            Ui.NumberField {
+              id:timingField
+              Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+              fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+              from:0; to:timingRow.modelData.maximum; stepSize:50
+              value:surface.config[timingRow.modelData.key]===undefined ? timingRow.modelData.defaultValue : surface.config[timingRow.modelData.key]
+              foreground:surface.popupColors.text
+              onModified:function(value) { surface.stash.setting(timingRow.modelData.key,value) }
+            }
+          }
+        }
         Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }
         Text {
           text: "Super+A: minimize focused window\nSuper+Z: restore most recently minimized"
@@ -757,6 +803,18 @@ PanelWindow {
         }
       }
     }
+  }
+  StashPreview {
+    id:windowPreview
+    stash:surface.stash
+    config:surface.config
+    area:surface.usableArea
+    coordinateRoot:surface.contentItem
+    screenName:surface.screen.name
+    blocked:surface.stash.contextOpen || (surface.stash.dialogKind!=="" && surface.stash.dialogKind!=="picker")
+      || surface.bubbleHeld || floatingDock.held
+    onInputChanged:surface.refreshInputMask()
+    onRestoring:floatingDock.close("restore")
   }
   StashContextMenu {
     id:contextMenu

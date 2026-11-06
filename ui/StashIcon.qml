@@ -35,6 +35,12 @@ Ui.BorderSurface {
   property bool externalPressed: false
   property bool positionAnimating: false
   property bool positionHeld: false
+  property bool previewEnabled:false
+  property bool previewSuppressed:false
+  readonly property bool previewReady:enabled && !retiring && !positionAnimating && !positionHeld && !down && !previewSuppressed
+  readonly property bool pointerHovered:pointer.containsMouse
+  onPreviewReadyChanged:if (previewEnabled && pointer.containsMouse) hovered(previewReady)
+  onPreviewEnabledChanged:if (previewEnabled && pointer.containsMouse) hovered(previewReady)
   readonly property bool hot: hasCursor || (!cursorManaged && pointer.containsMouse)
   readonly property bool down: pointer.pressed || externalPressed
   readonly property real hitRadius: frameVisible ? Model.iconRadius(iconShape, width, bubble, Style.cornerRadius) : 0
@@ -139,7 +145,7 @@ Ui.BorderSurface {
     }
   }
   Ui.PanelToolTip {
-    visible: pointer.containsMouse && !pointer.pressed
+    visible: !icon.previewEnabled && pointer.containsMouse && !pointer.pressed
     text: icon.group.title + (icon.group.windows.length > 1 ? " · " + icon.group.windows.length + " windows" : "")
   }
   MouseArea {
@@ -151,8 +157,8 @@ Ui.BorderSurface {
     cursorShape: Qt.PointingHandCursor
     property point start
     property bool dragging: false
-    onContainsMouseChanged: icon.hovered(containsMouse)
-    onPressed: function(mouse) { icon.pointerPressed(mouse.button); start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
+    onContainsMouseChanged: { if (!containsMouse) icon.previewSuppressed=false; icon.hovered(containsMouse && !icon.previewSuppressed) }
+    onPressed: function(mouse) { icon.previewSuppressed=true; icon.pointerPressed(mouse.button); start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
     onPositionChanged: function(mouse) {
       if (!icon.draggable || !pressed || pressedButtons !== Qt.LeftButton) return
       var dx = mouse.x - start.x, dy = mouse.y - start.y

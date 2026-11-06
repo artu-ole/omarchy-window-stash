@@ -152,7 +152,58 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100))
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100,
+            hoverPreview="off",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200))
+
+    def test_hover_preview_defaults_and_legacy_settings(self):
+        self.settings(presentation="bubbles", scope="workspace", iconOpacity=72)
+        result = self.stash.settings()
+        for key, value in dict(hoverPreview="off", previewSize="medium", previewPlacement="auto",
+                               previewTitles="shown", previewDelay=400, previewHideDelay=200).items():
+            self.assertEqual(result[key], value)
+        self.assertEqual((result["presentation"], result["scope"], result["iconOpacity"]),
+                         ("bubbles", "workspace", 72))
+
+    def test_hover_preview_choices_preserve_other_settings(self):
+        choices = dict(hoverPreview=("off", "still", "live"), previewSize=("small", "medium", "large"),
+                       previewPlacement=("auto", "above", "below", "left", "right"),
+                       previewTitles=("shown", "hidden"))
+        defaults = dict(hoverPreview="off", previewSize="medium", previewPlacement="auto", previewTitles="shown")
+        for key, values in choices.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    settings = dict(hoverPreview="live", previewSize="large", previewPlacement="right",
+                                    previewTitles="hidden", previewDelay=321, previewHideDelay=87,
+                                    presentation="floating", grouping="app", iconShape="circle")
+                    settings[key] = value
+                    self.settings(**settings)
+                    result = self.stash.settings()
+                    for setting, expected in settings.items():
+                        self.assertEqual(result[setting], expected)
+            for invalid in ("invalid", "", None, True, False, 1, [], {}):
+                with self.subTest(key=key, invalid=invalid):
+                    self.settings(**{key: invalid, "previewDelay": 321, "previewHideDelay": 87,
+                                     "presentation": "floating", "grouping": "app"})
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], defaults[key])
+                    self.assertEqual((result["previewDelay"], result["previewHideDelay"],
+                                      result["presentation"], result["grouping"]), (321, 87, "floating", "app"))
+
+    def test_hover_preview_timing_validation(self):
+        for key, other, maximum, default in (("previewDelay", "previewHideDelay", 1500, 400),
+                                             ("previewHideDelay", "previewDelay", 1000, 200)):
+            for value in (0, 1, 123, maximum-1, maximum):
+                with self.subTest(key=key, value=value):
+                    self.settings(**{key: value, other: 73, "hoverPreview": "live", "previewSize": "large"})
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], value)
+                    self.assertEqual((result[other], result["hoverPreview"], result["previewSize"]), (73, "live", "large"))
+            for invalid in (-1, maximum+1, 1.0, 3.5, "400", "0", True, False, None, [], {}):
+                with self.subTest(key=key, invalid=invalid):
+                    self.settings(**{key: invalid, other: 73, "hoverPreview": "still", "previewTitles": "hidden"})
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], default)
+                    self.assertEqual((result[other], result["hoverPreview"], result["previewTitles"]), (73, "still", "hidden"))
 
     def test_floating_direction_defaults_and_validation(self):
         self.settings(presentation="floating")

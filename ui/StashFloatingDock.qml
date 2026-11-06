@@ -12,6 +12,7 @@ import "Motion.js" as Motion
 Item {
   id:dock
   required property var stash
+  property var preview:null
   required property var dragWorld
   required property var hostWindow
   required property var monitor
@@ -101,10 +102,14 @@ Item {
   HoverHandler { id:fanHover; onHoveredChanged:dock.updateLeaveTimer() }
   readonly property int leaveTimeout:800
   function updateLeaveTimer() {
-    if (!open || fanHover.hovered || pan.active) leaveDelay.stop()
+    if (!open || fanHover.hovered || pan.active || (preview && preview.fromFloating && preview.hovered)) leaveDelay.stop()
     else if (!leaveDelay.running) leaveDelay.start()
   }
-  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !fanHover.hovered && !pan.active) dock.close("pointer-leave") }
+  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !fanHover.hovered && !pan.active && !(dock.preview && dock.preview.fromFloating && dock.preview.hovered)) dock.close("pointer-leave") }
+  Connections {
+    target:dock.preview
+    function onHoveredChanged() { dock.updateLeaveTimer() }
+  }
   Connections {
     target:dock.stash
     function onPointerClicked(x,y) {
@@ -114,6 +119,7 @@ Item {
     }
   }
   function panelContains(x,y) {
+    if (preview && preview.fromFloating && preview.containsPoint(x,y)) return true
     var px=x-panel.x,py=y-panel.y,r=panel.radius
     if (px<0 || py<0 || px>panel.width || py>panel.height) return false
     var dx=Math.max(r-px,0,px-panel.width+r),dy=Math.max(r-py,0,py-panel.height+r)
@@ -414,6 +420,7 @@ Item {
       expanded:dock.open
       globalPresence:dock.handleOpacity
       animations:dock.animations
+      previewEnabled:dock.preview ? dock.preview.previewEnabled : false
       unfoldStyle:dock.activeAnimation
       sharedProgress:dock.chainProgress
       sharedMoving:chainAnimation.running
@@ -427,7 +434,11 @@ Item {
       onActivated:dock.activate(group)
       onCloseRequested:dock.stash.closeGroup(group,dock.screenName)
       onContextRequested:function(x,y) { dock.context(group,actor.mapToItem(dock.hostWindow.contentItem,x,y)) }
-      onHovered:function(value) { if (value && actor.interactive && !pan.active && !actor.moving) dock.selectIndex(actor.ordinal) }
+      onHovered:function(value) {
+        if (value && actor.interactive && !pan.active && !actor.moving) dock.selectIndex(actor.ordinal)
+        if (dock.preview) dock.preview.request(group,actor,value,"floating",{x:dock.finalBounds.x,y:dock.finalBounds.y,width:dock.finalBounds.width,height:dock.finalBounds.height})
+      }
+      onPointerPressed:if (dock.preview) dock.preview.dismiss(true)
       onInputChanged: { dock.inputChanged(); motionUpdate.restart() }
       onExited:function(frames) { dock.iconExited(groupKey,frames) }
       property Region hitRegion:StashIconRegion { originX:actor.x; originY:actor.y; size:actor.interactive ? 48 : 0; iconShape:actor.icon.inputShape; cornerRadius:actor.icon.hitRadius }
@@ -437,11 +448,14 @@ Item {
   }
   Item {
     id:handle
+    readonly property var group:dock.groups[0] || null
     z:20000
     x:dock.anchorX; y:dock.anchorY; width:48; height:48+dock.stackTail
     enabled:dock.active && !dock.open
-    HoverHandler { id:stackHover }
-    Ui.PanelToolTip { visible:stackHover.hovered && !drag.pressed && !dock.open; text:dock.windows.length===1 ? dock.windows[0].title : dock.windows.length+" stashed windows · Click to expand" }
+    readonly property bool previewReady:enabled && !dock.animating && !dock.held && !dock.bodyMoving && !drag.pressed
+    onPreviewReadyChanged:if (stackHover.hovered && dock.preview) dock.preview.request(dock.groups[0],handle,previewReady,"floating",null)
+    HoverHandler { id:stackHover; onHoveredChanged:if (dock.preview) dock.preview.request(dock.groups[0],handle,hovered,"floating",null) }
+    Ui.PanelToolTip { visible:!(dock.preview && dock.preview.previewEnabled) && stackHover.hovered && !drag.pressed && !dock.open; text:dock.windows.length===1 ? dock.windows[0].title : dock.windows.length+" stashed windows · Click to expand" }
     MouseArea {
       id:drag
       anchors.fill:parent
@@ -452,6 +466,7 @@ Item {
       property point start
       property bool dragging:false
       onPressed:function(mouse) {
+        if (dock.preview) dock.preview.dismiss(true)
         start=Qt.point(mouse.x,mouse.y); dragging=false
         if (mouse.button===Qt.LeftButton && !dock.stash.groupClosing(dock.groups[0])) dock.dragWorld.press(dock.bodyKey)
         else dock.dragWorld.cancel(dock.bodyKey,false)

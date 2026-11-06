@@ -12,11 +12,15 @@ Ui.CursorSurface {
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   property string animations:"full"
+  property bool previewEnabled:false
+  readonly property bool previewReady:enabled && !pointer.pressed
   opacity:interaction.visualOpacity
   required property var windowData
   signal activated()
   signal contextRequested(real x,real y)
   signal pointed()
+  signal hovered(bool value)
+  signal pointerPressed()
   implicitHeight: Math.max(Style.space(48), labels.implicitHeight + row.metrics.controlPaddingY * 2)
   foreground: row.popupColors.text
   layer.enabled: true
@@ -68,6 +72,8 @@ Ui.CursorSurface {
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     acceptedButtons: Qt.LeftButton | Qt.RightButton
+    onContainsMouseChanged:row.hovered(containsMouse)
+    onPressed:row.pointerPressed()
     onPositionChanged: row.pointed()
     onClicked: function(mouse) {
       if (mouse.button === Qt.RightButton) row.contextRequested(mouse.x,mouse.y)
@@ -75,5 +81,5 @@ Ui.CursorSurface {
     }
     onPressAndHold:function(mouse) { row.contextRequested(mouse.x,mouse.y) }
   }
-  Ui.PanelToolTip { visible: pointer.containsMouse; text: row.windowData.title }
+  Ui.PanelToolTip { visible: !row.previewEnabled && pointer.containsMouse; text: row.windowData.title }
 }
