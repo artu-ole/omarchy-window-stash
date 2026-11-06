@@ -182,7 +182,8 @@ Matryoshka moves the remaining stack together to each next slot, leaving one
 icon behind at every stop. Matryoshka hops uses the same sequence with an arch
 between stops. The original front icon stays fixed; folding collects the icons
 in reverse. Both follow the floating direction and keep movement inside the
-work area. Reduced/Off use immediate positions instead.
+work area. Both variants use a 1.5× base playback rate, scaled by the animation
+speed preset. Reduced/Off use immediate positions instead.
 
 Jumping sends each trailing icon from the stack to its own slot with slight
 squash and stretch and a damped landing bounce. The front icon stays fixed;

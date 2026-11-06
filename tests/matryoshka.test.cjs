@@ -199,7 +199,8 @@ const legacy = {
   glide:{name:'glide',open:260,close:220,stagger:0,limit:0,easing:'cubic',overshoot:0},
   cascade:{name:'cascade',open:340,close:260,stagger:48,limit:192,easing:'quint',overshoot:0},
   spring:{name:'spring',open:460,close:340,stagger:18,limit:90,easing:'back',overshoot:1.5},
-  swing:{name:'swing',open:390,close:310,stagger:22,limit:110,easing:'cubic',overshoot:0}
+  swing:{name:'swing',open:390,close:310,stagger:22,limit:110,easing:'cubic',overshoot:0},
+  jumping:{name:'jumping',open:560,close:460,stagger:28,limit:112,easing:'linear',overshoot:0}
 }
 for(const [style,expected] of Object.entries(legacy)) {
   const profile=motion.fanProfile(style)
@@ -211,13 +212,26 @@ for(const [style,expected] of Object.entries(legacy)) {
   }
 }
 assert.equal(motion.fanProfile('unknown').name,'arc')
+// Historical totals cover the one-icon minimum, individual hops and duration
+// caps independently of the implementation's profile-field arithmetic.
+const counts=[0,1,2,3,5,30],rates={slow:.5,relaxed:.75,normal:1,fast:1.5,ultrafast:2.5}
+const previousTimings={
+  matryoshka:{open:[180,180,170,340,680,680],close:[180,180,150,300,600,600]},
+  'matryoshka-hop':{open:[210,210,210,420,740,740],close:[210,210,190,380,680,680]}
+}
 for(const style of styles) {
-  const profile=motion.fanProfile(style),hop=style==='matryoshka-hop'
+  const profile=motion.fanProfile(style)
   assert.equal(motion.chain(style),true); assert.equal(profile.chain,true)
-  for(const count of [0,1,2,3,5,30]) for(const opening of [false,true]) {
-    const expected=count<=1 ? (hop?210:180) : Math.min(opening?(hop?740:680):(hop?680:600),(count-1)*(opening?(hop?210:170):(hop?190:150)))
-    assert.equal(motion.fanDuration(profile,opening,count),expected)
+  for(const [index,count] of counts.entries()) for(const opening of [false,true]) {
+    const previous=previousTimings[style][opening?'open':'close'][index]
+    const duration=motion.fanDuration(profile,opening,count)
+    close(duration,previous/1.5,'Matryoshka baseline must be exactly 1.5× faster')
+    for(const [speed,rate] of Object.entries(rates)) {
+      close(motion.duration('full',duration,100,speed),previous/(1.5*rate),'Preset compounded incorrectly with the faster baseline')
+      close(motion.duration('reduced',duration,100,speed),100/rate,'Faster baseline changed the Reduced fade')
+      assert.equal(motion.duration('off',duration,100,speed),0,'Faster baseline reintroduced Off animation')
+    }
     for(const ordinal of [0,1,4,29]) assert.equal(motion.fanDelay(profile,ordinal,opening,count),0,'Chain actors must use one unstaggered clock')
   }
 }
-console.log('Motion: seven profiles, bounded chain duration, one shared clock, and unchanged legacy timing passed')
+console.log('Motion: both Matryoshka baselines are 1.5× faster at all presets; accessibility, legacy and Jumping timing unchanged')

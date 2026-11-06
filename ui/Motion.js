@@ -24,8 +24,8 @@ function move(mode, speed) { return duration(mode, 200, 0, speed) }
 // Full-motion profiles; Reduced/Off override these through duration()/full().
 function fanProfile(style) {
   if (style === "jumping") return {name:style,open:560,close:460,stagger:28,limit:112,easing:"linear",overshoot:0}
-  if (style === "matryoshka") return {name:style,open:170,close:150,stagger:0,limit:0,easing:"linear",overshoot:0,chain:true,openLimit:680,closeLimit:600,minimum:180}
-  if (style === "matryoshka-hop") return {name:style,open:210,close:190,stagger:0,limit:0,easing:"linear",overshoot:0,chain:true,openLimit:740,closeLimit:680,minimum:210}
+  if (style === "matryoshka") return {name:style,open:170/1.5,close:150/1.5,stagger:0,limit:0,easing:"linear",overshoot:0,chain:true,openLimit:680/1.5,closeLimit:600/1.5,minimum:180/1.5}
+  if (style === "matryoshka-hop") return {name:style,open:210/1.5,close:190/1.5,stagger:0,limit:0,easing:"linear",overshoot:0,chain:true,openLimit:740/1.5,closeLimit:680/1.5,minimum:210/1.5}
   if (style === "glide") return {name:style,open:260,close:220,stagger:0,limit:0,easing:"cubic",overshoot:0}
   if (style === "cascade") return {name:style,open:340,close:260,stagger:48,limit:192,easing:"quint",overshoot:0}
   if (style === "spring") return {name:style,open:460,close:340,stagger:18,limit:90,easing:"back",overshoot:1.5}

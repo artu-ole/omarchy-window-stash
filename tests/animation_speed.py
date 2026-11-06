@@ -85,8 +85,8 @@ def timing(session, style, speed):
     elapsed_open = time.monotonic()-started
     assert cycle.samples, 'Unfold did not expose any intermediate frames'
     assert opened['style'] == style and opened['capacity'] == 4
-    opening = 372 if style == 'arc' else 630
-    closing = 322 if style == 'arc' else 570
+    opening = 372 if style == 'arc' else 630/1.5
+    closing = 322 if style == 'arc' else 570/1.5
     assert opened['animation']['speed'] == speed
     near(opened['animation']['duration'], opening/RATES[speed], 'Actual unfold duration binding')
     started = time.monotonic()
@@ -148,13 +148,11 @@ def main():
             print('PASS '+style+' real unfold/fold ordering, scaled bindings, fixed origin and persistent actors', flush=True)
 
         configure('animationSpeed', 'slow')
-        cycle, started = begin(session)
+        cycle, _ = begin(session)
         wait(lambda: session.dock()['expanded'], 'Slow nested stack did not open')
         away(session)
-        remaining = .90-(time.monotonic()-started)
-        if remaining > 0:
-            time.sleep(remaining)
-        state = cycle.inspect()
+        state = wait(lambda: (d if .5 <= (d := cycle.inspect())['chain']['progress'] < .85 else None),
+                     'Could not observe leave grace during the slow shared unfold')
         assert state['expanded'] and state['chain']['progress'] < 1, 'Leave timer folded a slow opening before it completed'
         assert state['dismissal']['timeout'] == 800, 'Animation speed changed the interaction grace period'
         assert not state['dismissal']['pending'], 'Leave grace started while icons were still unfolding'
