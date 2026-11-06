@@ -218,7 +218,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
+            grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             minimizeShortcut="SUPER + A",restoreLastShortcut="SUPER + Z",restoreOldestShortcut=""))
 
@@ -338,8 +338,10 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(self.stash.settings()["dockCornerRadius"], 12)
 
     def test_independent_frame_visibility_defaults_and_validation(self):
-        self.assertEqual(self.stash.settings()["iconFrame"], "shown")
-        self.assertEqual(self.stash.settings()["dockFrame"], "shown")
+        defaults = self.stash.settings()
+        self.assertEqual((defaults["presentation"], defaults["floatingPlacement"], defaults["dragMotion"],
+                          defaults["animations"], defaults["animationSpeed"], defaults["iconFrame"], defaults["dockFrame"]),
+                         ("floating", "edges", "physics", "full", "normal", "hidden", "hidden"))
         for icons in ("shown", "hidden"):
             for dock in ("shown", "hidden"):
                 self.settings(iconFrame=icons, dockFrame=dock, iconShape="circle", dockCorners="custom", dockCornerRadius=17)
@@ -347,8 +349,8 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual((result["iconFrame"],result["dockFrame"]), (icons,dock))
                 self.assertEqual((result["iconShape"],result["dockCorners"],result["dockCornerRadius"]), ("circle","custom",17))
         self.settings(iconFrame=False, dockFrame="invalid")
-        self.assertEqual(self.stash.settings()["iconFrame"], "shown")
-        self.assertEqual(self.stash.settings()["dockFrame"], "shown")
+        self.assertEqual(self.stash.settings()["iconFrame"], "hidden")
+        self.assertEqual(self.stash.settings()["dockFrame"], "hidden")
 
     def test_animation_speed_defaults_and_legacy_settings(self):
         self.assertEqual(self.stash.settings()["animationSpeed"], "normal")

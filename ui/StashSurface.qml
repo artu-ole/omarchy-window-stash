@@ -50,7 +50,7 @@ PanelWindow {
     if (dialogReveal===0 && !dialogOpen) renderDialogKind=""
   }
   readonly property string dockSide: config.dockSide || "bottom"
-  readonly property bool dockFrameVisible: config.dockFrame !== "hidden"
+  readonly property bool dockFrameVisible: config.dockFrame === "shown"
   readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
   readonly property var usableArea: Model.usableArea(canvasWidth, canvasHeight, monitor ? monitor.reserved : [])
   readonly property real requestedStaticIconSize:Model.iconSize(config.sizePreset,false,usableArea)
@@ -72,7 +72,7 @@ PanelWindow {
   onRequestedStaticIconSizeChanged:if(sizingReady) updateSizes()
   onRequestedFloatingIconSizeChanged:if(sizingReady) updateSizes()
   readonly property bool bubbleMode: config.presentation === "bubbles"
-  readonly property bool floatingMode: config.presentation === "floating"
+  readonly property bool floatingMode: (config.presentation || "floating") === "floating"
   readonly property bool floatingDockOpen:floatingDock.open
   readonly property bool previewOpen:windowPreview.opened
   readonly property bool previewsEnabled:(config.hoverPreview || "off")!=="off"
@@ -221,7 +221,7 @@ PanelWindow {
       && (modelData.key!=="dragMotion" || surface.bubbleMode || surface.floatingMode)
       && (modelData.key!=="dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
       && (modelData.key!=="dockFrame" || !surface.bubbleMode)
-      && (modelData.key!=="iconShape" || surface.config.iconFrame!=="hidden")
+      && (modelData.key!=="iconShape" || surface.config.iconFrame==="shown")
     Layout.fillWidth:true
     Text {
       text:settingRow.modelData.label
@@ -479,7 +479,7 @@ PanelWindow {
               onExited:function(frames) { surface.recordExit("dock",groupKey,frames) }
               Component.onCompleted: { surface.createdShelfIcons++; if (liveIndex>=0) lastSlot=liveIndex }
               enabled:!retiring && surface.config.presentation==="dock"
-              frameVisible: surface.config.iconFrame !== "hidden"
+              frameVisible: surface.config.iconFrame === "shown"
               iconShape: surface.config.iconShape || "auto"
               previewEnabled:surface.previewsEnabled
               onHovered:function(value) { windowPreview.request(group,shelfIcon,value,"dock",surface.itemRect(shelf)) }
@@ -517,7 +517,7 @@ PanelWindow {
       property real activeSize:48
       width:activeSize
       sizeScale:activeSize/48
-      frameVisible: surface.config.iconFrame !== "hidden"
+      frameVisible: surface.config.iconFrame === "shown"
       onFrameVisibleChanged: surface.refreshInputMask()
       iconShape: surface.config.iconShape || "auto"
       readonly property bool held:positionHeld

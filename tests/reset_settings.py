@@ -90,20 +90,24 @@ def main():
         for app in ('org.windowstash.ResetOne', 'org.windowstash.ResetTwo'):
             session.park(session.spawn(app=app, workspace=session.workspace)[0])
         chords = shortcut_helpers.free_chords(shell('status')['settings'])
-        custom = dict(presentation='floating', scope='workspace', restoreDestination='original', grouping='app',
+        custom = dict(presentation='dock', scope='workspace', restoreDestination='original', grouping='app',
                       iconShape='squircle', sizePreset='175', floatingDirection='horizontal', floatingAnimation='jumping',
                       dragMotion='direct', dockSide='left', floatingPlacement='free', dockCorners='custom',
-                      dockCornerRadius=39, iconFrame='hidden', dockFrame='hidden', animations='off', animationSpeed='ultrafast',
+                      dockCornerRadius=39, iconFrame='shown', dockFrame='shown', animations='off', animationSpeed='ultrafast',
                       dockOpacity=33, iconOpacity=44, hoverPreview='still', previewSize='large', previewPlacement='above',
                       previewTitles='hidden', previewDelay=75, previewHideDelay=87,
                       minimizeShortcut=chords[0], restoreLastShortcut=chords[1], restoreOldestShortcut=chords[2])
         assert set(custom) == set(DEFAULTS), 'Reset fixture does not exercise every current preference'
         assert all(custom[key] != DEFAULTS[key] for key in DEFAULTS), 'Reset fixture contains an unchanged default'
         for key, value in custom.items():
-            configure(key, value)
+            configure(key, 'floating' if key == 'presentation' else value)
         session.resting()
         area = session.surface()['usableArea']
-        session.position('dock:floating', round(area['x']+area['width']*.6), round(area['y']+area['height']*.4))
+        # This position is valid for both the custom free-placement stack and
+        # the smaller default stack with edge gravity enabled.
+        session.position('dock:floating', round(area['x']+8), round(area['y']+8))
+        configure('presentation', custom['presentation'])
+        session.resting()
         before = snapshot()
         assert before['settings'] == custom, 'Custom reset fixture was not fully saved'
         open_settings(session)

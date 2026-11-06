@@ -27,6 +27,9 @@ Outside-click detection uses non-consuming runtime mouse bindings while a fan is
 open. They are disabled on close/removal and reused until the next Hyprland config
 reload; existing mouse bindings are preserved.
 
+Defaults to a floating dock with edge gravity, a transparent background, frameless
+icons and Normal animation speed.
+
 Uses Omarchy's theme and shared controls. Configure grouping, visibility, icon
 shapes, frames, corners, placement, and motion. Empty stashes occupy no screen
 space or input; floating surfaces leave the surrounding desktop click-through.
@@ -131,7 +134,7 @@ omarchy-shell window-stash configure hoverPreview live
 
 | Key | Default | Values / meaning |
 |---|---|---|
-| `presentation` | `dock` | `dock`, `bubbles`, `floating` |
+| `presentation` | `floating` | `dock`, `bubbles`, `floating` |
 | `scope` | `global` | `global`: repeat the stash on every monitor; `workspace`: filter by each screen's active workspace |
 | `restoreDestination` | `current` | `current`, `original` |
 | `grouping` | `window` | `window`, `app` (count badge and window chooser) |
@@ -142,8 +145,8 @@ omarchy-shell window-stash configure hoverPreview live
 | `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`, `jumping`; unfold/fold style, overridden by Reduced/Off |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
 | `dragMotion` | `physics` | `physics`: momentum and gentle collisions; `direct`: direct placement with the existing edge glide |
-| `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
-| `dockFrame` | `shown` | `shown`, `hidden`; static and expanded floating docks |
+| `iconFrame` | `hidden` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
+| `dockFrame` | `hidden` | `shown`, `hidden`; static and expanded floating docks |
 | `dockOpacity` | `100` | Integer `0`–`100`%; dock background and border at rest |
 | `iconOpacity` | `100` | Integer `0`–`100`%; icons, frames and badges at rest, across all presentations |
 | `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |

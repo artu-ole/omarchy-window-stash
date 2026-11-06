@@ -183,7 +183,9 @@ class ResetSettingsTests(unittest.TestCase):
         self.assert_preserved_windows()
 
     def test_concurrent_managed_edits_reject_reset_preserve_edit_and_roll_back_bindings(self):
-        for key, value in (('presentation', 'bubbles'), ('minimizeShortcut', 'CTRL + F8'),
+        other_presentation = next(value for value in stash.CHOICES['presentation']
+                                  if value != self.original['plugins'][1]['presentation'])
+        for key, value in (('presentation', other_presentation), ('minimizeShortcut', 'CTRL + F8'),
                            ('sizePreset', '175'), ('dockOpacity', True)):
             with self.subTest(key=key):
                 self.config.write_text(json.dumps(self.original))

@@ -66,7 +66,7 @@ Item {
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
   readonly property bool requestedHorizontal:config.floatingDirection === "horizontal"
   readonly property bool snapEdges:config.floatingPlacement !== "free"
-  readonly property bool dockFrameVisible:config.dockFrame !== "hidden"
+  readonly property bool dockFrameVisible:config.dockFrame === "shown"
   readonly property var usableArea:Model.usableArea(width,height,monitor ? monitor.reserved : [])
   // Monitor snapshots replace reserved arrays even when their values match.
   readonly property string areaKey:JSON.stringify(usableArea)
@@ -211,7 +211,7 @@ Item {
 
   StashCollection {
     id:iconModel
-    sourceGroups:dock.config.presentation==="floating" ? dock.groups : []
+    sourceGroups:(dock.config.presentation || "floating")==="floating" ? dock.groups : []
     animations:dock.animations; animationSpeed:dock.animationSpeed
     hold:dock.chainHolding || (!dock.open && (dock.reveal>0 || dock.actorsMoving))
     onReconciled: {
@@ -425,8 +425,8 @@ Item {
   }
 
   readonly property var inputRegions:!active ? [] : open ? actorRegions.concat([panelRegion]) : stackFollow.active ? [frontRegion] : [frontRegion,middleRegion,backRegion]
-  StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:dock.tileSize; iconShape:dock.config.iconFrame==="hidden" ? "square" : dock.config.iconShape || "auto"
-    cornerRadius:dock.config.iconFrame==="hidden" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",dock.tileSize,true,Style.cornerRadius) }
+  StashIconRegion { id:frontRegion; originX:dock.anchorX; originY:dock.anchorY; size:dock.tileSize; iconShape:dock.config.iconFrame!=="shown" ? "square" : dock.config.iconShape || "auto"
+    cornerRadius:dock.config.iconFrame!=="shown" ? 0 : Model.iconRadius(dock.config.iconShape || "auto",dock.tileSize,true,Style.cornerRadius) }
   StashIconRegion { id:middleRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(dock.tailStep,dock.stackTail); size:dock.stackTail>0 ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
   StashIconRegion { id:backRegion; originX:dock.anchorX; originY:dock.anchorY+Math.min(2*dock.tailStep,dock.stackTail); size:dock.stackTail>dock.tailStep ? dock.tileSize : 0; iconShape:frontRegion.iconShape; cornerRadius:frontRegion.cornerRadius }
   Region { id:panelRegion; item:panel; radius:panel.radius }
@@ -501,7 +501,7 @@ Item {
       chainCount:dock.chainCount
       firstIndex:dock.firstIndex
       idleOpacity:dock.iconIdleOpacity
-      frameVisible:dock.config.iconFrame!=="hidden"
+      frameVisible:dock.config.iconFrame==="shown"
       iconShape:dock.config.iconShape || "auto"
       hasCursor:dock.open ? dock.selectedKey===groupKey : stackHover.hovered
       externalPressed:!dock.open && drag.pressed
