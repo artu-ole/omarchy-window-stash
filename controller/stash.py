@@ -48,18 +48,23 @@ def lua(value):
                          for b in str(value).encode()) + '"'
 
 
-def owned_window_guard(record, parked=False):
-    """Resolve and validate the exact owned toplevel inside one compositor call."""
+def window_identity_guard(record):
+    """Resolve an exact toplevel before tagging or any other mutation."""
     checks = ["w", "w.pid == " + lua(record["pid"])]
     if record.get("stableId"):
         # clients JSON serializes stableId as hexadecimal; Lua exposes an integer.
         stable = record["stableId"]
         stable = int(stable, 16) if isinstance(stable, str) else stable
         checks.append("w.stable_id == " + lua(stable))
-    if parked:
-        checks.append("w.workspace and w.workspace.name == " + lua(SPECIAL))
     return ("local w = hl.get_window(" + lua("address:" + record["address"]) + ")\n"
-            + "if not (" + " and ".join(checks) + ") then error('Stashed window identity changed') end\n"
+            + "if not (" + " and ".join(checks) + ") then error('Stashed window identity changed') end\n")
+
+
+def owned_window_guard(record, parked=False):
+    """Resolve and validate the exact owned toplevel inside one compositor call."""
+    return (window_identity_guard(record)
+            + ("if not (w.workspace and w.workspace.name == " + lua(SPECIAL)
+               + ") then error('Stashed window left the stash') end\n" if parked else "")
             + "local owned = false; for _, tag in ipairs(w.tags) do if tag == " + lua(record["tag"])
             + " then owned = true; break end end\n"
             + "if not owned then error('Window is no longer owned by the stash') end\n")
@@ -134,6 +139,11 @@ class Hyprland:
     def dispatch(self, dispatcher, **args):
         fields = ", ".join(k + " = " + lua(v) for k, v in args.items())
         self.eval("hl.dispatch(hl.dsp." + dispatcher + "({" + fields + "}))")
+
+    def dispatch_identity(self, dispatcher, record, **args):
+        fields = ["window = w"] + [k + " = " + lua(v) for k, v in args.items() if k != "window"]
+        self.eval(window_identity_guard(record)
+                  + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
 
     def dispatch_owned(self, dispatcher, record, parked=False, **args):
         fields = ["window = w"] + [k + " = " + lua(v) for k, v in args.items() if k != "window"]
@@ -239,21 +249,26 @@ class Stash:
                       order=time.time_ns(), phase="preparing")
         self.state["windows"].append(record)
         self.save()  # Snapshot reaches disk before any window state is changed.
-        target = "address:" + active["address"]
         try:
-            self.hypr.dispatch("window.tag", window=target, tag="+"+record["tag"])
+            # Initial ownership and its first mutation share one compositor
+            # call; the address alone may already belong to another window.
+            self.hypr.dispatch_identity("window.tag", record, tag="+"+record["tag"])
             if record["fullscreen"] or record["fullscreenClient"]:
-                self.hypr.dispatch("window.fullscreen_state", window=target, internal=0, client=0, action="set")
+                self.hypr.dispatch_owned("window.fullscreen_state", record, internal=0, client=0, action="set")
                 base = self.hypr.client(active["address"])
+                if not self.matches(record, base) or record["tag"] not in base.get("tags", []):
+                    raise RuntimeError("Window identity changed while minimizing")
                 record.update(size=base["size"], relativePosition=[base["at"][0]-monitor["x"],base["at"][1]-monitor["y"]])
                 self.save()
             if record["pinned"]:
-                self.hypr.dispatch("window.pin", window=target, action="toggle")
+                self.hypr.dispatch_owned("window.pin", record, action="toggle")
             if len(active.get("grouped", [])) > 1:
-                self.hypr.dispatch("window.move", window=target, out_of_group=True)
-            self.hypr.dispatch("window.move", window=target, workspace=SPECIAL, follow=False)
+                self.hypr.dispatch_owned("window.move", record, out_of_group=True)
+            self.hypr.dispatch_owned("window.move", record, workspace=SPECIAL, follow=False)
             after = self.hypr.client(active["address"])
-            if not after or after["workspace"]["name"] != SPECIAL:
+            if not self.matches(record, after) or record["tag"] not in after.get("tags", []):
+                raise RuntimeError("Window identity changed while minimizing")
+            if after["workspace"]["name"] != SPECIAL:
                 raise RuntimeError("The window did not reach the stash")
             record["phase"] = "stashed"
             self.save()
@@ -301,11 +316,12 @@ class Stash:
         record = next((r for r in self.state["windows"] if r["id"] == ident or r["address"] == ident), None)
         if not record:
             return {"ok": True, "action": "noop", "reason": "Window is no longer stashed"}
-        if expected and not self.matches(expected, self.hypr.client(record["address"])):
+        expected = dict(expected or record)
+        if not self.matches(expected, self.hypr.client(record["address"])):
             self.reconcile(self.hypr.read("clients"))
             return {"ok": True, "action": "noop", "id": ident, "reason": "Window identity changed"}
         def dispatch(dispatcher, **args):
-            if expected and "window" in args:
+            if "window" in args:
                 return self.hypr.dispatch_owned(dispatcher, expected, **args)
             return self.hypr.dispatch(dispatcher, **args)
         destination, dest_monitor = self.destination(record, to or self.settings()["restoreDestination"], monitor, workspace)
@@ -325,15 +341,17 @@ class Stash:
                 self.append_scrolling(record["address"], destination, record["size"][0], expected)
             dispatch("focus", window=target)
             pin_state = self.hypr.client(record["address"])
-            if pin_state is None:
-                raise RuntimeError("Window closed during restoration")
+            if not self.matches(expected, pin_state) or expected["tag"] not in pin_state.get("tags", []):
+                raise RuntimeError("Window identity changed during restoration")
             if bool(pin_state.get("pinned")) != record["pinned"]:
                 dispatch("window.pin", window=target, action="toggle")
             if record["fullscreen"] or record["fullscreenClient"]:
                 dispatch("window.fullscreen_state", window=target, internal=record["fullscreen"],
                                    client=record["fullscreenClient"], action="set")
             after = self.hypr.client(record["address"])
-            if not after or self.workspace_selector(after["workspace"]) != destination:
+            if not self.matches(expected, after) or expected["tag"] not in after.get("tags", []):
+                raise RuntimeError("Window identity changed during restoration")
+            if self.workspace_selector(after["workspace"]) != destination:
                 raise RuntimeError("The window did not reach the destination workspace")
             if after["floating"] != record["floating"]:
                 raise RuntimeError("A window rule prevented restoration of floating state")

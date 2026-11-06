@@ -44,9 +44,17 @@ class FakeHypr:
 
     def eval(self, code): self.commands.append(code)
 
+    def dispatch_identity(self, dispatcher, record, **kw):
+        c = self.client(record["address"])
+        if (not c or c["pid"] != record["pid"]
+                or (record.get("stableId") and c.get("stableId") != record["stableId"])):
+            raise RuntimeError("Stashed window identity changed")
+        self.dispatch(dispatcher, window="address:" + record["address"], **{k:v for k,v in kw.items() if k != "window"})
+
     def dispatch_owned(self, dispatcher, record, parked=False, **kw):
         c = self.client(record["address"])
-        if (not c or c["pid"] != record["pid"] or c.get("stableId") != record.get("stableId")
+        if (not c or c["pid"] != record["pid"]
+                or (record.get("stableId") and c.get("stableId") != record["stableId"])
                 or record["tag"] not in c.get("tags", [])
                 or (parked and c["workspace"]["name"] != SPECIAL)):
             raise RuntimeError("Stashed window identity changed")
@@ -105,6 +113,171 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.hypr.clients[0]["size"],[640,400])
         self.assertTrue(self.hypr.clients[0]["floating"])
         self.assertEqual(self.stash.state["windows"],[])
+
+    def race_fixture(self, name):
+        hypr = FakeHypr()
+        root = self.root/name
+        stash = Stash(hypr, root/"run", root/"shell.json", root/"state")
+        stash.directory.mkdir(parents=True)
+        return hypr, stash
+
+    def test_minimize_rechecks_identity_atomically_before_initial_tag(self):
+        for index, change in enumerate(("pid", "stableId", "closed")):
+            with self.subTest(change=change):
+                hypr, stash = self.race_fixture("initial-"+str(index))
+                replacement = client(workspace=7, pid=200 if change == "pid" else 100)
+                replacement["stableId"] = "0x222" if change == "stableId" else "0x1"
+                untouched = copy.deepcopy(replacement)
+                original_save = stash.save
+                def replace_after_snapshot():
+                    original_save()
+                    if stash.state["windows"][0]["phase"] == "preparing":
+                        hypr.clients = [] if change == "closed" else [replacement]
+                stash.save = replace_after_snapshot
+                with self.assertRaises(RuntimeError):
+                    stash.minimize()
+                self.assertEqual(hypr.clients, [] if change == "closed" else [untouched])
+                self.assertEqual(hypr.commands, [], "The replacement was mutated before identity validation")
+                self.assertEqual(stash.state["windows"][0]["phase"], "restoring")
+                self.assertEqual(stash.state["windows"][0]["pid"], 100)
+
+    def test_minimize_guards_every_mutation_after_tagging(self):
+        variants = ({}, {"fullscreen": 2}, {"pinned": True}, {"grouped": ["0x1", "0x2"]})
+        for index, state in enumerate(variants):
+            with self.subTest(state=state):
+                hypr, stash = self.race_fixture("after-tag-"+str(index))
+                hypr.clients[0].update(state)
+                replacement = client(workspace=7, pid=200)
+                replacement["stableId"] = "0x222"
+                untouched = copy.deepcopy(replacement)
+                original_dispatch = hypr.dispatch
+                def replace_after_tag(name, **args):
+                    result = original_dispatch(name, **args)
+                    if name == "window.tag" and args["tag"].startswith("+"):
+                        hypr.clients = [replacement]
+                    return result
+                hypr.dispatch = replace_after_tag
+                with self.assertRaises(RuntimeError):
+                    stash.minimize()
+                self.assertEqual(hypr.clients, [untouched])
+                self.assertEqual([command[0] for command in hypr.commands], ["window.tag"])
+
+    def test_minimize_checks_identity_before_reporting_success(self):
+        hypr, stash = self.race_fixture("minimize-final-read")
+        replacement = client(workspace=-99, pid=200)
+        replacement["workspace"]["name"] = SPECIAL
+        untouched = copy.deepcopy(replacement)
+        original_dispatch = hypr.dispatch
+        def replace_after_move(name, **args):
+            result = original_dispatch(name, **args)
+            if name == "window.move" and args.get("workspace") == SPECIAL:
+                hypr.clients = [replacement]
+            return result
+        hypr.dispatch = replace_after_move
+        with self.assertRaisesRegex(RuntimeError, "identity changed"):
+            stash.minimize()
+        self.assertEqual(hypr.clients, [untouched])
+        self.assertEqual(stash.listing()["windows"], [])
+
+    def test_minimize_does_not_save_replacement_geometry_after_fullscreen_reset(self):
+        hypr, stash = self.race_fixture("fullscreen-read")
+        hypr.clients[0].update(fullscreen=2, floating=True)
+        replacement = client(workspace=7, pid=200)
+        replacement.update(stableId="0x222", size=[333, 222], at=[400, 300])
+        untouched = copy.deepcopy(replacement)
+        original_dispatch = hypr.dispatch
+        def replace_after_fullscreen(name, **args):
+            result = original_dispatch(name, **args)
+            if name == "window.fullscreen_state":
+                hypr.clients = [replacement]
+            return result
+        hypr.dispatch = replace_after_fullscreen
+        with self.assertRaisesRegex(RuntimeError, "identity changed"):
+            stash.minimize()
+        self.assertEqual(hypr.clients, [untouched])
+        self.assertEqual(stash.state["windows"][0]["size"], [640, 400])
+        self.assertEqual(stash.state["windows"][0]["relativePosition"], [100, 150])
+
+    def test_guarded_restore_supports_legacy_records_without_stable_id(self):
+        ident = self.stash.minimize()["id"]
+        del self.stash.state["windows"][0]["stableId"]
+        self.assertEqual(self.stash.restore(ident)["action"], "restored")
+        self.assertEqual(self.hypr.clients[0]["tags"], [])
+        self.assertEqual(self.stash.state["windows"], [])
+
+    def test_partial_minimize_failure_keeps_tagged_window_recoverable(self):
+        self.hypr.fail = "window.move"
+        with self.assertRaises(RuntimeError):
+            self.stash.minimize()
+        record = self.stash.listing()["windows"][0]
+        self.assertEqual(record["phase"], "restoring")
+        self.assertIn(record["tag"], self.hypr.clients[0]["tags"])
+        self.hypr.fail = None
+        self.assertEqual(self.stash.restore(record["id"])["action"], "restored")
+        self.assertEqual(self.hypr.clients[0]["tags"], [])
+
+    def test_normal_restore_rechecks_identity_and_ownership_before_mutating(self):
+        for index, change in enumerate(("pid", "stableId", "tag", "closed")):
+            with self.subTest(change=change):
+                hypr, stash = self.race_fixture("restore-"+str(index))
+                ident = stash.minimize()["id"]
+                replacement = client(workspace=7, pid=200 if change == "pid" else 100)
+                replacement["stableId"] = "0x222" if change == "stableId" else "0x1"
+                untouched = copy.deepcopy(replacement)
+                original_dispatch = hypr.dispatch
+                def replace_before_restore(name, **args):
+                    if name == "focus" and "monitor" in args:
+                        hypr.clients = [] if change == "closed" else [replacement]
+                    return original_dispatch(name, **args)
+                hypr.dispatch = replace_before_restore
+                before = len(hypr.commands)
+                with self.assertRaises(RuntimeError):
+                    stash.restore(ident, "current", workspace=2)
+                self.assertEqual(hypr.clients, [] if change == "closed" else [untouched])
+                self.assertFalse(any(command[0].startswith("window.") or "window" in command[1]
+                                     for command in hypr.commands[before:] if isinstance(command, tuple)))
+
+    def test_normal_restore_rechecks_between_window_mutations(self):
+        hypr, stash = self.race_fixture("restore-after-move")
+        hypr.clients[0]["floating"] = True
+        ident = stash.minimize()["id"]
+        replacement = client(workspace=7, pid=200)
+        replacement["stableId"] = "0x222"
+        untouched = copy.deepcopy(replacement)
+        original_dispatch = hypr.dispatch
+        def replace_after_move(name, **args):
+            result = original_dispatch(name, **args)
+            if name == "window.move" and args.get("workspace") == "2":
+                hypr.clients = [replacement]
+            return result
+        hypr.dispatch = replace_after_move
+        before = len(hypr.commands)
+        with self.assertRaises(RuntimeError):
+            stash.restore(ident, "current", workspace=2)
+        self.assertEqual(hypr.clients, [untouched])
+        self.assertEqual([command[0] for command in hypr.commands[before:] if isinstance(command, tuple)],
+                         ["focus", "focus", "window.move"])
+
+    def test_initial_tag_and_scrolling_restore_validate_inside_one_lua_call(self):
+        ident = self.stash.minimize()["id"]
+        record = self.stash.state["windows"][0]
+        hypr = Hyprland()
+        calls = []
+        hypr.eval = calls.append
+        hypr.dispatch_identity("window.tag", record, tag="+"+record["tag"])
+        self.assertEqual(len(calls), 1)
+        code = calls[0]
+        self.assertIn("w.pid == 100", code)
+        self.assertIn("w.stable_id == 1", code)
+        self.assertNotIn("local owned", code, "Initial tagging must work before ownership exists")
+        self.assertLess(code.index("w.stable_id"), code.index("hl.dispatch"))
+        self.assertIn('hl.dispatch(hl.dsp.window.tag({window = w, tag = "+window-stash-'+ident+'"}))', code)
+        before = len(self.hypr.commands)
+        self.stash.restore(ident)
+        scrolling = next(command for command in self.hypr.commands[before:] if isinstance(command, str))
+        self.assertIn("w.pid == 100", scrolling)
+        self.assertIn("w.stable_id == 1", scrolling)
+        self.assertLess(scrolling.index("if not owned"), scrolling.index("hl.dispatch"))
 
     def test_lifo_and_scope(self):
         first=self.stash.minimize()["id"]
