@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import struct
 import subprocess
 import tempfile
 import time
@@ -144,8 +145,12 @@ def away(session):
 def hidden(session):
     away(session)
     return wait(lambda: preview(session) if not preview(session)['rendered'] and not preview(session)['pending']
-                and not preview(session)['image']['captureActive'] else None,
+                and captures_unloaded(preview(session)) else None,
                 'Preview or capture resource did not unload', timeout=4)
+
+
+def captures_unloaded(value):
+    return not value['image']['captureActive'] and all(not tile['image']['captureActive'] for tile in value.get('tiles', []))
 
 
 def icon_ready(session, key=None):
@@ -162,10 +167,36 @@ def icon_ready(session, key=None):
 
 
 def hover(session, rect, record=None):
-    session.move(rect['x']+rect['width']/2-1, rect['y']+rect['height']/2)
-    session.move(rect['x']+rect['width']/2, rect['y']+rect['height']/2)
-    value = wait(lambda: preview(session) if preview(session)['opened'] else None,
-                 'Hover did not open a preview', timeout=5)
+    x, y = rect['x']+rect['width']/2, rect['y']+rect['height']/2
+    session.move(x-1, y)
+    session.move(x, y)
+    entered = time.monotonic()
+    deadline = entered+5
+    while time.monotonic() < deadline:
+        value = preview(session)
+        if value['opened']:
+            break
+        # A newly configured output can coalesce the first enter with the
+        # preceding leave. Retry only a missed enter, never a pending delay.
+        if not value['pending'] and time.monotonic()-entered > .3:
+            area = session.surface()['usableArea']
+            outside_x = rect['x']+rect['width']+2
+            if outside_x >= area['x']+area['width']:
+                outside_x = max(area['x'], rect['x']-2)
+            session.move(outside_x, y)
+            preview(session)  # Let the shell observe the leave before re-entry.
+            session.move(x-1, y)
+            session.move(x, y)
+            entered = time.monotonic()
+        time.sleep(.04)
+    else:
+        surface = session.surface()
+        monitor = next(m for m in h.read('monitors') if m['name'] == session.monitor['name'])
+        print('Hover failure diagnostics:', {'requestedRect': rect,
+              'monitor': {k: monitor[k] for k in ('name', 'width', 'height', 'scale', 'x', 'y', 'focused')},
+              'surface': {k: surface[k] for k in ('width', 'height', 'workspaceId')},
+              'preview': preview(session)}, flush=True)
+        raise AssertionError('Hover did not open a preview')
     if record is not None:
         assert value['recordId'] == record['id'], ('Preview selected the wrong window', value['recordId'], record['id'])
     return value
@@ -175,8 +206,8 @@ def image_rect(value):
     rect = value['image'].get('rect') or value.get('imageRect')
     if rect and rect['width'] > 0 and rect['height'] > 0:
         return rect
-    # The image occupies the middle of the card; title and carousel remain at
-    # its ends. Newer diagnostics expose its exact surface-space rectangle.
+    # Older diagnostics expose only the outer card. The current UI reports
+    # the exact selected image rectangle, including grouped strip tiles.
     rect = value['rect']
     return {'x': rect['x']+12, 'y': rect['y']+28, 'width': rect['width']-24,
             'height': max(1, rect['height']-78)}
@@ -255,12 +286,50 @@ def click_image(session, button=272):
     session.click(image_rect(preview(session)), button)
 
 
-def select_next(session, record):
+def tile_for(value, record):
+    return next((tile for tile in value['tiles'] if tile['recordId'] == record['id']), None)
+
+
+def captured_tiles(session, records):
+    def ready():
+        value = preview(session)
+        tiles = [tile_for(value, record) for record in records]
+        return value if value['opened'] and all(tile and tile['visible'] and tile['image']['hasContent']
+                                               and tile['image']['recordId'] == record['id']
+                                               for tile, record in zip(tiles, records)) else None
+
+    value = wait(ready, 'The grouped strip did not capture every visible window together', timeout=8)
+    assert_bounded(session, value)
+    for record in records:
+        assert h.client(record['address'])['workspace']['name'] == SPECIAL, 'Grouped capture restored a parked window'
+    return value
+
+
+def assert_tile_pixels(session, tile, color):
+    assert_pixels(session, {'image': dict(tile['image'], rect=tile['imageRect']),
+                            'imageRect': tile['imageRect'], 'rect': tile['rect']}, color)
+
+
+def click_tile(session, record, button=272, close=False):
+    tile = tile_for(preview(session), record)
+    assert tile and tile['visible'], 'The requested thumbnail is not visible'
+    session.click(tile['closeRect'] if close else tile['imageRect'], button)
+
+
+def scroll_preview(session, delta):
     value = preview(session)
-    assert value['count'] > 1 and value['nextRect']['width'] > 0
-    session.click(value['nextRect'])
-    wait(lambda: preview(session)['recordId'] == record['id'], 'Carousel did not select the next represented window')
-    return captured(session, record)
+    viewport = value['viewportRect']
+    session.move(viewport['x']+viewport['width']/2, viewport['y']+viewport['height']/2)
+    wait(lambda: preview(session)['hovered'], 'Pointer did not enter the grouped strip')
+    pointer = session.pointer
+    # A wheel needs discrete steps as well as its pixel delta. v1 opcode7 is
+    # axis_discrete(time:uint, axis:uint, value:fixed, discrete:int).
+    pointer.send(5, 5, pointer.uint(0))
+    steps=max(1,round(abs(delta)/15))*(1 if delta>0 else -1)
+    pointer.send(5, 7, pointer.uint(int(time.monotonic()*1000) & 0xffffffff)
+                 + pointer.uint(0) + struct.pack('ii', round(delta*256),steps))
+    pointer.send(5, 4)
+    pointer.sync()
 
 
 def small_output(session):
@@ -273,19 +342,31 @@ def small_output(session):
     import json
     h.eval('hl.monitor({output=%s,mode="320x240@60",position=%s,scale=1})' %
            (json.dumps(monitor['name']), json.dumps('%dx0' % right)))
-    session.monitor = next(m for m in h.read('monitors') if m['name'] == monitor['name'])
+    session.monitor = wait(lambda: next((m for m in h.read('monitors') if m['name'] == monitor['name']
+                           and m['width'] == 320 and m['height'] == 240 and m['scale'] == 1
+                           and m['x'] == right and m['y'] == 0), None),
+                           'Preview test output did not apply its requested geometry')
     h.dispatch('focus', monitor=monitor['name'])
     workspace = session.workspace+3
     h.dispatch('focus', workspace=str(workspace))
-    wait(lambda: session.monitor['name'] in shell('status')['screens'], 'Preview test output has no surface')
+    wait(lambda: h.read('activeworkspace')['id'] == workspace
+         and any(m['name'] == monitor['name'] and m['focused'] for m in h.read('monitors')),
+         'Preview test workspace did not become active on its output')
+    wait(lambda: next((s for s in shell('status')['surfaces'] if s['screen'] == monitor['name']
+                       and s['workspaceId'] == workspace), None),
+         'Preview test surface did not apply its workspace')
     address = spawn_color(session, 'blue', app='org.windowstash.PreviewSmall', workspace=workspace)
     record = session.park(address)
+    # An empty PanelWindow is hidden and has no configured layer size yet.
+    wait(lambda: session.surface()['width'] == 320 and session.surface()['height'] == 240,
+         'Visible preview surface did not apply its output geometry')
     key = window_key(record)
     configure('presentation', 'bubbles')
     configure('grouping', 'window')
     configure('previewSize', 'large')
     configure('previewPlacement', 'auto')
     configure('previewDelay', 0)
+    configure('hoverPreview', 'still')
     h.dispatch('focus', monitor=monitor['name'])
     session.resting()
     area = session.surface()['usableArea']
@@ -299,6 +380,69 @@ def small_output(session):
         assert_bounded(session, captured(session, record))
     hidden(session)
     print('PASS large previews remain within a temporary 320x240 work area at every corner', flush=True)
+
+    grouped = [record]
+    for color in ('red', 'green', 'blue'):
+        grouped.append(session.park(spawn_color(session, color, app='org.windowstash.PreviewSmall', workspace=workspace)))
+    configure('grouping', 'app')
+    group_key = 'app:'+record['app'].lower()
+    value = hover(session, icon_ready(session, group_key), grouped[-1])
+    assert value['count'] == len(grouped) and len(value['tiles']) == len(grouped), 'Overflow dropped represented windows'
+    assert value['overflow'] and value['contentWidth'] > value['viewportRect']['width'], 'Small output did not produce strip overflow'
+    assert_bounded(session, value)
+    wait(lambda: all(tile['image']['hasContent'] for tile in preview(session)['tiles'] if tile['visible']),
+         'Initially visible strip thumbnails did not capture')
+    value = preview(session)
+    offscreen = [tile for tile in value['tiles'] if not tile['visible']]
+    assert offscreen and all(not tile['image']['captureActive'] for tile in offscreen), 'Offscreen previews kept capture streams alive'
+    assert_tile_pixels(session, tile_for(value, grouped[-1]), 'blue')
+    direction=1000
+    scroll_preview(session, direction)
+    try:
+        wait(lambda: preview(session)['contentX'] > 0, 'Wheel did not advance', timeout=1)
+    except AssertionError:
+        # The compositor's natural-scroll preference can reverse a test device.
+        direction=-direction
+        scroll_preview(session, direction)
+        try:
+            wait(lambda: preview(session)['contentX'] > 0, 'Wheel did not advance', timeout=2)
+        except AssertionError:
+            value=preview(session)
+            raise AssertionError(('Wheel input did not scroll the grouped strip',value.get('scrolling'),
+                                  value['contentX'],value['contentWidth'],value['viewportRect']))
+
+    def oldest_visible():
+        value = preview(session)
+        tile = tile_for(value, grouped[0])
+        viewport = value['viewportRect']
+        return tile if tile and tile['rect']['x'] >= viewport['x']-.1 \
+            and tile['rect']['x']+tile['rect']['width'] <= viewport['x']+viewport['width']+.1 \
+            and tile['image']['hasContent'] else None
+
+    # The compositor can normalize one request to one detent. Scroll actual
+    # repeated frames rather than assuming a large injected delta reaches end.
+    for _ in range(24):
+        if oldest_visible():
+            break
+        scroll_preview(session,direction)
+        time.sleep(.03)
+    try:
+        oldest = wait(oldest_visible, 'Scrolling did not reveal and capture the oldest grouped window')
+    except AssertionError:
+        value=preview(session)
+        print('Overflow capture diagnostics:', {k:value[k] for k in
+              ('opened','rendered','hovered','contentX','contentWidth','viewportRect','scrolling')},
+              [(t['rect'],t['visible'],t['image']) for t in value['tiles']],flush=True)
+        raise
+    assert_tile_pixels(session, oldest, 'blue')
+    value = preview(session)
+    assert len(value['tiles']) == len(grouped), 'Scrolling replaced the group with a single carousel image'
+    assert all(not tile['image']['captureActive'] for tile in value['tiles'] if not tile['visible']), 'Scrolled-away captures did not unload'
+    click_tile(session, grouped[0])
+    wait(lambda: h.client(address)['workspace']['id'] == workspace, 'Overflow thumbnail did not restore its own window')
+    assert all(h.client(w['address'])['workspace']['name'] == SPECIAL for w in grouped[1:]), 'Overflow restore restored an app neighbor'
+    hidden(session)
+    print('PASS bounded grouped overflow, wheel scrolling, visible-only captures and specific thumbnail restore on a small output', flush=True)
 
 
 @desktop_test('Mouse hover preview integration test')
@@ -406,55 +550,101 @@ def main(with_small_output=False):
 
         configure('grouping', 'app')
         group_key = 'app:'+two['app'].lower()
+        strip_blue = spawn_color(session, 'blue')
+        strip_record = session.park(strip_blue)
         source = icon_ready(session, group_key)
-        hover(session, source, two)
-        assert preview(session)['count'] == 2 and preview(session)['index'] == 0
-        value = select_next(session, one)
-        assert_pixels(session, value, 'red')
-        assert preview(session)['index'] == 1
-        session.click(value['previousRect'])
-        wait(lambda: preview(session)['recordId'] == two['id'], 'Previous did not return to the newest window')
-        assert_pixels(session, captured(session, two), 'green')
+        configure('hoverPreview', 'still')
+        baseline_focus = current_focus()
+        baseline_geometry = {address: (h.client(address)['at'], h.client(address)['size'])
+                             for address in (red, green, strip_blue)}
+        hover(session, source, strip_record)
+        value = captured_tiles(session, [strip_record, two, one])
+        assert value['count'] == 3 and len(value['tiles']) == 3 and not value['overflow']
+        assert [tile['recordId'] for tile in value['tiles']] == [strip_record['id'], two['id'], one['id']], 'Grouped strip lost newest-first order'
+        assert all(not tile['image']['live'] for tile in value['tiles']), 'Grouped Still mode enabled live capture'
+        for record, color in ((strip_record, 'blue'), (two, 'green'), (one, 'red')):
+            assert_tile_pixels(session, tile_for(value, record), color)
+        rects = [tile['rect'] for tile in value['tiles']]
+        assert all(abs(r['y']-rects[0]['y']) < .1 for r in rects), 'Grouped thumbnails are not aligned side by side'
+        assert all(a['x']+a['width'] <= b['x']+.1 for a, b in zip(rects, rects[1:])), 'Grouped thumbnails overlap'
+        assert current_focus() == baseline_focus, 'Grouped preview stole focus or switched workspace'
+        assert all((h.client(address)['at'], h.client(address)['size']) == before
+                   for address, before in baseline_geometry.items()), 'Grouped capture moved or resized a parked window'
+        change_color(session, strip_blue)  # blue -> red, while Still retains blue
+        time.sleep(.2)
+        assert_tile_pixels(session, tile_for(preview(session), strip_record), 'blue')
+        created_tiles = preview(session)['createdTiles']
+        for _ in range(3):
+            shell('refresh')
+            wait(lambda: not shell('status')['controllerBusy'] and shell('status')['queueLength'] == 0,
+                 'Grouped metadata refresh did not finish')
+            time.sleep(.15)
+            refreshed = preview(session)
+            assert refreshed['createdTiles'] == created_tiles, 'Metadata-only refresh recreated grouped thumbnail delegates'
+            assert all(tile['image']['hasContent'] for tile in refreshed['tiles']), 'Metadata-only refresh discarded a grouped Still frame'
+            assert_tile_pixels(session, tile_for(refreshed, strip_record), 'blue')
         hidden(session)
+        configure('hoverPreview', 'live')
+        hover(session, icon_ready(session, group_key), strip_record)
+        value = captured_tiles(session, [strip_record, two, one])
+        assert all(tile['image']['live'] for tile in value['tiles']), 'Grouped Live mode did not stream every visible tile'
+        hidden(session)
+        print('PASS three simultaneous side-by-side parked-window previews, specific pixels, Still/Live modes and unchanged focus/geometry', flush=True)
 
         # Invoke from a different workspace so restore cannot accidentally use
         # an old picker/context workspace captured by another action.
         configure('scope', 'global')
         h.dispatch('focus', workspace=str(session.workspace+1))
-        hover(session, icon_ready(session, group_key), two)
-        session.click(preview(session)['moreRect'])
+        hover(session, icon_ready(session, group_key), strip_record)
+        captured_tiles(session, [strip_record, two, one])
+        click_tile(session, two)
+        wait(lambda: h.client(green)['workspace']['id'] == session.workspace+1,
+             'Grouped thumbnail restore ignored the invoking workspace')
+        assert h.client(red)['workspace']['name'] == SPECIAL and h.client(strip_blue)['workspace']['name'] == SPECIAL, \
+            'Restoring one thumbnail restored its whole app group'
+        wait(lambda: not preview(session)['rendered'] and captures_unloaded(preview(session)),
+             'Restored strip kept capture resources')
+        h.dispatch('window.move', window='address:'+green, workspace=str(session.workspace), follow=True)
+        two = session.park(green)
+        configure('scope', 'workspace')
+        hidden(session)
+
+        # Group-icon clicks retain the existing chooser; its rows still have
+        # individual hover previews even though the hover strip has no pager.
+        session.click(icon_ready(session, group_key))
         wait(lambda: shell('status')['dialog'] == 'picker' and session.surface()['dialog']['visible'],
-             'Grouped preview did not open its represented-window picker')
-        wait(lambda: not preview(session)['rendered'], 'Picker transition kept the old preview')
+             'Grouped icon did not open its represented-window picker')
         picker = session.surface()['picker']
         row = {'x': picker['x']+4, 'y': picker['y']+2, 'width': picker['width']-8, 'height': 42}
         hover(session, row, two)
         captured(session, two)
-        click_image(session)
-        wait(lambda: h.client(green)['workspace']['id'] == session.workspace+1,
-             'Preview restore ignored the invoking workspace')
-        assert h.client(red)['workspace']['name'] == SPECIAL, 'Restoring one preview restored its whole app group'
-        wait(lambda: not preview(session)['rendered'] and not preview(session)['image']['captureActive'],
-             'Restored preview kept its capture resource')
-        h.dispatch('window.move', window='address:'+green, workspace=str(session.workspace), follow=True)
-        two = session.park(green)
-        configure('scope', 'workspace')
-        source = icon_ready(session, group_key)
-        hover(session, source, two)
-        select_next(session, one)
-        click_image(session, 273)
+        shell('dismiss')
+        wait(lambda: not session.surface()['dialog']['visible'], 'Chooser did not dismiss')
+        hidden(session)
+        hover(session, icon_ready(session, group_key), two)
+        captured_tiles(session, [two, strip_record, one])
+        click_tile(session, one, 273)
         wait(lambda: session.menu()['visible'], 'Preview right click did not open the context menu')
         assert session.menu()['targetIds'] == [one['id']], 'Preview menu targeted the whole app or the wrong window'
         shell('dismiss')
         wait(lambda: not session.menu()['rendered'], 'Preview context menu did not dismiss')
         hover(session, icon_ready(session, group_key), two)
-        select_next(session, one)
-        click_image(session, 274)
+        captured_tiles(session, [two, strip_record, one])
+        click_tile(session, one, 274)
         wait(lambda: not h.client(red), 'Preview middle click did not close the selected window')
         assert h.client(green)['workspace']['name'] == SPECIAL, 'Preview middle click closed its app neighbor'
         wait(lambda: one['id'] not in shell('status')['pendingCloseIds'], 'Preview close never completed')
+        wait(lambda: all(tile['recordId'] != one['id'] for tile in preview(session)['tiles'])
+             or not preview(session)['opened'], 'Closed thumbnail remained in the grouped strip')
         hidden(session)
-        print('PASS grouped carousel pixels, chooser-row hover, invocation-aware restore, specific context menu and confirmed middle close', flush=True)
+        hover(session, icon_ready(session, group_key), two)
+        captured_tiles(session, [two, strip_record])
+        click_tile(session, strip_record, close=True)
+        wait(lambda: not h.client(strip_blue), 'Thumbnail close button did not close its own window')
+        assert h.client(green)['workspace']['name'] == SPECIAL, 'Thumbnail close button closed its app neighbor'
+        wait(lambda: strip_record['id'] not in shell('status')['pendingCloseIds'], 'Thumbnail close button never completed')
+        hidden(session)
+        print('PASS grouped tile restore, chooser-row hover, invocation-aware restore, specific context menu, confirmed middle close and per-tile close button', flush=True)
 
         configure('grouping', 'window')
         blue = spawn_color(session, 'blue', app='org.windowstash.PreviewOther')

@@ -12,23 +12,32 @@ function rectangle(value) {
 
 function clamp(value, minimum, maximum) { return Math.max(minimum,Math.min(maximum,value)) }
 
-// Dimensions are logical pixels. Only the viewport uses a fixed aspect ratio;
-// the captured window is contained inside it without cropping or stretching.
+// Dimensions are logical pixels. Every window has its own fixed-aspect image
+// viewport. Grouped windows form one row: shrink together while readable, then
+// keep all cards in a horizontally scrollable strip instead of a carousel.
 function measure(size, width, height, titleVisible, groupCount) {
-  width=Math.max(0,width); height=Math.max(0,height)
-  if (!width || !height) return {width:0,height:0,imageWidth:0,imageHeight:0,headerHeight:0,footerHeight:0,inset:0}
+  width=Math.max(0,finite(width,0)); height=Math.max(0,finite(height,0))
+  var count=Math.max(1,Math.floor(finite(groupCount,1)))
+  if (!width || !height) return {width:0,height:0,imageWidth:0,imageHeight:0,headerHeight:0,footerHeight:0,inset:0,
+    cardWidth:0,cardHeight:0,tileWidth:0,tileHeight:0,gap:0,contentWidth:0,viewportWidth:0,viewportHeight:0,overflow:false,count:count}
   var preferred=size==="small" ? 200 : size==="large" ? 380 : 280
   var inset=Math.min(8,width/4,height/4)
   var insideWidth=Math.max(0,width-inset*2),insideHeight=Math.max(0,height-inset*2)
-  var header=titleVisible ? 36 : 0,footer=groupCount>1 ? 32 : 0,chrome=header+footer
+  var header=titleVisible ? 36 : 0
   // Keep some image room on tiny outputs instead of allowing fixed chrome to
-  // push the capture or footer outside the panel.
-  var budget=Math.min(chrome,insideHeight*.6),scale=chrome ? budget/chrome : 1
-  header*=scale; footer*=scale
-  var imageWidth=Math.max(0,Math.min(preferred,insideWidth,(insideHeight-header-footer)*1.6))
+  // push the capture outside the panel.
+  header=Math.min(header,insideHeight*.6)
+  var maximum=Math.max(0,Math.min(preferred,insideWidth,(insideHeight-header)*1.6))
+  var gap=count>1 ? Math.min(8,insideWidth/4) : 0
+  var fitting=(insideWidth-gap*(count-1))/count
+  var imageWidth=Math.max(0,Math.min(maximum,Math.max(Math.min(120,maximum),fitting)))
   var imageHeight=imageWidth/1.6
-  return {width:imageWidth+inset*2,height:imageHeight+header+footer+inset*2,
-    imageWidth:imageWidth,imageHeight:imageHeight,headerHeight:header,footerHeight:footer,inset:inset}
+  var cardHeight=imageHeight+header,contentWidth=imageWidth*count+gap*(count-1)
+  var viewportWidth=Math.min(insideWidth,contentWidth)
+  return {width:viewportWidth+inset*2,height:cardHeight+inset*2,
+    imageWidth:imageWidth,imageHeight:imageHeight,headerHeight:header,footerHeight:0,inset:inset,
+    cardWidth:imageWidth,cardHeight:cardHeight,tileWidth:imageWidth,tileHeight:cardHeight,gap:gap,
+    contentWidth:contentWidth,viewportWidth:viewportWidth,viewportHeight:cardHeight,overflow:contentWidth>viewportWidth+.000001,count:count}
 }
 
 function contains(rect, x, y, radius) {
@@ -71,7 +80,8 @@ function choose(area, avoid, size, titleVisible, groupCount, placement, gap) {
     side=order[i]
     var dimensions=measure(size,side==="left" || side==="right" ? space[side] : area.width,
       side==="above" || side==="below" ? space[side] : area.height,titleVisible,groupCount)
-    var imageArea=dimensions.imageWidth*dimensions.imageHeight
+    var visibleCount=Math.min(dimensions.count,(dimensions.viewportWidth+dimensions.gap)/Math.max(1,dimensions.cardWidth+dimensions.gap))
+    var imageArea=dimensions.imageWidth*dimensions.imageHeight*visibleCount
     if (imageArea>bestArea+0.000001) { best={side:side,dimensions:dimensions}; bestArea=imageArea }
   }
   return best
@@ -92,7 +102,5 @@ function previewLayout(anchor, area, size, titleVisible, groupCount, placement, 
   else if (side==="below") y=avoid.y+avoid.height+gap
   else if (side==="left") x=avoid.x-gap-d.width
   else x=avoid.x+avoid.width+gap
-  return {x:clamp(x,area.x,area.x+area.width-d.width),y:clamp(y,area.y,area.y+area.height-d.height),
-    width:d.width,height:d.height,imageWidth:d.imageWidth,imageHeight:d.imageHeight,
-    side:side,headerHeight:d.headerHeight,footerHeight:d.footerHeight,inset:d.inset}
+  return Object.assign({},d,{x:clamp(x,area.x,area.x+area.width-d.width),y:clamp(y,area.y,area.y+area.height-d.height),side:side})
 }

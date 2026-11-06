@@ -5,15 +5,25 @@ const model=vm.createContext({})
 vm.runInContext(fs.readFileSync(__dirname+'/../ui/PreviewModel.js','utf8').replace(/^\.pragma library\s*/,''),model)
 const close=(a,b,message)=>assert.ok(Math.abs(a-b)<1e-7,`${message}: ${a} != ${b}`)
 function bounded(rect,area) {
-  for (const key of ['x','y','width','height','imageWidth','imageHeight','headerHeight','footerHeight','inset'])
+  for (const key of ['x','y','width','height','imageWidth','imageHeight','headerHeight','footerHeight','inset',
+    'cardWidth','cardHeight','tileWidth','tileHeight','gap','contentWidth','viewportWidth','viewportHeight','count'])
     assert.ok(Number.isFinite(rect[key]),'Nonfinite '+key)
   assert.ok(rect.width>=0 && rect.height>=0 && rect.imageWidth>=0 && rect.imageHeight>=0)
   assert.ok(rect.x>=area.x-1e-7 && rect.y>=area.y-1e-7,'Preview escaped reserved top/left')
   assert.ok(rect.x+rect.width<=area.x+area.width+1e-7,'Preview escaped right edge')
   assert.ok(rect.y+rect.height<=area.y+area.height+1e-7,'Preview escaped bottom edge')
-  close(rect.width,rect.imageWidth+rect.inset*2,'Image and horizontal chrome disagree')
+  close(rect.width,rect.viewportWidth+rect.inset*2,'Strip viewport and horizontal chrome disagree')
   close(rect.height,rect.imageHeight+rect.headerHeight+rect.footerHeight+rect.inset*2,'Image and vertical chrome disagree')
   close(rect.imageWidth,rect.imageHeight*1.6,'Viewport changed aspect ratio')
+  close(rect.cardWidth,rect.imageWidth,'Card width changed the thumbnail viewport')
+  close(rect.cardHeight,rect.imageHeight+rect.headerHeight,'Card height changed the thumbnail/title allocation')
+  close(rect.tileWidth,rect.cardWidth,'Tile width alias disagrees')
+  close(rect.tileHeight,rect.cardHeight,'Tile height alias disagrees')
+  close(rect.viewportHeight,rect.cardHeight,'Strip viewport clips its cards vertically')
+  close(rect.contentWidth,rect.count*rect.cardWidth+Math.max(0,rect.count-1)*rect.gap,'Grouped row lost a window or added a trailing gap')
+  assert.ok(rect.viewportWidth<=rect.contentWidth+1e-7,'Strip viewport exceeds its content')
+  assert.equal(rect.overflow,rect.contentWidth>rect.viewportWidth+.000001,'Overflow flag disagrees with the actual row')
+  assert.equal(rect.footerHeight,0,'Carousel footer should not consume space')
 }
 const overlaps=(a,b)=>a.x<b.x+b.width-1e-7 && a.x+a.width>b.x+1e-7 && a.y<b.y+b.height-1e-7 && a.y+a.height>b.y+1e-7
 const area={x:12,y:34,width:1600,height:1100}
@@ -24,17 +34,20 @@ for (const [size,width] of [['small',200],['medium',280],['large',380]]) {
   bounded(result,area)
   close(result.imageWidth,width,'Preset thumbnail width')
   assert.equal(result.headerHeight,36)
-  assert.equal(result.footerHeight,32)
+  assert.equal(result.footerHeight,0)
   assert.equal(result.inset,8)
+  assert.equal(result.count,3)
+  close(result.contentWidth,width*3+result.gap*2,'Grouped preview omitted a thumbnail')
+  assert.equal(result.overflow,false,'A readable group should show all its windows together')
   const plain=model.previewLayout(center,area,size,false,1,'auto',8)
   assert.equal(plain.headerHeight,0)
   assert.equal(plain.footerHeight,0)
   assert.equal(plain.imageWidth,width)
 }
-console.log('Preview geometry: size presets, optional title/group chrome and contained-aspect viewport passed')
+console.log('Preview geometry: size presets, per-window titles and side-by-side aspect-preserving thumbnails passed')
 
 for (const side of ['above','below','left','right']) {
-  const result=model.previewLayout(center,area,'medium',true,3,side,8)
+  const result=model.previewLayout(center,area,'medium',true,2,side,8)
   assert.equal(result.side,side,'Available preferred side was not honored')
   bounded(result,area)
   assert.ok(!overlaps(result,center),'Preferred placement covered its source')
@@ -50,7 +63,10 @@ for (const [anchor,preference,expected] of [
   [{x:center.x,y:area.y+area.height-48,width:48,height:48},'below','above']
 ]) {
   assert.equal(model.previewLayout(anchor,area,'medium',true,3,preference,8).side,expected,'Unavailable preferred side did not flip')
-  assert.equal(model.previewLayout(anchor,area,'medium',true,3,'auto',8).side,expected,'Automatic placement did not face away from the edge')
+  assert.equal(model.previewLayout(anchor,area,'medium',true,1,'auto',8).side,expected,'Single-window automatic placement did not face away from the edge')
+  const grouped=model.previewLayout(anchor,area,'medium',true,3,'auto',8)
+  bounded(grouped,area)
+  assert.ok(!overlaps(grouped,anchor),'Grouped automatic placement covered the edge source')
 }
 console.log('Preview geometry: preferred sides, edge flipping and automatic inward placement passed')
 
@@ -75,8 +91,39 @@ bounded(compact,small)
 assert.ok(!overlaps(compact,smallAnchor),'Small output placed its preview over the hovered icon')
 assert.ok(compact.imageWidth>=100,'Small output unnecessarily reduced its image')
 assert.ok(compact.side==='left' || compact.side==='right','Small output failed to choose the usable axis')
-assert.ok(compact.headerHeight>0 && compact.footerHeight>0)
-console.log('Preview geometry: small-output shrinking preserves the hover source and group controls')
+assert.ok(compact.headerHeight>0)
+assert.equal(compact.footerHeight,0)
+assert.ok(compact.overflow && compact.contentWidth>compact.viewportWidth,'Small groups must retain every card in the scrollable row')
+console.log('Preview geometry: small-output shrinking preserves the hover source and accessible grouped row')
+
+for (const width of [160,320,640,1280,1920]) for (const height of [90,240,1080]) {
+  let previousWidth=Infinity
+  for (const count of [1,2,3,8,32]) {
+    const d=model.measure('medium',width,height,true,count)
+    assert.ok(d.imageWidth<=280 && d.imageWidth<=previousWidth+1e-7,'Adding windows enlarged a thumbnail')
+    previousWidth=d.imageWidth
+    assert.ok(d.width<=width && d.height<=height,'Grouped measurement escaped its available area')
+    const maximum=Math.min(280,width-d.inset*2,(height-d.inset*2-d.headerHeight)*1.6)
+    const fitting=(width-d.inset*2-d.gap*(count-1))/count
+    if (fitting>=120 && maximum>=120) {
+      assert.equal(d.overflow,false,'A row that fits at readable size should not scroll')
+      assert.ok(d.imageWidth>=120,'A fitting group was needlessly shrunk below readable width')
+    }
+    if (fitting<120 && maximum>=120) {
+      close(d.imageWidth,120,'Overflow should retain readable thumbnails')
+      assert.equal(d.overflow,true,'A wide group lost access to its remaining windows')
+    }
+    if (maximum<120) close(d.imageWidth,maximum,'Tiny areas must constrain cards below the normal readable minimum')
+    close(d.contentWidth,d.imageWidth*count+d.gap*(count-1),'Every grouped window must have one card')
+  }
+}
+const fitted=model.measure('large',700,600,true,3)
+close(fitted.contentWidth,fitted.viewportWidth,'Three windows should shrink evenly to fit a moderate row')
+assert.ok(fitted.imageWidth>=120 && fitted.imageWidth<380)
+const overflowing=model.measure('large',700,600,true,8)
+assert.ok(overflowing.overflow && overflowing.contentWidth>overflowing.viewportWidth)
+close(overflowing.imageWidth,120,'Many windows should stay readable behind horizontal scrolling')
+console.log('Preview geometry: even group resizing, readable minimum, all-card content widths and bounded overflow passed')
 
 for (const scale of [1,1.25,1.5,2]) {
   for (const dimensions of [[2560,1548],[320,214],[140,114],[64,64],[1,1],[0,0]]) {

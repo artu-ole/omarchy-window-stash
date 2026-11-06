@@ -88,7 +88,7 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
 | Collapse floating dock | Click outside, switch focus/workspace, or press Escape |
 | Preview a window | Hover an icon, floating stack, or chooser row; enable previews in Settings |
-| Use a preview | Click to restore, middle-click to close, right-click for its window menu; wheel or arrow buttons browse app groups, **All windows** opens their chooser |
+| Use a preview | Click a thumbnail to restore its window, middle-click or use × to close, right-click for its window menu; wheel or drag to scroll large app groups |
 
 Shortcuts are ordinary Hyprland bindings to `window-stash minimize` and
 `window-stash restore-last`; change them in your personal bindings as needed.
@@ -134,7 +134,7 @@ omarchy-shell window-stash configure hoverPreview live
 | `dockCornerRadius` | `12` | Integer `0`–`64` pixels in custom mode, clamped to panel dimensions |
 | `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
 | `animationSpeed` | `normal` | `slow` (0.5×), `relaxed` (0.75×), `normal` (1×), `fast` (1.5×), `ultrafast` (2.5×) playback speed |
-| `hoverPreview` | `off` | `off`, `still`, `live`; still captures once when opening or choosing another window, live updates while the card is open |
+| `hoverPreview` | `off` | `off`, `still`, `live`; Still captures each thumbnail when it becomes visible, Live updates visible thumbnails while the card is open |
 | `previewSize` | `medium` | `small`, `medium`, `large`; maximum image widths of 200, 280, or 380 logical pixels, reduced to fit the work area |
 | `previewPlacement` | `auto` | `auto`, `above`, `below`, `left`, `right`; flips or shrinks when the requested side has insufficient room |
 | `previewTitles` | `shown` | `shown`, `hidden` |
@@ -143,8 +143,10 @@ omarchy-shell window-stash configure hoverPreview live
 
 Preview cards follow the Omarchy popup theme and work across all presentations
 and chooser rows. A collapsed stack previews its front window or app group;
-app groups use one card with a window counter and navigation. Hovering never
-focuses, moves, or restores a window. Pressing or dragging an icon, source motion,
+app groups show their windows side by side, each with its own title and close
+button. Larger groups resize evenly, then scroll horizontally when they exceed
+the available space. Hovering never focuses, moves, or restores a window.
+Pressing or dragging an icon, source motion,
 context menus, settings, and workspace changes dismiss previews. Settings scroll
 on shorter displays.
 
@@ -264,9 +266,10 @@ positions can include monitor identifiers. These stay local. No telemetry or
 network requests. App icons resolve from installed desktop entries and themes.
 
 Previews use native [ScreencopyView](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/ScreencopyView/)
-with one selected window captured at a time. Sources must match the stash's exact
+with each visible thumbnail captured independently. Sources must match the stash's exact
 window identity and ownership; hidden windows stay in their special workspace.
-Frames remain in memory and are released when the card closes; no thumbnail files
+Offscreen thumbnails release their capture; returning to one refreshes its Still
+image. Frames remain in memory and are released when the card closes; no thumbnail files
 are saved. Background applications may stop drawing, so a live card can retain
 its last frame. Capture failures or timeouts show the app icon, and compositor
 capture restrictions are respected.
