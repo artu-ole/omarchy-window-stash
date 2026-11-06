@@ -164,11 +164,18 @@ window-stash minimize                          # optional: --address ADDRESS
 window-stash restore-last                      # optional: --to current|original
 window-stash restore ID --to original          # ID or live window address
 window-stash restore-all --to current          # global recovery, ignores scope
+window-stash close ID [ID ...]                 # only owned stashed windows
+window-stash close-all                         # follows global/workspace scope
 window-stash list                              # reconciled windows/settings/positions
 window-stash status                            # alias of list
 ```
 
-Restore commands accept `--monitor OUTPUT --workspace ID` to pin invocation
+Close commands send normal window-close requests and confirm disappearance. A
+batch shares a 750 ms grace period; remaining windows restore to the invoking
+workspace for save prompts. Unstashed windows are untouched; failures return
+per-window results and leave recoverable records.
+
+Restore and close commands accept `--monitor OUTPUT --workspace ID` to pin invocation
 context before a chooser takes focus. `activate ADDRESS` restores an owned
 window or focuses an unmanaged one. Internal helpers: `position MONITOR KEY X Y`
 and `rebase OLD_ID NEW_ID`. Frontend IPC also exposes `status`, `refresh`, and

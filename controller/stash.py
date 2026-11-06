@@ -39,6 +39,23 @@ def lua(value):
                          for b in str(value).encode()) + '"'
 
 
+def owned_window_guard(record, parked=False):
+    """Resolve and validate the exact owned toplevel inside one compositor call."""
+    checks = ["w", "w.pid == " + lua(record["pid"])]
+    if record.get("stableId"):
+        # clients JSON serializes stableId as hexadecimal; Lua exposes an integer.
+        stable = record["stableId"]
+        stable = int(stable, 16) if isinstance(stable, str) else stable
+        checks.append("w.stable_id == " + lua(stable))
+    if parked:
+        checks.append("w.workspace and w.workspace.name == " + lua(SPECIAL))
+    return ("local w = hl.get_window(" + lua("address:" + record["address"]) + ")\n"
+            + "if not (" + " and ".join(checks) + ") then error('Stashed window identity changed') end\n"
+            + "local owned = false; for _, tag in ipairs(w.tags) do if tag == " + lua(record["tag"])
+            + " then owned = true; break end end\n"
+            + "if not owned then error('Window is no longer owned by the stash') end\n")
+
+
 def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".stash-")
@@ -108,6 +125,14 @@ class Hyprland:
     def dispatch(self, dispatcher, **args):
         fields = ", ".join(k + " = " + lua(v) for k, v in args.items())
         self.eval("hl.dispatch(hl.dsp." + dispatcher + "({" + fields + "}))")
+
+    def dispatch_owned(self, dispatcher, record, parked=False, **args):
+        fields = ["window = w"] + [k + " = " + lua(v) for k, v in args.items() if k != "window"]
+        self.eval(owned_window_guard(record, parked)
+                  + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
+
+    def close_stashed(self, record):
+        self.dispatch_owned("window.close", record, parked=True)
 
     def client(self, address):
         return next((c for c in self.read("clients") if c["address"] == address), None)
@@ -259,42 +284,49 @@ class Stash:
             pass
         return str(bank + record["slot"]), current
 
-    def restore(self, ident, to=None, monitor=None, workspace=None):
+    def restore(self, ident, to=None, monitor=None, workspace=None, expected=None):
         clients = self.hypr.read("clients")
         self.reconcile(clients)
         record = next((r for r in self.state["windows"] if r["id"] == ident or r["address"] == ident), None)
         if not record:
             return {"ok": True, "action": "noop", "reason": "Window is no longer stashed"}
+        if expected and not self.matches(expected, self.hypr.client(record["address"])):
+            self.reconcile(self.hypr.read("clients"))
+            return {"ok": True, "action": "noop", "id": ident, "reason": "Window identity changed"}
+        def dispatch(dispatcher, **args):
+            if expected and "window" in args:
+                return self.hypr.dispatch_owned(dispatcher, expected, **args)
+            return self.hypr.dispatch(dispatcher, **args)
         destination, dest_monitor = self.destination(record, to or self.settings()["restoreDestination"], monitor, workspace)
         target = "address:"+record["address"]
         record["phase"] = "restoring"
         self.save()
         try:
-            self.hypr.dispatch("focus", monitor=dest_monitor["name"])
-            self.hypr.dispatch("focus", workspace=destination)
-            self.hypr.dispatch("window.move", window=target, workspace=destination, follow=False)
-            self.hypr.dispatch("window.float", window=target, action="on" if record["floating"] else "off")
+            dispatch("focus", monitor=dest_monitor["name"])
+            dispatch("focus", workspace=destination)
+            dispatch("window.move", window=target, workspace=destination, follow=False)
+            dispatch("window.float", window=target, action="on" if record["floating"] else "off")
             if record["floating"]:
                 x, y, width, height = restored_geometry(record, dest_monitor)
-                self.hypr.dispatch("window.resize", window=target, x=width, y=height, relative=False)
-                self.hypr.dispatch("window.move", window=target, x=x, y=y, relative=False)
+                dispatch("window.resize", window=target, x=width, y=height, relative=False)
+                dispatch("window.move", window=target, x=x, y=y, relative=False)
             else:
-                self.append_scrolling(record["address"], destination, record["size"][0])
-            self.hypr.dispatch("focus", window=target)
+                self.append_scrolling(record["address"], destination, record["size"][0], expected)
+            dispatch("focus", window=target)
             pin_state = self.hypr.client(record["address"])
             if pin_state is None:
                 raise RuntimeError("Window closed during restoration")
             if bool(pin_state.get("pinned")) != record["pinned"]:
-                self.hypr.dispatch("window.pin", window=target, action="toggle")
+                dispatch("window.pin", window=target, action="toggle")
             if record["fullscreen"] or record["fullscreenClient"]:
-                self.hypr.dispatch("window.fullscreen_state", window=target, internal=record["fullscreen"],
+                dispatch("window.fullscreen_state", window=target, internal=record["fullscreen"],
                                    client=record["fullscreenClient"], action="set")
             after = self.hypr.client(record["address"])
             if not after or self.workspace_selector(after["workspace"]) != destination:
                 raise RuntimeError("The window did not reach the destination workspace")
             if after["floating"] != record["floating"]:
                 raise RuntimeError("A window rule prevented restoration of floating state")
-            self.hypr.dispatch("window.tag", window=target, tag="-"+record["tag"])
+            dispatch("window.tag", window=target, tag="-"+record["tag"])
             self.state["windows"].remove(record)
             self.save()
             return {"ok": True, "action": "restored", "id": record["id"], "workspace": after["workspace"]}
@@ -303,7 +335,7 @@ class Stash:
             self.save()
             raise
 
-    def append_scrolling(self, address, destination, width):
+    def append_scrolling(self, address, destination, width, expected=None):
         # Query Lua layout state rather than infer order from off-screen coordinates.
         # Focus the terminal column first, then reinsert this exact window after it.
         code = '''local w = hl.get_window(%s)
@@ -335,7 +367,7 @@ if w and ws and ws.tiled_layout == "scrolling" then
   end
   hl.dispatch(hl.dsp.window.resize({window=w, x=math.min(%s, w.size.x), y=w.size.y, relative=false}))
 end''' % (lua("address:"+address), lua(destination), lua(width))
-        self.hypr.eval(code)
+        self.hypr.eval((owned_window_guard(expected) if expected else "") + code)
 
     def listing(self):
         clients, monitors, workspaces = self.snapshot()
@@ -349,6 +381,121 @@ end''' % (lua("address:"+address), lua(destination), lua(width))
         _, current = self.invoke_context(monitor, workspace)
         choices = eligible(self.state["windows"], current, self.settings()["scope"])
         return self.restore(choices[0]["id"], to, monitor, workspace) if choices else {"ok":True,"action":"noop"}
+
+    def close(self, identifiers, monitor=None, workspace=None):
+        """Request normal closure, confirming disappearance before ledger removal.
+
+        All requests share one grace period. Surviving windows are restored for
+        application-owned prompts; no process signals or force-close are used.
+        """
+        context, current = self.invoke_context(monitor, workspace)
+        self.reconcile(self.hypr.read("clients"))
+        records = {r["id"]: r for r in self.state["windows"]}
+        results, pending = [], {}
+
+        def owned(record, client):
+            return (self.matches(record, client) and record["tag"] in client.get("tags", [])
+                    and client["workspace"]["name"] == SPECIAL)
+
+        def outcome(record, action, **extra):
+            return dict(id=record["id"], ok=action != "failed", action=action, **extra)
+
+        def check_pending(clients):
+            live = {c["address"]: c for c in clients}
+            for ident, record in list(pending.items()):
+                c = live.get(record["address"])
+                if not self.matches(record, c):
+                    results.append(outcome(record, "closed"))
+                    del pending[ident]
+                elif not owned(record, c):
+                    results.append(outcome(record, "noop", reason="Window left the stash"))
+                    del pending[ident]
+            self.reconcile(clients)
+
+        for ident in dict.fromkeys(identifiers):
+            record = records.get(ident)
+            if not record:
+                results.append(dict(id=ident, ok=True, action="noop", reason="Window is no longer stashed"))
+                continue
+            try:
+                c = self.hypr.client(record["address"])
+                if not owned(record, c):
+                    results.append(outcome(record, "noop", reason="Window is no longer stashed"))
+                    self.reconcile(self.hypr.read("clients"))
+                    continue
+                # The Lua guard repeats identity/tag/workspace checks atomically
+                # with close dispatch, protecting against address reuse after IPC.
+                self.hypr.close_stashed(record)
+                pending[ident] = dict(record)
+            except Exception as error:
+                record["lastError"] = str(error)
+                self.save()
+                results.append(outcome(record, "failed", error=str(error)))
+
+        deadline = time.monotonic() + .75
+        try:
+            while pending:
+                check_pending(self.hypr.read("clients"))
+                remaining = deadline - time.monotonic()
+                if not pending or remaining <= 0:
+                    break
+                time.sleep(min(.05, remaining))
+        except Exception as error:
+            # An unavailable compositor must not cause speculative restoration
+            # or ledger removal. Each pending target remains recoverable.
+            for record in pending.values():
+                live_record = next((r for r in self.state["windows"] if r["id"] == record["id"]), None)
+                if live_record: live_record["lastError"] = str(error)
+                results.append(outcome(record, "failed", error=str(error)))
+            self.save()
+            pending.clear()
+
+        for record in pending.values():
+            try:
+                c = self.hypr.client(record["address"])
+                if not self.matches(record, c):
+                    results.append(outcome(record, "closed"))
+                    self.reconcile(self.hypr.read("clients"))
+                    continue
+                if not owned(record, c):
+                    results.append(outcome(record, "noop", reason="Window left the stash"))
+                    self.reconcile(self.hypr.read("clients"))
+                    continue
+                # Guard every window mutation during attention restoration too.
+                result = self.restore(record["id"], "current", context["name"], current, expected=record)
+                results.append(dict(result, id=record["id"]))
+            except Exception as error:
+                # A client may finish closing while being restored. Confirm its
+                # identity before treating that race as a genuine action failure.
+                try:
+                    clients = self.hypr.read("clients")
+                    c = next((c for c in clients if c["address"] == record["address"]), None)
+                    if not self.matches(record, c):
+                        self.reconcile(clients)
+                        results.append(outcome(record, "closed"))
+                        continue
+                except Exception:
+                    pass
+                live_record = next((r for r in self.state["windows"] if r["id"] == record["id"]), None)
+                if live_record:
+                    live_record["lastError"] = str(error)
+                    self.save()
+                results.append(outcome(record, "failed", error=str(error)))
+
+        failed = sum(r["action"] == "failed" for r in results)
+        result = dict(ok=not failed, action="close", results=results,
+                      closed=sum(r["action"] == "closed" for r in results),
+                      restored=sum(r["action"] == "restored" for r in results), failed=failed)
+        if failed:
+            result["error"] = str(failed) + " window close action(s) failed: " + "; ".join(
+                r["error"] for r in results if r["action"] == "failed")
+        return result
+
+    def close_all(self, monitor=None, workspace=None):
+        context, current = self.invoke_context(monitor, workspace)
+        self.reconcile(self.hypr.read("clients"))
+        targets = eligible(self.state["windows"], current, self.settings()["scope"])
+        return self.close([r["id"] for r in targets], context["name"], current)
 
     def rebase(self, old, new):
         for record in self.state["windows"]:
@@ -368,6 +515,11 @@ def main(argv=None):
         p = sub.add_parser(action)
         if action in ("restore", "activate"): p.add_argument("id")
         p.add_argument("--to", choices=("current","original"))
+        p.add_argument("--monitor")
+        p.add_argument("--workspace", type=int)
+    for action in ("close", "close-all"):
+        p = sub.add_parser(action, help="Normally close owned stashed windows")
+        if action == "close": p.add_argument("ids", nargs="+")
         p.add_argument("--monitor")
         p.add_argument("--workspace", type=int)
     for action in ("list", "status"):
@@ -401,6 +553,8 @@ def main(argv=None):
                 for r in list(stash.state["windows"]):
                     results.append(stash.restore(r["id"],args.to or "current",context["name"],workspace))
                 result=dict(ok=True,results=results)
+            elif args.command == "close": result=stash.close(args.ids,args.monitor,args.workspace)
+            elif args.command == "close-all": result=stash.close_all(args.monitor,args.workspace)
             elif args.command == "rebase": result=stash.rebase(args.old,args.new)
             elif args.command == "position":
                 positions=read_json(stash.positions,{})
@@ -409,7 +563,7 @@ def main(argv=None):
                 result=dict(ok=True)
             else: result=stash.listing()
         print(json.dumps(result, ensure_ascii=False))
-        return 0
+        return 0 if result.get("ok", True) else 1
     except Exception as error:
         print(json.dumps(dict(ok=False,error=str(error))))
         return 1

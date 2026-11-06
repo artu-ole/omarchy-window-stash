@@ -1,12 +1,14 @@
 import copy
 import json
+import io
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
-from stash import Stash, SPECIAL, PLUGIN, atomic_json, eligible, lua, restored_geometry
+from stash import Stash, Hyprland, SPECIAL, PLUGIN, atomic_json, eligible, lua, restored_geometry, main
 
 
 def monitor(name="eDP-2", ident=0, x=0, width=1920):
@@ -29,8 +31,11 @@ class FakeHypr:
         self.active="0x1"
         self.commands=[]
         self.fail=None
+        self.on_read=None
+        self.on_close=None
 
     def read(self, name):
+        if self.on_read: self.on_read(name)
         return copy.deepcopy(dict(clients=self.clients,monitors=self.monitors,workspaces=self.workspaces,
                                   activewindow=self.client(self.active))[name])
 
@@ -39,12 +44,26 @@ class FakeHypr:
 
     def eval(self, code): self.commands.append(code)
 
+    def dispatch_owned(self, dispatcher, record, parked=False, **kw):
+        c = self.client(record["address"])
+        if (not c or c["pid"] != record["pid"] or c.get("stableId") != record.get("stableId")
+                or record["tag"] not in c.get("tags", [])
+                or (parked and c["workspace"]["name"] != SPECIAL)):
+            raise RuntimeError("Stashed window identity changed")
+        self.dispatch(dispatcher, window="address:" + record["address"], **{k:v for k,v in kw.items() if k != "window"})
+
+    def close_stashed(self, record):
+        self.dispatch_owned("window.close", record, parked=True)
+
     def dispatch(self, dispatcher, **kw):
         action = dispatcher
         self.commands.append((action,kw))
         if action==self.fail: raise RuntimeError("Injected IPC failure")
         c=self.client(kw.get("window", "address:"+self.active).removeprefix("address:"))
-        if action=="window.tag":
+        if action=="window.close":
+            if self.on_close: self.on_close(c)
+            else: self.clients.remove(c)
+        elif action=="window.tag":
             tag=kw["tag"]
             if tag.startswith("+"): c["tags"].append(tag[1:])
             else: c["tags"].remove(tag[1:])
@@ -254,6 +273,192 @@ class ControllerTests(unittest.TestCase):
         self.stash.minimize()
         self.hypr.clients[0]["workspace"]=dict(id=4,name="4")
         self.assertEqual(self.stash.listing()["windows"],[])
+
+    def test_close_confirmed_window_does_not_touch_unstashed_app_windows(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients.append(client("0x2", pid=100))
+        result = self.stash.close([ident, ident, "missing"])
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["closed"], result["restored"]), (1, 0))
+        self.assertEqual([c["address"] for c in self.hypr.clients], ["0x2"])
+        self.assertEqual(self.stash.state["windows"], [])
+        self.assertEqual(sum(c[0] == "window.close" for c in self.hypr.commands if isinstance(c, tuple)), 1)
+        self.assertTrue(any(r["id"] == "missing" and r["action"] == "noop" for r in result["results"]))
+
+    def test_close_waits_for_delayed_disappearance_and_finishes_early(self):
+        ident = self.stash.minimize()["id"]
+        clock = [0.0]
+        requested = []
+        def on_close(c): requested.append((c["address"], clock[0] + .3))
+        def on_read(subject):
+            if subject == "clients" and requested and clock[0] >= requested[0][1]:
+                self.hypr.clients = [c for c in self.hypr.clients if c["address"] != requested[0][0]]
+            elif subject == "clients" and requested:
+                self.assertEqual(len(self.stash.state["windows"]), 1, "Ledger removed before actual close")
+        self.hypr.on_close = on_close
+        self.hypr.on_read = on_read
+        with patch('stash.time.monotonic', side_effect=lambda: clock[0]), patch('stash.time.sleep', side_effect=lambda dt: clock.__setitem__(0, clock[0] + dt)):
+            result = self.stash.close([ident])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["closed"], 1)
+        self.assertLess(clock[0], .75)
+        self.assertFalse(any(c[0] == "window.move" and c[1].get("workspace") != SPECIAL for c in self.hypr.commands if isinstance(c, tuple)))
+
+    def test_close_batch_uses_one_grace_and_restores_survivors_for_prompts(self):
+        first = self.stash.minimize()["id"]
+        self.hypr.clients.append(client("0x2", workspace=2, floating=True))
+        second = self.stash.minimize("0x2")["id"]
+        self.hypr.on_close = lambda c: None
+        clock = [0.0]
+        with patch('stash.time.monotonic', side_effect=lambda: clock[0]), patch('stash.time.sleep', side_effect=lambda dt: clock.__setitem__(0, clock[0] + dt)):
+            result = self.stash.close([first, second], workspace=7)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["restored"], 2)
+        self.assertAlmostEqual(clock[0], .75)
+        self.assertEqual({c["workspace"]["id"] for c in self.hypr.clients}, {7})
+        self.assertEqual(self.stash.state["windows"], [])
+        self.assertEqual(sum(c[0] == "window.close" for c in self.hypr.commands if isinstance(c, tuple)), 2)
+
+    def test_close_all_respects_workspace_and_global_scope(self):
+        first = self.stash.minimize()["id"]
+        self.hypr.clients.append(client("0x2", workspace=2))
+        second = self.stash.minimize("0x2")["id"]
+        self.settings(scope="workspace")
+        result = self.stash.close_all(workspace=1)
+        self.assertEqual([r["id"] for r in result["results"]], [first])
+        self.assertEqual([r["id"] for r in self.stash.state["windows"]], [second])
+        self.settings(scope="global")
+        result = self.stash.close_all(workspace=1)
+        self.assertEqual([r["id"] for r in result["results"]], [second])
+        self.assertEqual(self.stash.state["windows"], [])
+
+    def test_close_ignores_unowned_reused_and_externally_restored_windows(self):
+        for change in ('pid', 'stableId', 'tag', 'workspace'):
+            with self.subTest(change=change):
+                self.hypr = FakeHypr()
+                self.stash.hypr = self.hypr
+                self.stash.state["windows"] = []
+                ident = self.stash.minimize()["id"]
+                c = self.hypr.clients[0]
+                if change == 'pid': c['pid'] += 1
+                elif change == 'stableId': c['stableId'] = 'replacement'
+                elif change == 'tag': c['tags'] = []
+                else: c['workspace'] = dict(id=8, name='8')
+                before = len(self.hypr.commands)
+                result = self.stash.close([ident])
+                self.assertEqual(result['results'][0]['action'], 'noop')
+                self.assertFalse(any(c[0] == 'window.close' for c in self.hypr.commands[before:] if isinstance(c, tuple)))
+                self.assertEqual(len(self.hypr.clients), 1)
+
+    def test_close_dispatch_guard_catches_identity_change_after_query(self):
+        ident = self.stash.minimize()["id"]
+        original = self.hypr.close_stashed
+        def replace(record):
+            self.hypr.clients[0]['stableId'] = 'replacement'
+            return original(record)
+        self.hypr.close_stashed = replace
+        result = self.stash.close([ident])
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(len(self.hypr.clients), 1)
+        self.assertFalse(any(c[0] == 'window.close' for c in self.hypr.commands if isinstance(c, tuple)))
+
+    def test_close_partial_dispatch_failure_preserves_failed_target(self):
+        first = self.stash.minimize()["id"]
+        self.hypr.clients.append(client("0x2"))
+        second = self.stash.minimize("0x2")["id"]
+        original = self.hypr.close_stashed
+        def dispatch(record):
+            if record['id'] == first: raise RuntimeError('close refused')
+            return original(record)
+        self.hypr.close_stashed = dispatch
+        result = self.stash.close([first, second])
+        self.assertFalse(result['ok'])
+        self.assertEqual((result['closed'], result['failed']), (1, 1))
+        self.assertIn('close refused', result['error'])
+        self.assertEqual([r['id'] for r in self.stash.state['windows']], [first])
+        self.assertEqual(self.stash.state['windows'][0]['lastError'], 'close refused')
+
+    def test_close_restore_failure_keeps_recovery_metadata(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.on_close = lambda c: None
+        self.hypr.fail = 'window.float'
+        clock = [0.0]
+        with patch('stash.time.monotonic', side_effect=lambda: clock[0]), patch('stash.time.sleep', side_effect=lambda dt: clock.__setitem__(0, clock[0] + dt)):
+            result = self.stash.close([ident], workspace=3)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(self.stash.listing()['windows'][0]['id'], ident)
+        self.assertIn('lastError', self.stash.state['windows'][0])
+
+    def test_close_survivor_identity_is_guarded_through_restoration(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.on_close = lambda c: None
+        original = self.hypr.dispatch
+        def dispatch(name, **args):
+            if name == 'focus' and 'monitor' in args:
+                self.hypr.clients[0]['stableId'] = 'replacement'
+            return original(name, **args)
+        self.hypr.dispatch = dispatch
+        clock = [0.0]
+        before = len(self.hypr.commands)
+        with patch('stash.time.monotonic', side_effect=lambda: clock[0]), patch('stash.time.sleep', side_effect=lambda dt: clock.__setitem__(0, clock[0] + dt)):
+            result = self.stash.close([ident], workspace=3)
+        self.assertEqual(result['closed'], 1)
+        self.assertEqual(self.hypr.clients[0]['workspace']['name'], SPECIAL)
+        self.assertFalse(any(c[0] == 'window.move' for c in self.hypr.commands[before:] if isinstance(c, tuple)))
+
+    def test_close_native_guard_validates_inside_dispatch_and_does_not_kill(self):
+        ident = self.stash.minimize()["id"]
+        h = Hyprland()
+        calls = []
+        h.eval = calls.append
+        h.close_stashed(self.stash.state['windows'][0])
+        self.assertEqual(len(calls), 1)
+        code = calls[0]
+        self.assertIn('w.pid == 100', code)
+        self.assertIn('w.stable_id == 1', code)
+        self.assertIn('w.workspace.name == "special:minimized"', code)
+        self.assertIn('window-stash-' + ident, code)
+        self.assertIn('hl.dispatch(hl.dsp.window.close({window = w}))', code)
+        self.assertNotIn('window.kill', code)
+
+    def test_close_poll_failure_does_not_speculatively_restore_or_remove(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.on_close = lambda c: None
+        reads = [0]
+        def on_read(subject):
+            if subject == 'clients':
+                reads[0] += 1
+                if reads[0] >= 2: raise RuntimeError('compositor unavailable')
+        self.hypr.on_read = on_read
+        before = len(self.hypr.commands)
+        result = self.stash.close([ident])
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(self.stash.state['windows'][0]['id'], ident)
+        self.assertEqual(self.stash.state['windows'][0]['lastError'], 'compositor unavailable')
+        self.assertFalse(any(c[0] == 'window.move' for c in self.hypr.commands[before:] if isinstance(c, tuple)))
+
+    def test_close_cli_reports_partial_failure_with_nonzero_status(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.fail = 'window.close'
+        with patch('stash.Stash', return_value=self.stash), patch('sys.stdout', new_callable=io.StringIO) as output:
+            code = main(['close', ident, '--monitor', 'eDP-2', '--workspace', '3'])
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['results'][0]['id'], ident)
+        self.assertEqual(result['results'][0]['action'], 'failed')
+
+    def test_close_native_guard_normalizes_hexadecimal_ipc_stable_id(self):
+        self.stash.minimize()
+        record = dict(self.stash.state['windows'][0], stableId='1800001e')
+        h = Hyprland()
+        calls = []
+        h.eval = calls.append
+        h.close_stashed(record)
+        self.assertIn('w.stable_id == ' + str(int('1800001e', 16)), calls[0])
 
     def test_rebase(self):
         self.stash.minimize()
