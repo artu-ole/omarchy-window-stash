@@ -14,6 +14,7 @@ Ui.BorderSurface {
   readonly property var metrics: Style.spacing
   required property var group
   property string animations:"full"
+  property string animationSpeed:"normal"
   property real presence:1
   property real idleOpacity:1
   property bool retiring:false
@@ -59,7 +60,7 @@ Ui.BorderSurface {
   layer.enabled: true
   layer.smooth: true
   layer.effect: StashHoverEffect { feedback:interaction }
-  StashFeedback { id:interaction; hot:icon.hot; down:icon.down; presence:icon.presence; animations:icon.animations; idleOpacity:icon.idleOpacity }
+  StashFeedback { id:interaction; hot:icon.hot; down:icon.down; presence:icon.presence; animations:icon.animations; animationSpeed:icon.animationSpeed; idleOpacity:icon.idleOpacity }
   property color frameColor: !frameVisible ? "transparent" : down ? Style.pressedFillFor(icon.popupColors.text, Commons.Color.accent)
     : hot ? Style.hoverFillFor(icon.popupColors.text, Commons.Color.accent)
     : bubble || iconShape !== "auto" ? icon.popupColors.background : "transparent"
@@ -79,7 +80,7 @@ Ui.BorderSurface {
   }
   color: iconShape === "squircle" ? "transparent" : frameColor
   borderSpec: iconShape === "squircle" ? Border.none() : frameBorder
-  Behavior on frameColor { ColorAnimation { id:frameColorAnimation; duration: Motion.duration(icon.animations,120,90) } }
+  Behavior on frameColor { ColorAnimation { id:frameColorAnimation; duration: Motion.duration(icon.animations,120,90,icon.animationSpeed) } }
   Loader {
     anchors.fill: parent
     active: icon.frameVisible && icon.iconShape === "squircle"
@@ -92,12 +93,12 @@ Ui.BorderSurface {
   readonly property string appIcon: desktop && desktop.icon ? String(desktop.icon) : "application-x-executable"
   StashArtwork {
     id: image
-    animations:icon.animations
+    animations:icon.animations; animationSpeed:icon.animationSpeed
     anchors.centerIn: parent
     width: Model.artworkSize(icon.width, Style.space(36), icon.hitRadius, icon.iconShape, icon.artworkInset, Screen.devicePixelRatio, !icon.frameVisible)
     height: width
     scale: Motion.full(icon.animations) && !icon.frameVisible && icon.hot ? 1.04 : 1
-    Behavior on scale { NumberAnimation { id:artworkScaleAnimation; duration:Motion.move(icon.animations); easing.type:Easing.OutCubic } }
+    Behavior on scale { NumberAnimation { id:artworkScaleAnimation; duration:Motion.move(icon.animations,icon.animationSpeed); easing.type:Easing.OutCubic } }
     source: Quickshell.iconPath(icon.appIcon, true)
     sourceSize.width: Math.round(width * Screen.devicePixelRatio)
     sourceSize.height: Math.round(height * Screen.devicePixelRatio)
@@ -119,7 +120,7 @@ Ui.BorderSurface {
     visible:reveal>0
     opacity:reveal
     scale:Motion.full(icon.animations) ? 0.8+reveal*0.2 : 1
-    Behavior on reveal { NumberAnimation { id:badgeRevealAnimation; duration:Motion.duration(icon.animations,160,100); easing.type:Easing.OutCubic } }
+    Behavior on reveal { NumberAnimation { id:badgeRevealAnimation; duration:Motion.duration(icon.animations,160,100,icon.animationSpeed); easing.type:Easing.OutCubic } }
     width: Math.min(icon.width - inset * 2, Math.max(Style.space(18), countText.implicitWidth + icon.metrics.sm * 2))
     height: Math.min(icon.height - inset * 2, Math.max(Style.space(18), icon.fonts.caption + icon.metrics.xxs * 2))
     readonly property real inset: icon.hitRadius >= icon.width / 2 ? Math.ceil(icon.width * 0.12) : 2

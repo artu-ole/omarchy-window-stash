@@ -20,6 +20,7 @@ Item {
   property bool frameVisible:true
   property string iconShape:"auto"
   property string animations:"full"
+  property string animationSpeed:"normal"
   property bool previewEnabled:false
   readonly property bool previewReady:interactive && !moving
   onPreviewReadyChanged:if (previewEnabled && graphic.pointerHovered) hovered(previewReady)
@@ -36,6 +37,8 @@ Item {
   property bool hasCursor:false
   property bool externalPressed:false
   property real progress:0
+  property real remainingFactor:1
+  property bool retiming:false
   property int motionFrames:0
   property real maxBend:0
   property real maxTilt:0
@@ -75,12 +78,14 @@ Item {
   onPoseChanged:if (spatialProgress>0 && spatialProgress<1) { maxBend=Math.max(maxBend,pose.bend); maxTilt=Math.max(maxTilt,Math.abs(pose.tilt)); minScale=Math.min(minScale,pose.scale) }
   onVisualProgressChanged: { peakProgress=Math.max(peakProgress,visualProgress); if (visualProgress>0 && visualProgress<1) motionFrames++ }
   Behavior on destinationX { enabled:actor.ready && (actor.expanded || actor.spatialProgress>0)
-    NumberAnimation { id:destinationXAnimation; duration:Motion.move(actor.animations); easing.type:Easing.OutCubic } }
+    NumberAnimation { id:destinationXAnimation; duration:Motion.move(actor.animations,actor.animationSpeed); easing.type:Easing.OutCubic } }
   Behavior on destinationY { enabled:actor.ready && (actor.expanded || actor.spatialProgress>0)
-    NumberAnimation { id:destinationYAnimation; duration:Motion.move(actor.animations); easing.type:Easing.OutCubic } }
-  Behavior on pageWeight { enabled:actor.ready && (actor.expanded || actor.spatialProgress>0); NumberAnimation { id:pageFade; duration:Motion.duration(actor.animations,160,90); easing.type:Easing.OutCubic } }
-  function retarget() {
+    NumberAnimation { id:destinationYAnimation; duration:Motion.move(actor.animations,actor.animationSpeed); easing.type:Easing.OutCubic } }
+  Behavior on pageWeight { enabled:actor.ready && (actor.expanded || actor.spatialProgress>0); NumberAnimation { id:pageFade; duration:Motion.duration(actor.animations,160,90,actor.animationSpeed); easing.type:Easing.OutCubic } }
+  function retarget(changeSpeed) {
     spread.stop()
+    retiming=!!changeSpeed
+    remainingFactor=changeSpeed ? Math.min(1,Math.abs(progress-(expanded ? 1 : 0))) : 1
     if (!ready) return
     if (sharedMotion) { progress=expanded ? 1 : 0; return }
     if (Math.abs(progress-(expanded ? 1 : 0))<.000001) { progress=expanded ? 1 : 0; return }
@@ -93,12 +98,13 @@ Item {
     if (animations==="off") pageFade.complete()
     retarget()
   }
+  onAnimationSpeedChanged:retarget(true)
   SequentialAnimation {
     id:spread
-    PauseAnimation { duration:Motion.full(actor.animations) ? Motion.fanDelay(actor.timing,actor.ordinal,actor.expanded,actor.geometry.capacity) : 0 }
+    PauseAnimation { duration:actor.retiming ? 0 : Motion.duration(actor.animations,Motion.fanDelay(actor.timing,actor.ordinal,actor.expanded,actor.geometry.capacity),0,actor.animationSpeed) }
     NumberAnimation {
       target:actor; property:"progress"; to:actor.expanded ? 1 : 0
-      duration:Motion.duration(actor.animations,actor.expanded ? actor.timing.open : actor.timing.close,100)
+      duration:Math.round(Motion.duration(actor.animations,actor.expanded ? actor.timing.open : actor.timing.close,100,actor.animationSpeed)*actor.remainingFactor)
       easing.type:!actor.expanded ? Easing.InOutCubic : actor.timing.easing==="back" ? Easing.OutBack : actor.timing.easing==="quint" ? Easing.OutQuint : Easing.OutCubic
       easing.overshoot:actor.timing.overshoot
     }
@@ -107,7 +113,7 @@ Item {
     id:graphic
     width:actor.width; height:actor.height
     group:actor.displayGroup
-    animations:actor.animations
+    animations:actor.animations; animationSpeed:actor.animationSpeed
     previewEnabled:actor.previewEnabled
     idleOpacity:actor.idleOpacity
     retiring:actor.retiring

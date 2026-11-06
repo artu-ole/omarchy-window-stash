@@ -7,6 +7,7 @@ Item {
   property url source
   property size sourceSize:Qt.size(width,height)
   property string animations:"full"
+  property string animationSpeed:"normal"
   readonly property int status:incoming.status
   readonly property bool animating:blend.running
   property url previous
@@ -16,7 +17,7 @@ Item {
   property real mix:1
   property int crossfadeSerial:0
   property int frames:0
-  Behavior on mix { enabled:!artwork.resetting; NumberAnimation { id:blend; duration:Motion.duration(artwork.animations,160,100); easing.type:Easing.OutCubic } }
+  Behavior on mix { enabled:!artwork.resetting; NumberAnimation { id:blend; duration:Motion.duration(artwork.animations,160,100,artwork.animationSpeed); easing.type:Easing.OutCubic } }
   onMixChanged: {
     if (mix>0 && mix<1) frames++
     if (mix===1) previous=""

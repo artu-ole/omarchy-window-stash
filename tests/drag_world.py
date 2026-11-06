@@ -9,7 +9,7 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='stash-drag-world-') as directory:
     folder=Path(directory);ui=folder/'ui';ui.mkdir()
-    for name in ('DragPhysics.js','StashDragWorld.qml'):shutil.copy2(ROOT/'ui'/name,ui/name)
+    for name in ('DragPhysics.js','Motion.js','StashDragWorld.qml'):shutil.copy2(ROOT/'ui'/name,ui/name)
     for name in ('runtime','cache','config'):(folder/name).mkdir(mode=0o700)
     (folder/'shell.qml').write_text('''import QtQuick
 import QtQuick.Window

@@ -108,6 +108,7 @@ Settings belong to the `community.window-stash` entry in
 omarchy-shell window-stash configure presentation floating
 omarchy-shell window-stash configure iconShape squircle
 omarchy-shell window-stash configure animations reduced
+omarchy-shell window-stash configure animationSpeed fast
 omarchy-shell window-stash configure dockOpacity 60
 omarchy-shell window-stash configure iconOpacity 75
 omarchy-shell window-stash configure hoverPreview live
@@ -132,6 +133,7 @@ omarchy-shell window-stash configure hoverPreview live
 | `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |
 | `dockCornerRadius` | `12` | Integer `0`–`64` pixels in custom mode, clamped to panel dimensions |
 | `animations` | `full` | `full`: fades, settling, reflow, resizing, artwork crossfades, hover/press; `reduced`: fades/color without movement or scaling; `off`: immediate |
+| `animationSpeed` | `normal` | `slow` (0.5×), `relaxed` (0.75×), `normal` (1×), `fast` (1.5×), `ultrafast` (2.5×) playback speed |
 | `hoverPreview` | `off` | `off`, `still`, `live`; still captures once when opening or choosing another window, live updates while the card is open |
 | `previewSize` | `medium` | `small`, `medium`, `large`; maximum image widths of 200, 280, or 380 logical pixels, reduced to fit the work area |
 | `previewPlacement` | `auto` | `auto`, `above`, `below`, `left`, `right`; flips or shrinks when the requested side has insufficient room |
@@ -150,6 +152,14 @@ Hover smoothly restores full opacity; pressed and keyboard-selected icons stay
 opaque. Dock and icon opacity are independent. Transparent elements retain their
 normal input regions, including at 0%; menus and settings keep their theme opacity.
 Fades follow the animation setting.
+
+Animation speed scales transitions and staggering across all fan styles, icon
+arrivals/exits, reflow, artwork, previews, hover/button feedback, Direct edge
+glides, and final settling. Easing and destinations stay the same. Preview hover
+delays, capture timeouts, and physical momentum use real time. The fan's 800 ms
+pointer-leave grace starts after unfolding finishes; outside clicks still dismiss
+immediately. Reduced continues to suppress spatial motion; Off stays immediate
+at every speed.
 
 Matryoshka moves the remaining stack together to each next slot, leaving one
 icon behind at every stop. Matryoshka hops uses the same sequence with an arch
@@ -256,6 +266,7 @@ capture restrictions are respected.
 python3 tools/check.py             # unit/model checks, offscreen Qt, manifest, qmllint
 python3 tests/live.py              # controller + desktop integration
 python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
+python3 tests/animation_speed.py   # speed presets, duration scaling and live changes
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
 python3 tests/matryoshka.py --small-output # nested-stack stages, inverse folding, both axes and overflow

@@ -15,6 +15,7 @@ Item {
   property string mode:"still"
   property bool active:false
   property string animations:"full"
+  property string animationSpeed:"normal"
   readonly property var popupColors:Commons.Color.popups
   readonly property var fonts:Style.font
   readonly property var metrics:Style.spacing
@@ -74,7 +75,7 @@ Item {
     acceptCandidate()
   }
   function details() {
-    return {hasContent:hasContent,status:status,
+    return {animationSpeed:animationSpeed,fadeDuration:captureFade.duration,hasContent:hasContent,status:status,
       sourceSize:{width:captureView ? captureView.sourceSize.width : 0,height:captureView ? captureView.sourceSize.height : 0},
       live:eligible && mode==="live",captureActive:captureLoader.active && !!captureView,recordId:record ? record.id : "",
       failure:failureReason,validRecord:Capture.validRecord(record),candidate:!!candidate,handle:!!sourceHandle,
@@ -177,7 +178,7 @@ Item {
     active:image.eligible
     sourceComponent:CaptureItem {}
     opacity:image.hasContent ? 1 : 0
-    Behavior on opacity { NumberAnimation { duration:Motion.duration(image.animations,140,90); easing.type:Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { id:captureFade; duration:Motion.duration(image.animations,140,90,image.animationSpeed); easing.type:Easing.OutCubic } }
   }
   Column {
     anchors.centerIn:parent

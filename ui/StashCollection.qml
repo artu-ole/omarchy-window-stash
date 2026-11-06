@@ -9,6 +9,7 @@ ListModel {
   signal reconciled()
   property var sourceGroups: []
   property string animations: "full"
+  property string animationSpeed:"normal"
   property bool hold: false
   readonly property var activeKeys:sourceGroups.map(function(g) { return g.key })
   property var keys: []
@@ -41,10 +42,10 @@ ListModel {
       else if (at!==i) { move(at,i,1); changed=true }
       var retiring=wanted.indexOf(order[i])<0
       if (get(i).retiring!==retiring) { setProperty(i,"retiring",retiring); changed=true }
-      if (retiring) expires[order[i]]=Math.min(expires[order[i]] || Infinity,now+Motion.exit(animations)+(animations==="off" ? 0 : 32))
+      if (retiring && expires[order[i]]===undefined) expires[order[i]]=now+Motion.exit(animations,collection.animationSpeed)+(animations==="off" ? 0 : 32)
     }
     retireAt=expires
-    if (changed) settleUntil=now+Math.max(Motion.enter(animations),Motion.move(animations),Motion.exit(animations))
+    if (changed) settleUntil=now+Math.max(Motion.enter(animations,collection.animationSpeed),Motion.move(animations,collection.animationSpeed),Motion.exit(animations,collection.animationSpeed))
     publish()
     prune()
     reconciled()
@@ -59,12 +60,21 @@ ListModel {
     }
     if (removed) {
       dataByKey=cache; retireAt=expires; publish(); reconciled()
-      settleUntil=Math.max(settleUntil,now+Motion.move(animations))
+      settleUntil=Math.max(settleUntil,now+Motion.move(animations,collection.animationSpeed))
     }
     busy=animations!=="off" && (Object.keys(expires).length>0 || now<settleUntil)
   }
   onSourceGroupsChanged:reconcile()
   onHoldChanged:if (!hold) reconcile()
   onAnimationsChanged: { if (animations==="off") settleUntil=0; reconcile() }
+  onAnimationSpeedChanged: {
+    // Running QML transitions can retain their original timing. Keep both
+    // their old deadline and enough room for a newly selected slower fade.
+    var now=Date.now(),expires=Object.assign({},retireAt)
+    Object.keys(expires).forEach(function(key) { expires[key]=Math.max(expires[key],now+Motion.exit(animations,collection.animationSpeed)+32) })
+    retireAt=expires
+    if (busy) settleUntil=Math.max(settleUntil,now+Math.max(Motion.enter(animations,collection.animationSpeed),Motion.move(animations,collection.animationSpeed),Motion.exit(animations,collection.animationSpeed)))
+    prune()
+  }
   Component.onCompleted:reconcile()
 }

@@ -152,7 +152,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",dockOpacity=100,iconOpacity=100,
+            grouping="app",iconShape="squircle",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="shown",dockFrame="shown",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200))
 
     def test_hover_preview_defaults_and_legacy_settings(self):
@@ -259,6 +259,35 @@ class ControllerTests(unittest.TestCase):
         self.settings(iconFrame=False, dockFrame="invalid")
         self.assertEqual(self.stash.settings()["iconFrame"], "shown")
         self.assertEqual(self.stash.settings()["dockFrame"], "shown")
+
+    def test_animation_speed_defaults_and_legacy_settings(self):
+        self.assertEqual(self.stash.settings()["animationSpeed"], "normal")
+        self.settings(presentation="floating", animations="reduced", hoverPreview="live", previewDelay=321)
+        result = self.stash.settings()
+        self.assertEqual(result["animationSpeed"], "normal")
+        self.assertEqual((result["presentation"], result["animations"], result["hoverPreview"], result["previewDelay"]),
+                         ("floating", "reduced", "live", 321))
+
+    def test_animation_speed_choices_and_validation(self):
+        for mode in ("full", "reduced", "off"):
+            for speed in ("slow", "relaxed", "normal", "fast", "ultrafast"):
+                with self.subTest(mode=mode, speed=speed):
+                    self.settings(animationSpeed=speed, animations=mode, presentation="bubbles", iconOpacity=72,
+                                  floatingAnimation="matryoshka-hop", previewHideDelay=87)
+                    result = self.stash.settings()
+                    self.assertEqual(result["animationSpeed"], speed)
+                    self.assertEqual((result["animations"], result["presentation"], result["iconOpacity"],
+                                      result["floatingAnimation"], result["previewHideDelay"]),
+                                     (mode, "bubbles", 72, "matryoshka-hop", 87))
+        for invalid in ("invalid", "", "FAST", "ultra-fast", "1.5", 1, 1.5, True, False, None, [], {}):
+            with self.subTest(invalid=invalid):
+                self.settings(animationSpeed=invalid, animations="reduced", presentation="floating", iconOpacity=72,
+                              hoverPreview="still", previewDelay=321)
+                result = self.stash.settings()
+                self.assertEqual(result["animationSpeed"], "normal")
+                self.assertEqual((result["animations"], result["presentation"], result["iconOpacity"],
+                                  result["hoverPreview"], result["previewDelay"]),
+                                 ("reduced", "floating", 72, "still", 321))
 
     def test_animation_modes_default_and_validation(self):
         self.assertEqual(self.stash.settings()["animations"], "full")

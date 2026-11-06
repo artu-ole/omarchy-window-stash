@@ -5,6 +5,7 @@ import qs.Commons as Commons
 Item {
   id: feedback
   property string animations:"full"
+  property string animationSpeed:"normal"
   property real presence:1
   property real idleOpacity:1
   property bool hot: false
@@ -27,17 +28,17 @@ Item {
   onHoverProgressChanged: if (hoverProgress > 0 && hoverProgress < 1) hoverFrames++
   onPressProgressChanged: if (pressProgress > 0 && pressProgress < 1) pressFrames++
   Behavior on hoverProgress {
-    NumberAnimation { id:hoverAnimation; duration:Motion.duration(feedback.animations,feedback.hot ? 130 : 180,90); easing.type:Easing.OutCubic }
+    NumberAnimation { id:hoverAnimation; duration:Motion.duration(feedback.animations,feedback.hot ? 130 : 180,90,feedback.animationSpeed); easing.type:Easing.OutCubic }
   }
   Behavior on pressProgress {
-    NumberAnimation { id:pressAnimation; duration:Motion.duration(feedback.animations,feedback.down ? 75 : 170,90); easing.type:Easing.OutCubic }
+    NumberAnimation { id:pressAnimation; duration:Motion.duration(feedback.animations,feedback.down ? 75 : 170,90,feedback.animationSpeed); easing.type:Easing.OutCubic }
   }
   Behavior on opacityProgress {
-    NumberAnimation { id:opacityAnimation; duration:Motion.duration(feedback.animations,feedback.hot || feedback.down ? 140 : 200,90); easing.type:Easing.OutCubic }
+    NumberAnimation { id:opacityAnimation; duration:Motion.duration(feedback.animations,feedback.hot || feedback.down ? 140 : 200,90,feedback.animationSpeed); easing.type:Easing.OutCubic }
   }
   onAnimationsChanged:if (animations==="off") { hoverAnimation.complete(); pressAnimation.complete(); opacityAnimation.complete() }
   function details() {
-    return {hot:hot,down:down,presence:presence,idleOpacity:idleOpacity,opacity:visualOpacity,opacityProgress:opacityProgress,opacityFrames:opacityFrames,hover:hoverProgress,press:pressProgress,tint:tint,
+    return {animationSpeed:animationSpeed,durations:{hover:hoverAnimation.duration,press:pressAnimation.duration,opacity:opacityAnimation.duration},hot:hot,down:down,presence:presence,idleOpacity:idleOpacity,opacity:visualOpacity,opacityProgress:opacityProgress,opacityFrames:opacityFrames,hover:hoverProgress,press:pressProgress,tint:tint,
       scale:visualScale,accent:String(accent),hoverFrames:hoverFrames,pressFrames:pressFrames}
   }
   function mouseArea(item) {

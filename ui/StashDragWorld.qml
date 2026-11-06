@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import "DragPhysics.js" as Physics
+import "Motion.js" as Motion
 
 // Owns all floating item positions on one monitor. Delegates react to moved;
 // they must not place competing Behaviors on the same x/y properties.
@@ -9,6 +10,7 @@ Item {
   property var area:({x:0,y:0,width:1920,height:1080})
   property bool physicsEnabled:true
   property string animations:"full"
+  property string animationSpeed:"normal"
   property bool snapEdges:true
   property bool active:false
   property int revision:0
@@ -24,7 +26,7 @@ Item {
     events.activities.forEach(function(p) { world.activityChanged(p.key,p.held,p.moving) })
     events.settled.forEach(function(p) { world.settled(p.key,p.x,p.y) })
   }
-  function configure() { Physics.configure(simulation,area,snapEdges,physicsEnabled,animations);flush() }
+  function configure() { simulation.animationScale=1/Motion.speedRatio(animationSpeed);Physics.configure(simulation,area,snapEdges,physicsEnabled,animations);flush() }
   function availablePosition(key,x,y,width,height) {
     return Physics.destination(simulation,{key:key,width:width,height:height},x,y,"")
   }
@@ -41,6 +43,7 @@ Item {
   onAreaChanged:configUpdate.restart()
   onPhysicsEnabledChanged:configUpdate.restart()
   onAnimationsChanged:configUpdate.restart()
+  onAnimationSpeedChanged:if (simulation) simulation.animationScale=1/Motion.speedRatio(animationSpeed)
   onSnapEdgesChanged:configUpdate.restart()
   Timer { id:configUpdate; interval:0; onTriggered:world.configure() }
   FrameAnimation {

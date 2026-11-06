@@ -16,7 +16,7 @@ import uuid
 PLUGIN = "community.window-stash"
 SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
-DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown", animations="full", dockOpacity=100, iconOpacity=100,
+DEFAULTS = dict(presentation="dock", scope="global", restoreDestination="current", grouping="window", iconShape="auto", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="shown", dockFrame="shown", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
@@ -24,7 +24,7 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "w
                floatingDirection=("vertical", "horizontal"), floatingAnimation=("arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop"), dragMotion=("physics", "direct"), dockSide=("bottom", "top", "left", "right"),
                floatingPlacement=("edges", "free"), dockCorners=("theme", "custom"),
                dockCornerRadius=range(65), iconFrame=("shown", "hidden"), dockFrame=("shown", "hidden"),
-               animations=("full", "reduced", "off"), dockOpacity=range(101), iconOpacity=range(101),
+               animations=("full", "reduced", "off"), animationSpeed=("slow", "relaxed", "normal", "fast", "ultrafast"), dockOpacity=range(101), iconOpacity=range(101),
                hoverPreview=("off", "still", "live"), previewSize=("small", "medium", "large"),
                previewPlacement=("auto", "above", "below", "left", "right"), previewTitles=("shown", "hidden"),
                previewDelay=range(1501), previewHideDelay=range(1001))

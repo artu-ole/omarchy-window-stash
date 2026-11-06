@@ -12,6 +12,7 @@ Ui.CursorSurface {
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
   property string animations:"full"
+  property string animationSpeed:"normal"
   property bool previewEnabled:false
   readonly property bool previewReady:enabled && !pointer.pressed
   opacity:interaction.visualOpacity
@@ -26,7 +27,7 @@ Ui.CursorSurface {
   layer.enabled: true
   layer.smooth: true
   layer.effect: StashHoverEffect { feedback:interaction }
-  StashFeedback { id:interaction; animations:row.animations; hot:row.hasCursor || row.current; down:pointer.pressed; pressDepth:0.02 }
+  StashFeedback { id:interaction; animations:row.animations; animationSpeed:row.animationSpeed; hot:row.hasCursor || row.current; down:pointer.pressed; pressDepth:0.02 }
 
   RowLayout {
     anchors.fill: parent

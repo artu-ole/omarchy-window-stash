@@ -14,6 +14,7 @@ Ui.BorderSurface {
   required property string screenName
   required property var area
   property string animations:"full"
+  property string animationSpeed:"normal"
   readonly property bool opened:stash.contextOpen && stash.contextScreen===screenName
   readonly property var targets:stash.contextWindows()
   readonly property var eligible:stash.scopeWindows(screenName,stash.contextWorkspace)
@@ -43,7 +44,7 @@ Ui.BorderSurface {
   color:palette.background
   borderSpec:Border.surfaceSpec("popups","border",palette.border,Style.normalBorderWidth)
   signal inputChanged()
-  Behavior on reveal { NumberAnimation { duration:Motion.duration(menu.animations,menu.opened ? 120 : 90,90); easing.type:Easing.OutCubic } }
+  Behavior on reveal { NumberAnimation { duration:Motion.duration(menu.animations,menu.opened ? 120 : 90,90,menu.animationSpeed); easing.type:Easing.OutCubic } }
   onRevealChanged: { if (reveal>0 && reveal<1) frames++; inputChanged() }
   onXChanged:inputChanged()
   onYChanged:inputChanged()
@@ -150,7 +151,7 @@ Ui.BorderSurface {
       StashButton {
         id:hereButton
         text:"Restore here"; enabled:menu.targets.length>0 && !menu.targetBusy
-        animations:menu.animations; foreground:menu.palette.text
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
         Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===0
         onHovered:function(value) { if (value && enabled) menu.currentIndex=0 }
         onClicked:menu.stash.restoreContext("current")
@@ -158,7 +159,7 @@ Ui.BorderSurface {
       StashButton {
         id:originalButton
         text:"Restore to original workspace"; enabled:menu.targets.length>0 && !menu.targetBusy
-        animations:menu.animations; foreground:menu.palette.text
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
         Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===1
         onHovered:function(value) { if (value && enabled) menu.currentIndex=1 }
         onClicked:menu.stash.restoreContext("original")
@@ -167,7 +168,7 @@ Ui.BorderSurface {
         id:closeButton
         text:menu.targetBusy ? "Closing…" : menu.stash.contextIds.length>1 ? "Close stashed windows ("+menu.targets.length+")" : "Close window"
         enabled:menu.targets.length>0 && !menu.targetBusy
-        animations:menu.animations; foreground:menu.palette.text
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
         Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===2
         onHovered:function(value) { if (value && enabled) menu.currentIndex=2 }
         onClicked:menu.stash.closeContextWindows()
@@ -176,7 +177,7 @@ Ui.BorderSurface {
       StashButton {
         id:allButton
         text:"All stashed windows…"; enabled:menu.stash.snapshot.windows.length>0
-        animations:menu.animations; foreground:menu.palette.text
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
         Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===3
         onHovered:function(value) { if (value && enabled) menu.currentIndex=3 }
         onClicked:menu.stash.allWindows(menu.screenName)
@@ -185,7 +186,7 @@ Ui.BorderSurface {
         id:closeAllButton
         text:(menu.stash.snapshot.settings.scope==="workspace" ? "Close all in this workspace (" : "Close all stashed windows (")+menu.eligible.length+")"
         enabled:menu.eligible.length>0 && !menu.allBusy
-        animations:menu.animations; foreground:menu.palette.text
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
         Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===4
         onHovered:function(value) { if (value && enabled) menu.currentIndex=4 }
         onClicked:menu.stash.closeContextAll()
@@ -193,7 +194,7 @@ Ui.BorderSurface {
       StashButton {
         id:settingsButton
         text:"Settings…"
-        animations:menu.animations; foreground:menu.palette.text
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
         Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===5
         onHovered:function(value) { if (value && enabled) menu.currentIndex=5 }
         onClicked:menu.stash.openDialog("settings",menu.screenName,[],null)

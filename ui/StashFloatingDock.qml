@@ -61,6 +61,7 @@ Item {
   property int closingFrames:0
   property var actorRegions:[]
   readonly property string animations:config.animations || "full"
+  readonly property string animationSpeed:config.animationSpeed || "normal"
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
   readonly property bool requestedHorizontal:config.floatingDirection === "horizontal"
   readonly property bool snapEdges:config.floatingPlacement !== "free"
@@ -89,6 +90,7 @@ Item {
   readonly property bool overflow:maxFirst>0
   property bool actorsMoving:false
   readonly property bool windowActive:Window.active
+  readonly property bool openingMotion:open && (actorsMoving || chainAnimation.running || revealAnimation.running)
   readonly property bool animating:actorsMoving || chainAnimation.running || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
   readonly property bool present:active || handleOpacity>0 || reveal>0 || actorsMoving
   readonly property var currentRects:actorRects(false)
@@ -102,10 +104,11 @@ Item {
   HoverHandler { id:fanHover; onHoveredChanged:dock.updateLeaveTimer() }
   readonly property int leaveTimeout:800
   function updateLeaveTimer() {
-    if (!open || fanHover.hovered || pan.active || (preview && preview.fromFloating && preview.hovered)) leaveDelay.stop()
+    if (!open || openingMotion || fanHover.hovered || pan.active || (preview && preview.fromFloating && preview.hovered)) leaveDelay.stop()
     else if (!leaveDelay.running) leaveDelay.start()
   }
-  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !fanHover.hovered && !pan.active && !(dock.preview && dock.preview.fromFloating && dock.preview.hovered)) dock.close("pointer-leave") }
+  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !dock.openingMotion && !fanHover.hovered && !pan.active && !(dock.preview && dock.preview.fromFloating && dock.preview.hovered)) dock.close("pointer-leave") }
+  onOpeningMotionChanged:updateLeaveTimer()
   Connections {
     target:dock.preview
     function onHoveredChanged() { dock.updateLeaveTimer() }
@@ -132,9 +135,9 @@ Item {
   Keys.onUpPressed:navigate(-geometry.sign)
   Keys.onRightPressed:function(event) { if (horizontal) navigate(geometry.sign); else event.accepted=false }
   Keys.onLeftPressed:function(event) { if (horizontal) navigate(-geometry.sign); else event.accepted=false }
-  Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:Motion.duration(dock.animations,180,0); easing.type:Easing.OutCubic } }
-  Behavior on handleOpacity { NumberAnimation { id:handleAnimation; duration:Motion.duration(dock.animations,180,100); easing.type:Easing.OutCubic } }
-  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,Motion.fanDuration(dock.fanTiming,dock.open,dock.chainStyle ? dock.chainCount : dock.geometry.capacity),100); easing.type:Easing.OutCubic } }
+  Behavior on stackTail { NumberAnimation { id:tailAnimation; duration:Motion.duration(dock.animations,180,0,dock.animationSpeed); easing.type:Easing.OutCubic } }
+  Behavior on handleOpacity { NumberAnimation { id:handleAnimation; duration:Motion.duration(dock.animations,180,100,dock.animationSpeed); easing.type:Easing.OutCubic } }
+  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(dock.animations,Motion.fanDuration(dock.fanTiming,dock.open,dock.chainStyle ? dock.chainCount : dock.geometry.capacity),100,dock.animationSpeed); easing.type:Easing.OutCubic } }
   function retargetChain() {
     if (chainStyle && !chainAnimation.running) {
       chainKeys=iconModel.activeKeys.slice()
@@ -147,7 +150,7 @@ Item {
       chainProgress=target; chainRetargeting=false; return
     }
     chainAnimation.from=chainProgress; chainAnimation.to=target
-    chainAnimation.duration=Math.max(1,Motion.fanDuration(fanTiming,open,chainCount)*Math.abs(target-chainProgress))
+    chainAnimation.duration=Math.max(1,Motion.duration(animations,Motion.fanDuration(fanTiming,open,chainCount),0,animationSpeed)*Math.abs(target-chainProgress))
     chainAnimation.restart()
     chainRetargeting=false
   }
@@ -185,7 +188,7 @@ Item {
   StashCollection {
     id:iconModel
     sourceGroups:dock.config.presentation==="floating" ? dock.groups : []
-    animations:dock.animations
+    animations:dock.animations; animationSpeed:dock.animationSpeed
     hold:dock.chainHolding || (!dock.open && (dock.reveal>0 || dock.actorsMoving))
     onReconciled: {
       dock.repairSelection()
@@ -224,7 +227,7 @@ Item {
     if (index<firstIndex) requestPage(index)
     else if (index>=firstIndex+geometry.capacity) requestPage(Math.min(maxFirst,index-geometry.capacity+1))
   }
-  function navigate(delta) { if (open) { selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))); if (!fanHover.hovered) leaveDelay.restart() } }
+  function navigate(delta) { if (open) { selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))); if (!fanHover.hovered && !openingMotion) leaveDelay.restart(); else updateLeaveTimer() } }
   function requestPage(index) {
     if (chainStyle && chainAnimation.running) pendingPage=Math.max(0,Math.min(maxFirst,index))
     else firstIndex=Math.max(0,Math.min(maxFirst,index))
@@ -298,7 +301,7 @@ Item {
       chain:{progress:chainProgress,count:chainCount,moving:chainAnimation.running,stage:Math.min(Math.max(0,chainCount-1),Math.floor(chainProgress*Math.max(0,chainCount-1)))},
       dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
-      animation:{openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:bodyMoving,windows:windows.length,groups:groups.length,
+      animation:{speed:animationSpeed,duration:revealAnimation.duration,openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:bodyMoving,windows:windows.length,groups:groups.length,
       handle:{held:held,x:anchorX,y:anchorY,width:tileSize,height:tileSize+stackTail,opacity:handleOpacity,appearance:front ? front.icon.appearance() : null},
       panel:{x:panel.x,y:panel.y,width:panel.width,height:panel.height,radius:panel.radius,frameVisible:dockFrameVisible,background:String(panel.color),
         borderWidth:dockFrameVisible ? borderWidth : 0,targetHeight:finalBounds.height,targetWidth:finalBounds.width,inset:inset,endInset:endInset,visible:panel.visible,down:geometry.forward && !horizontal,right:geometry.forward && horizontal,feedback:panelFeedback.details()},
@@ -330,6 +333,7 @@ Item {
       if (animations==="off") { revealAnimation.complete(); handleAnimation.complete() }
     }
   }
+  onAnimationSpeedChanged:retargetChain()
   onRevealChanged: {
     inputChanged()
     if (reveal>0 && reveal<1) { if (open) openingFrames++; else closingFrames++ }
@@ -375,7 +379,7 @@ Item {
     onWidthChanged:dock.inputChanged()
     onHeightChanged:dock.inputChanged()
     onRadiusChanged:dock.inputChanged()
-    StashFeedback { id:panelFeedback; animations:dock.animations; idleOpacity:(dock.config.dockOpacity===undefined ? 100 : dock.config.dockOpacity)/100; hot:dock.open && fanHover.hovered }
+    StashFeedback { id:panelFeedback; animations:dock.animations; animationSpeed:dock.animationSpeed; idleOpacity:(dock.config.dockOpacity===undefined ? 100 : dock.config.dockOpacity)/100; hot:dock.open && fanHover.hovered }
   }
   WheelHandler {
     enabled:dock.open && dock.overflow
@@ -419,7 +423,7 @@ Item {
       stackX:dock.anchorX; stackY:dock.anchorY+Math.min(ordinal,2)*4
       expanded:dock.open
       globalPresence:dock.handleOpacity
-      animations:dock.animations
+      animations:dock.animations; animationSpeed:dock.animationSpeed
       previewEnabled:dock.preview ? dock.preview.previewEnabled : false
       unfoldStyle:dock.activeAnimation
       sharedProgress:dock.chainProgress

@@ -24,6 +24,7 @@ PanelWindow {
   onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
+  readonly property string animationSpeed:config.animationSpeed || "normal"
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
   readonly property real canvasWidth:screen ? screen.width : width
   readonly property real canvasHeight:screen ? screen.height : height
@@ -43,7 +44,7 @@ PanelWindow {
     completedExits=completedExits.concat([{serial:exitSerial,view:view,key:key,frames:frames}]).slice(-16)
   }
   property real dialogReveal:dialogOpen ? 1 : 0
-  Behavior on dialogReveal { NumberAnimation { id:dialogAnimation; duration:Motion.duration(surface.animations,surface.dialogOpen ? 180 : 140,100); easing.type:Easing.OutCubic } }
+  Behavior on dialogReveal { NumberAnimation { id:dialogAnimation; duration:Motion.duration(surface.animations,surface.dialogOpen ? 180 : 140,100,surface.animationSpeed); easing.type:Easing.OutCubic } }
   onDialogRevealChanged: {
     if (dialogReveal>0 && dialogReveal<1) dialogFrames++
     if (dialogReveal===0 && !dialogOpen) renderDialogKind=""
@@ -95,7 +96,7 @@ PanelWindow {
     area:surface.usableArea
     snapEdges:surface.snapFloating
     physicsEnabled:surface.config.dragMotion!=="direct"
-    animations:surface.animations
+    animations:surface.animations; animationSpeed:surface.animationSpeed
     onMoved:function(key,x,y) {
       var icon=surface.bubbleForKey(key)
       if (icon && !icon.retiring) { icon.x=x;icon.y=y }
@@ -113,8 +114,8 @@ PanelWindow {
   property var bubbleDrafts: ({})
   readonly property var bubbleTargets: Model.bubbleLayout(bubblesModel.activeKeys,
     savedPositions, bubbleDrafts, canvasWidth, canvasHeight, usableArea, snapFloating)
-  StashCollection { id:shelfModel; sourceGroups:surface.config.presentation==="dock" ? surface.groups : []; animations:surface.animations }
-  StashCollection { id:bubblesModel; sourceGroups:surface.bubbleMode ? surface.groups : []; animations:surface.animations }
+  StashCollection { id:shelfModel; sourceGroups:surface.config.presentation==="dock" ? surface.groups : []; animations:surface.animations; animationSpeed:surface.animationSpeed }
+  StashCollection { id:bubblesModel; sourceGroups:surface.bubbleMode ? surface.groups : []; animations:surface.animations; animationSpeed:surface.animationSpeed }
   onSavedPositionsChanged: {
     var next=Object.assign({},bubbleDrafts)
     Object.keys(next).forEach(function(key) {
@@ -199,7 +200,7 @@ PanelWindow {
     }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
       groups:groups.length, visible:visible, bubbles:points,exitingBubbles:exiting,createdBubbles:createdBubbles,
-      motion:{mode:animations,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal,dragWorld:motionWorld.details()},
+      motion:{mode:animations,speed:animationSpeed,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal,dragWorld:motionWorld.details()},
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
         borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
@@ -278,7 +279,7 @@ PanelWindow {
     HoverHandler { id:shelfHover }
     StashFeedback {
       id:shelfFeedback
-      animations:surface.animations
+      animations:surface.animations; animationSpeed:surface.animationSpeed
       idleOpacity:(surface.config.dockOpacity === undefined ? 100 : surface.config.dockOpacity)/100
       hot:shelf.enabled && shelfHover.hovered
     }
@@ -300,7 +301,7 @@ PanelWindow {
     visible:shelfModel.count>0 || reveal>0
     enabled:surface.config.presentation==="dock" && surface.groups.length>0
     opacity:reveal
-    Behavior on reveal { NumberAnimation { id:shelfRevealAnimation; duration:Motion.duration(surface.animations,180,100); easing.type:Easing.OutCubic } }
+    Behavior on reveal { NumberAnimation { id:shelfRevealAnimation; duration:Motion.duration(surface.animations,180,100,surface.animationSpeed); easing.type:Easing.OutCubic } }
     readonly property var geometry: Model.staticDockRect(surface.usableArea, surface.dockSide,
       dockRow.implicitWidth + insetLeft + insetRight,
       dockRow.implicitHeight + insetTop + insetBottom,
@@ -309,8 +310,8 @@ PanelWindow {
     height: geometry.height
     x:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).x
     y:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).y
-    Behavior on width { NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
-    Behavior on height { NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
+    Behavior on width { NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+    Behavior on height { NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
     radius: !surface.dockFrameVisible ? 0 : Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
     onRadiusChanged: surface.refreshInputMask()
     color: surface.dockFrameVisible ? surface.popupColors.background : "transparent"
@@ -359,10 +360,10 @@ PanelWindow {
               onLiveIndexChanged:if (liveIndex>=0) lastSlot=liveIndex
               x:surface.verticalDock ? 0 : Math.max(0,liveIndex>=0 ? liveIndex : lastSlot)*dockRow.step
               y:surface.verticalDock ? Math.max(0,liveIndex>=0 ? liveIndex : lastSlot)*dockRow.step : 0
-              Behavior on x { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
-              Behavior on y { NumberAnimation { duration:Motion.move(surface.animations); easing.type:Easing.OutCubic } }
+              Behavior on x { NumberAnimation { duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+              Behavior on y { NumberAnimation { duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
               group:shelfModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
-              animations:surface.animations
+              animations:surface.animations; animationSpeed:surface.animationSpeed
               idleOpacity:surface.iconIdleOpacity
               onExited:function(frames) { surface.recordExit("dock",groupKey,frames) }
               Component.onCompleted: { surface.createdShelfIcons++; if (liveIndex>=0) lastSlot=liveIndex }
@@ -390,7 +391,7 @@ PanelWindow {
       required retiring
       required property int index
       group:bubblesModel.dataByKey[groupKey] || ({key:groupKey,app:"",title:"",windows:[]})
-      animations:surface.animations
+      animations:surface.animations; animationSpeed:surface.animationSpeed
       idleOpacity:surface.iconIdleOpacity
       previewEnabled:surface.previewsEnabled
       onHovered:function(value) { windowPreview.request(group,bubbleIcon,value,"bubble",null) }
@@ -560,7 +561,7 @@ PanelWindow {
           font.bold: true
           Layout.fillWidth: true
         }
-        StashActionButton { animations:surface.animations;
+        StashActionButton { animations:surface.animations; animationSpeed:surface.animationSpeed;
           iconText: "󰅖"
           tooltipText: "Close"
           focusable: true
@@ -603,7 +604,7 @@ PanelWindow {
         })
         delegate: StashWindowRow {
           id:savedWindowRow
-          animations:surface.animations
+          animations:surface.animations; animationSpeed:surface.animationSpeed
           required property var modelData
           required property int index
           width: picker.width
@@ -659,6 +660,7 @@ PanelWindow {
             {key:"previewPlacement",label:"Preview placement",values:["auto","above","below","left","right"],labels:["Automatic","Above","Below","Left","Right"]},
             {key:"previewTitles",label:"Preview titles",values:["shown","hidden"],labels:["Shown","Hidden"]},
             {key:"animations", label:"Animations", values:["full","reduced","off"], labels:["Full","Reduced","Off"]},
+            {key:"animationSpeed",label:"Animation speed",values:["slow","relaxed","normal","fast","ultrafast"],labels:["Slow (0.5×)","Relaxed (0.75×)","Normal","Fast (1.5×)","Ultrafast (2.5×)"]},
             {key:"iconFrame", label:"Icon border/background", values:["shown","hidden"], labels:["Shown","Hidden (larger icons)"]},
             {key:"dockFrame", label:"Dock border/background", values:["shown","hidden"], labels:["Shown","Hidden"]},
             {key:"floatingPlacement", label:"Floating placement", values:["edges","free"], labels:["Snap to edges","Free placement"]},
@@ -792,7 +794,7 @@ PanelWindow {
           font.family: surface.fonts.family
           font.pixelSize: surface.fonts.caption
         }
-        StashButton { animations:surface.animations; text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
+        StashButton { animations:surface.animations; animationSpeed:surface.animationSpeed; text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }
         }
         Controls.ScrollBar.vertical:Controls.ScrollBar {
@@ -822,7 +824,7 @@ PanelWindow {
     host:surface
     screenName:surface.screen.name
     area:surface.usableArea
-    animations:surface.animations
+    animations:surface.animations; animationSpeed:surface.animationSpeed
     onInputChanged:surface.refreshInputMask()
   }
   Component.onCompleted: {

@@ -1,12 +1,24 @@
 .pragma library
 
 function full(mode) { return mode !== "reduced" && mode !== "off" }
-function duration(mode, normal, reduced) {
-  return mode === "off" ? 0 : mode === "reduced" ? (reduced || 0) : normal
+function speedRatio(speed) {
+  if (speed === "slow") return .5
+  if (speed === "relaxed") return .75
+  if (speed === "fast") return 1.5
+  if (speed === "ultrafast") return 2.5
+  return 1
 }
-function enter(mode) { return duration(mode, 200, 120) }
-function exit(mode) { return duration(mode, 140, 100) }
-function move(mode) { return duration(mode, 200, 0) }
+function scale(milliseconds, speed) {
+  if (!isFinite(milliseconds) || milliseconds <= 0) return 0
+  // Leave rounding to QML so staggering and shared clocks use the same ratio.
+  return Math.max(1, milliseconds / speedRatio(speed))
+}
+function duration(mode, normal, reduced, speed) {
+  return mode === "off" ? 0 : scale(mode === "reduced" ? (reduced || 0) : normal, speed)
+}
+function enter(mode, speed) { return duration(mode, 200, 120, speed) }
+function exit(mode, speed) { return duration(mode, 140, 100, speed) }
+function move(mode, speed) { return duration(mode, 200, 0, speed) }
 
 
 // Full-motion profiles; Reduced/Off override these through duration()/full().

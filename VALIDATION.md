@@ -4,7 +4,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 
 | Requirement | Evidence |
 |---|---|
-| Controller state, settings, LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 40 passing Python controller tests |
+| Controller state, settings, LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 42 passing Python controller tests |
 | Grouping, filtering, ordering and bubble placement | Passing Node model checks |
 | Valid plugin and QML | Omarchy manifest validator and Qt6 qmllint pass without warnings |
 | Exact floating size and position | Live native Wayland GTK test |
@@ -21,6 +21,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Confirmed normal closure | Native isolated-ledger immediate/delayed close, shared grace, native Save/Cancel prompt, unstashed same-app preservation, workspace/global close-all; unit tests cover atomic identity guards, hexadecimal stable IDs, address reuse, partial failure and polling outages |
 | Pointer context menus | Native actual click coordinates, four edges, icon/group/front-stack and chooser-row targeting, separated global section, keyboard navigation, click-through outside dismissal, scope-aware close-all, focus return to chooser, prompt accessibility and secondary scaled monitor |
 | Middle-click closure | Native static dock, bubbles, collapsed front icon, both expanded axes, pending icon retention/frozen body, duplicate coalescing, grouped stash-only close and Save/Cancel handling |
+| Animation speed presets | Native selection of Slow, Relaxed, Normal, Fast and Ultrafast; measured Arc and Matryoshka unfold/fold timing, stable actors/origin, speed change during unfolding, Slow-safe 800 ms leave grace and immediate outside click, Reduced/Off overrides, actual feedback timings across all presentations, and preview/thumbnail fades with unchanged hover delays. Node simulation preserves physical trajectories while scaling Direct/fallback tweens; offscreen Qt covers both speed-change directions during icon retirement and eventual cleanup |
 | Hover window previews | Native Off/Still/Live dropdown, exact red/green client pixels while parked, changing content held in Still and updated in Live, unchanged client geometry/focus, opening delay/cancellation, card hover grace and buffer unload, all three presentations and chooser rows, grouped navigation, selected-window restore/menu/confirmed close, expanded-fan keepalive and dismissal, four-sided placement, and large previews at every corner of a temporary 320×240 output; pure geometry/identity checks include fractional scales, rounded input, stale metadata and address reuse |
 | Physical floating dragging | Pure simulation at 30/60/120/144 Hz and native offscreen Qt clock; real pointer flicks, stale-velocity rejection, catching, gentle collisions and neighbor saving, constrained edges, Direct/Reduced/Off, frozen menu/fan origin, held-dock mode switch without ghost input, and restart without saved velocity |
 | Fixed floating stack origin | Full native animation samples keep the original icon at its pre-click coordinates throughout unfolding and folding for all seven styles and both orientations, including off-center clicks; geometry tests include fractional anchors and subtle bounded front-icon effects |
@@ -64,7 +65,7 @@ Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
 `python3 tests/scrolling_width.py`, `python3 tests/icon_shapes.py`, and
-`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`. Pinned restoration and workspace-ID event handling
+`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, and `python3 tests/animation_speed.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 Validation did not upgrade system packages or modify packaged Omarchy files.
@@ -80,14 +81,14 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.16.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.17.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
 | Consent before configuration edits | Helper displays its plan and prompts before any writes; non-interactive runs require explicit `--yes`; refusal and consent tests pass |
 | File layout | No symlinks, bundled executables, credentials, or private runtime data in the source folder |
 | Shared UI | Uses installed Omarchy theme tokens and UI components; icons are looked up locally rather than bundled |
-| Checks after publishing preparation | 47 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
+| Checks after publishing preparation | 49 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
 
 The current installation path requires manual setup. Generic `omarchy plugin
 add` does not install the controller wrapper or shortcuts, and generic removal

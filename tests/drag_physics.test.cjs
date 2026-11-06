@@ -53,6 +53,79 @@ console.log('Physics: projected landing chooses edge, gentle drop chooses neares
 }
 console.log('Physics: Direct full snap takes240ms; Reduced/Off skip inertia, collisions and motion')
 {
+ const scales=[.4,2/3,1,4/3,2]
+ assert.equal(world().animationScale,1,'Legacy worlds retain normal animation speed')
+ for(const scale of scales){
+  const w=p.create({area,snapEdges:true,physicsEnabled:false,animations:'full',animationScale:scale})
+  add(w,'a',100,300);launch(w,'a',10,0,.2)
+  const duration=.24*scale
+  assert.equal(w.bodies.a.phase,'direct')
+  // Equal fractions of the selected duration follow the same easing curve,
+  // rather than changing the edge destination or the icon's path.
+  p.tick(w,duration/2)
+  assert.ok(Math.abs(w.bodies.a.x-20.75)<1e-8,'Speed changed the Direct midpoint')
+  assert.equal(w.bodies.a.y,300)
+  p.tick(w,duration/2)
+  assert.equal(w.bodies.a.x,8);assert.equal(w.bodies.a.y,300);assert.equal(p.active(w),false)
+
+  const framed=p.create({area,snapEdges:true,physicsEnabled:false,animationScale:scale})
+  add(framed,'a',100,300);launch(framed,'a',10,0,.2)
+  for(let i=0;i<240 && p.active(framed);i++)p.step(framed,1/240)
+  assert.ok(framed.time>=duration-1e-10 && framed.time<=duration+1/240+1e-10,
+   `Direct settlement did not follow selected speed: scale=${scale}, time=${framed.time}`)
+  assert.equal(framed.bodies.a.x,8);assert.equal(p.active(framed),false)
+
+  for(const animations of ['reduced','off']){
+   const immediate=p.create({area,snapEdges:true,animations,animationScale:scale})
+   add(immediate,'a',100,300);launch(immediate,'a',10,0)
+   assert.equal(immediate.bodies.a.x,8);assert.equal(p.active(immediate),false)
+  }
+ }
+}
+console.log('Physics: all animation speeds scale Direct timing, preserve its path/endpoints, and respect Reduced/Off')
+{
+ const scales=[.4,2/3,1,4/3,2]
+ const worlds=scales.map(animationScale=>{
+  const w=p.create({area,snapEdges:false,animationScale})
+  add(w,'a',100,200);launch(w,'a',70,40)
+  return w
+ })
+ const signature=w=>JSON.stringify(p.view(w,'a'))
+ for(let frame=0;frame<180;frame++){
+  for(const w of worlds)p.step(w,1/60)
+  for(const w of worlds)assert.equal(signature(w),signature(worlds[0]),'Animation speed altered physical coasting')
+ }
+ assert.ok(worlds.every(w=>!p.active(w)))
+
+ const reference=world(),changing=world()
+ for(const w of [reference,changing]){add(w,'a',100,200);launch(w,'a',70,40)}
+ for(let frame=0;frame<180;frame++){
+  if(frame===7 || frame===19 || frame===50){
+   const before=signature(changing),configKey=changing.configKey
+   changing.animationScale=frame===7 ? 2 : frame===19 ? .4 : 4/3
+   assert.equal(signature(changing),before,'Changing speed reset a coasting body')
+   assert.equal(changing.configKey,configKey,'Speed changes should not alter physical configuration')
+  }
+  p.step(reference,1/60);p.step(changing,1/60)
+  assert.equal(signature(changing),signature(reference),'Mid-flight speed change altered physical time or velocity')
+ }
+}
+console.log('Physics: animation speed and mid-coast changes leave real-time momentum, velocities and trajectories unchanged')
+{
+ for(const scale of [.4,2/3,1,4/3,2]){
+  const w=p.create({area,snapEdges:true,animationScale:scale})
+  add(w,'a',100,300);launch(w,'a',10,0,.2)
+  p.fallback(w,w.bodies.a)
+  assert.equal(w.bodies.a.phase,'fallback')
+  p.tick(w,.15*scale/2)
+  assert.ok(Math.abs(w.bodies.a.x-20.75)<1e-8,'Speed changed fallback settling path')
+  assert.equal(w.bodies.a.y,300)
+  p.tick(w,.15*scale/2)
+  assert.equal(w.bodies.a.x,8);assert.equal(p.active(w),false)
+ }
+}
+console.log('Physics: bounded fallback settling follows animation speed without changing its destination')
+{
  const w=world();add(w,'a',100,200);launch(w,'a',100,0);p.step(w,.05);const x=w.bodies.a.x
  p.press(w,'a',1);assert.equal(w.bodies.a.x,x);assert.equal(w.bodies.a.vx,0);p.drag(w,'a',320,250,1.05);assert.equal(w.bodies.a.x,320)
  p.release(w,'a',1.05);p.step(w,.02);p.freeze(w,'a',true);const frozen=[w.bodies.a.x,w.bodies.a.y];run(w,1);assert.deepEqual([w.bodies.a.x,w.bodies.a.y],frozen)

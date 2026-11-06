@@ -26,6 +26,7 @@ Item {
   readonly property string mode:config.hoverPreview || "off"
   readonly property bool previewEnabled:mode!=="off"
   readonly property string animations:config.animations || "full"
+  readonly property string animationSpeed:config.animationSpeed || "normal"
   readonly property bool hovered:cardHover.hovered
   readonly property bool fromFloating:sourceKind==="floating"
   readonly property real cornerRadius:Math.min(Style.cornerRadius,layout.inset*2,width/2,height/2)
@@ -63,7 +64,7 @@ Item {
     if (sourceGroup && !records.length) dismiss(true)
     else if (records.length && !records.some(function(w) { return w.id===selectedId })) selectedId=records[0].id
   }
-  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(preview.animations,150,100); easing.type:Easing.OutCubic } }
+  Behavior on reveal { NumberAnimation { id:revealAnimation; duration:Motion.duration(preview.animations,150,100,preview.animationSpeed); easing.type:Easing.OutCubic } }
   onAnimationsChanged:if (animations==="off") revealAnimation.complete()
 
   function usable() {
@@ -136,7 +137,7 @@ Item {
   function details() {
     var image=thumbnail.details()
     image.rect=rectOf(thumbnail)
-    return {enabled:previewEnabled,opened:opened,rendered:visible,pending:pending,progress:reveal,
+    return {animationSpeed:animationSpeed,fadeDuration:revealAnimation.duration,enabled:previewEnabled,opened:opened,rendered:visible,pending:pending,progress:reveal,
       hovered:hovered,sourceHovered:sourceHovered,groupKey:sourceGroup ? sourceGroup.key : "",recordId:record ? record.id : "",
       index:index,count:records.length,rect:{x:x,y:y,width:width,height:height},side:layout.side,sourceRect:sourceRect,
       image:image,imageRect:image.rect,previousRect:rectOf(previous),nextRect:rectOf(next),moreRect:rectOf(more)}
@@ -203,7 +204,7 @@ Item {
     record:preview.record
     mode:preview.opened ? preview.mode : "still"
     active:preview.visible
-    animations:preview.animations
+    animations:preview.animations; animationSpeed:preview.animationSpeed
   }
   MouseArea {
     anchors.fill:parent
@@ -234,7 +235,7 @@ Item {
       id:previous
       anchors.left:parent.left; anchors.verticalCenter:parent.verticalCenter
       size:Math.min(28,footer.height); iconText:"‹"; tooltipText:"Previous window"
-      animations:preview.animations; foreground:preview.popupColors.text
+      animations:preview.animations; animationSpeed:preview.animationSpeed; foreground:preview.popupColors.text
       onClicked:preview.choose(-1)
     }
     Text {
@@ -247,14 +248,14 @@ Item {
       id:next
       anchors.right:more.left; anchors.verticalCenter:parent.verticalCenter
       size:Math.min(28,footer.height); iconText:"›"; tooltipText:"Next window"
-      animations:preview.animations; foreground:preview.popupColors.text
+      animations:preview.animations; animationSpeed:preview.animationSpeed; foreground:preview.popupColors.text
       onClicked:preview.choose(1)
     }
     StashActionButton {
       id:more
       anchors.right:parent.right; anchors.verticalCenter:parent.verticalCenter
       size:Math.min(28,footer.height); iconText:"󰍉"; tooltipText:"All windows"
-      animations:preview.animations; foreground:preview.popupColors.text
+      animations:preview.animations; animationSpeed:preview.animationSpeed; foreground:preview.popupColors.text
       onClicked:preview.all()
     }
   }

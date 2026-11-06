@@ -22,7 +22,7 @@ StashIcon {
     }
   }
   Behavior on presence {
-    NumberAnimation { id:arrival; duration:icon.retiring ? Motion.exit(icon.animations) : Motion.enter(icon.animations); easing.type:Easing.OutCubic }
+    NumberAnimation { id:arrival; duration:icon.retiring ? Motion.exit(icon.animations,icon.animationSpeed) : Motion.enter(icon.animations,icon.animationSpeed); easing.type:Easing.OutCubic }
   }
   Timer { interval:1; running:true; onTriggered:icon.settle() }
 }

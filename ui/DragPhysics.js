@@ -15,7 +15,7 @@ function create(options) {
   return {bodies:{},order:[],area:options.area || {x:0,y:0,width:1920,height:1080},
     snapEdges:options.snapEdges===undefined ? true : options.snapEdges,
     physicsEnabled:options.physicsEnabled===undefined ? true : options.physicsEnabled,
-    animations:options.animations || "full",time:0,accumulator:0,frames:0,
+    animations:options.animations || "full",animationScale:options.animationScale>0 ? options.animationScale : 1,time:0,accumulator:0,frames:0,
     moved:{},activities:{},settlements:{},configKey:"",overcrowded:false}
 }
 function bounds(w,b) {
@@ -152,7 +152,7 @@ function begin(w,b,vx,vy) {
     b.vx=0;b.vy=0
     target=destination(w,b,b.x,b.y,"");b.edge=target.edge;b.targetX=target.x;b.targetY=target.y
     if (!full(w) || !w.snapEdges || Math.hypot(b.x-target.x,b.y-target.y)<.5) { finish(w,b,target);return }
-    b.phase="direct";b.duration=.24
+    b.phase="direct";b.duration=.24*w.animationScale
   } else b.phase="physics"
   b.moving=true;activity(w,b)
 }
@@ -346,7 +346,7 @@ function overlapDepth(w,b) {
 function fallback(w,b) {
   var p=destination(w,b,b.x,b.y,b.edge)
   b.targetX=p.x;b.targetY=p.y;b.edge=p.edge;b.crowded=p.crowded
-  b.startX=b.x;b.startY=b.y;b.startTime=w.time;b.duration=.15;b.phase="fallback";b.vx=0;b.vy=0
+  b.startX=b.x;b.startY=b.y;b.startTime=w.time;b.duration=.15*w.animationScale;b.phase="fallback";b.vx=0;b.vy=0
   if (Math.hypot(b.x-p.x,b.y-p.y)<.5) finish(w,b,p)
 }
 function tick(w,dt) {
