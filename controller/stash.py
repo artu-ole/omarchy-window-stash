@@ -290,7 +290,15 @@ class Stash:
         if to == "current":
             return str(current_ws), current
         monitors = self.hypr.read("monitors")
-        origin_monitor = next((m for m in monitors if monitor_identity(m) == record["monitor"]), None)
+        fingerprint = record.get("monitor") or ""
+        if any(part.strip() for part in fingerprint.split("|")):
+            origin_monitor = next((m for m in monitors if monitor_identity(m) == fingerprint), None)
+        else:
+            # Blank output metadata is not an identity: every headless display
+            # can share it. An absent saved connector must take the slot
+            # fallback even if its workspace migrated to another blank output.
+            origin_name = record.get("monitorName")
+            origin_monitor = next((m for m in monitors if m["name"] == origin_name), None) if origin_name else None
         workspaces = self.hypr.read("workspaces")
         if origin_monitor:
             existing = next((w for w in workspaces if w["id"] == record["origin"]["id"]), None)

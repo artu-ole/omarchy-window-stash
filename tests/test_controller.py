@@ -589,6 +589,84 @@ class ControllerTests(unittest.TestCase):
         self.stash.restore(ident,"original",workspace=2)
         self.assertEqual(self.hypr.clients[0]["workspace"]["id"],3)
 
+    def blank_monitor_fixture(self, name):
+        hypr, stash = self.race_fixture(name)
+        current = monitor("HEADLESS-1", 0)
+        origin = monitor("HEADLESS-2", 1, x=1920)
+        for output in (current, origin):
+            output.update(make="", model="", serial="", description="")
+        current["activeWorkspace"] = dict(id=9, name="9")
+        origin["activeWorkspace"] = dict(id=19, name="19")
+        hypr.monitors = [current, origin]
+        hypr.workspaces = [dict(id=9, name="9", monitor=current["name"]),
+                           dict(id=19, name="19", monitor=origin["name"])]
+        hypr.clients[0].update(monitor=1, workspace=dict(id=19, name="19"))
+        stash.minimize()
+        current["activeWorkspace"] = dict(id=9, name="9")
+        return hypr, stash, current, origin
+
+    def test_disconnected_blank_origin_uses_slot_when_workspace_migrated(self):
+        hypr, stash, current, origin = self.blank_monitor_fixture("blank-disconnected")
+        record = stash.state["windows"][0]
+        self.assertEqual(record["monitor"], "|||")
+        self.assertEqual(record["monitorName"], origin["name"])
+        hypr.monitors = [current]
+        hypr.workspaces[1]["monitor"] = current["name"]
+        target, output = stash.destination(record, "original", current["name"], 9)
+        self.assertEqual((target, output["name"]), ("9", current["name"]))
+        result = stash.restore(record["id"], "original", current["name"], 9)
+        self.assertEqual(result["workspace"]["id"], 9)
+
+    def test_connected_blank_origin_recreates_workspace_on_exact_output(self):
+        hypr, stash, current, origin = self.blank_monitor_fixture("blank-connected")
+        record = stash.state["windows"][0]
+        # Empty original workspaces disappear while the window is parked.
+        # The first blank output in monitors must not substitute for the origin.
+        hypr.workspaces = [hypr.workspaces[0]]
+        target, output = stash.destination(record, "original", current["name"], 9)
+        self.assertEqual((target, output["name"]), ("19", origin["name"]))
+        # A deliberate workspace migration still follows its actual owner while
+        # the origin output remains connected, matching physical-output behavior.
+        hypr.workspaces.append(dict(id=19, name="19", monitor=current["name"]))
+        target, output = stash.destination(record, "original", current["name"], 9)
+        self.assertEqual((target, output["name"]), ("19", current["name"]))
+
+    def test_blank_legacy_origin_without_output_name_uses_slot_fallback(self):
+        hypr, stash, current, origin = self.blank_monitor_fixture("blank-legacy")
+        base = stash.state["windows"][0]
+        for fingerprint in ("|||", "", None):
+            for name in ("", None, "missing"):
+                with self.subTest(fingerprint=fingerprint, name=name):
+                    record = dict(base, monitor=fingerprint)
+                    if name == "missing":
+                        record.pop("monitorName")
+                    else:
+                        record["monitorName"] = name
+                    target, output = stash.destination(record, "original", current["name"], 9)
+                    self.assertEqual((target, output["name"]), ("9", current["name"]))
+        record = dict(base)
+        record.pop("monitor")
+        record.pop("monitorName")
+        target, output = stash.destination(record, "original", current["name"], 9)
+        self.assertEqual((target, output["name"]), ("9", current["name"]))
+
+    def test_physical_origin_fingerprint_survives_connector_rename_and_legacy_name(self):
+        hypr, stash = self.race_fixture("physical-reconnect")
+        hypr.clients[0]["workspace"] = dict(id=13, name="13")
+        stash.minimize()
+        base = stash.state["windows"][0]
+        self.assertNotEqual(base["monitor"], "|||")
+        # The same display can return through a differently named connector.
+        hypr.monitors[0]["name"] = "DP-3"
+        hypr.workspaces = []
+        for missing_name in (False, True):
+            with self.subTest(missing_name=missing_name):
+                record = dict(base)
+                if missing_name:
+                    record.pop("monitorName")
+                target, output = stash.destination(record, "original", "DP-3", 9)
+                self.assertEqual((target, output["name"]), ("13", "DP-3"))
+
     def test_state_survives_controller_recreation(self):
         ident=self.stash.minimize()["id"]
         other=Stash(self.hypr,self.root/"run",self.stash.config,self.root/"state")
