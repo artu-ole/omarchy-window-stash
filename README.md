@@ -173,7 +173,13 @@ Grabbing, menus or unfolding stop momentum; Direct and Reduced/Off keep a rigid
 stack. Motion remains in the usable work area; only resting positions persist.
 
 Still previews capture once when a thumbnail becomes visible; Live refreshes
-visible thumbnails. App groups display windows side by side and scroll when
+visible thumbnails when the application supplies new frames. Some applications
+stop drawing on hidden workspaces. Ghostty 1.4.0 on Hyprland 0.56.2 pauses its
+renderer when the compositor marks the window suspended, so terminal previews
+(including btop) remain still. Enabling `render_unfocused` for that window
+does not override suspension. This remains a known limitation.
+
+App groups display windows side by side and scroll when
 needed. Click a thumbnail to restore that window, right-click for its menu,
 middle-click or use the title's × to close it. Hover never focuses, moves or
 restores windows. Dragging, source motion, menus, settings and workspace changes

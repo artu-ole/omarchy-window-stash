@@ -9,6 +9,17 @@ Qt suites**, manifest validation and QML lint. Python syntax checks cover all
 runtime with a nested Hyprland compositor, real GTK buffers, XWayland and virtual
 outputs; install/uninstall and layout tests did not touch the working desktop.
 
+Subsequent targeted testing found a **known Live preview failure in Ghostty
+1.4.0**: btop remained frozen across five sampled frames, both with and without
+the per-window `render_unfocused` property. Hyprland 0.56.2 marks windows on
+hidden workspaces suspended; Ghostty responds by stopping its renderer. The
+earlier sweep allowed failed pixel refreshes as a note, so its passing status
+did not establish continuous updates for every application. That permissive
+fallback has been removed: fresh Still pixels and two consecutive Live pixel
+changes are now mandatory, alongside unchanged focus and parked geometry.
+The corrected block passes with owned native GTK color fixtures on the working
+desktop. This test correction does not fix Ghostty's suspended renderer.
+
 | Requirement | Evidence |
 |---|---|
 | Controller state, settings, FIFO/LIFO ordering, scope, identity reuse, partial-failure retry, geometry and state recovery | 62 passing Python controller tests |

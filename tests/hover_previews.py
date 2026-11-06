@@ -494,34 +494,22 @@ def main(with_small_output=False):
         hidden(session)
         hover(session, icon_ready(session, window_key(two)), two)
         captured(session, two)
-        fresh_still = wait_color(session, two, 'blue', timeout=1)
+        assert wait_color(session, two, 'blue', timeout=1), 'Reopening Still did not capture the updated client pixels'
         configure('hoverPreview', 'live')
-        wait_color(session, two, 'blue')
+        wait(lambda: preview(session)['image']['live'], 'Live mode did not enable continuous capture')
+        assert wait_color(session, two, 'blue'), 'Live preview did not capture its initial client pixels'
         change_color(session, green)  # blue -> red
-        live_updated = wait_color(session, two, 'red')
+        assert wait_color(session, two, 'red'), 'Live preview did not update after the first client change'
         change_color(session, green)  # red -> green
-        green_restored = wait_color(session, two, 'green')
-        if not green_restored:
-            # A hidden client may stop producing buffers. Recreate only our
-            # owned fixture so that later targeting checks have a known frame.
-            hidden(session)
-            h.dispatch('window.close', window='address:'+green)
-            wait(lambda: not h.client(green), 'Dynamic color fixture did not close')
-            command('list')
-            green = spawn_color(session, 'green')
-            two = session.park(green)
-            hover(session, icon_ready(session, window_key(two)), two)
-            assert_pixels(session, captured(session, two), 'green')
+        assert wait_color(session, two, 'green'), 'Live preview did not update after the second client change'
+        assert current_focus() == baseline_focus, 'Content updates moved focus or switched workspaces'
+        assert all((h.client(address)['at'], h.client(address)['size']) == before for address, before in baseline_geometry.items()), \
+            'Content updates moved or resized a parked client'
         configure('hoverPreview', 'still')
         value = captured(session, two)
-        if green_restored:
-            assert current_focus() == baseline_focus, 'Content updates moved focus or switched workspaces'
+        assert not value['image']['live'], 'Returning to Still kept continuous capture enabled'
         print('PASS still preview holds its captured frame while the owned client changes color', flush=True)
-        if fresh_still and live_updated:
-            print('PASS reopening Still refreshes pixels and Live updates actual parked-client pixels', flush=True)
-        else:
-            print('NOTE hidden GTK client throttled buffer production; fresh Still update:', fresh_still,
-                  'Live pixel update:', live_updated, '(capture mode/identity remain checked)', flush=True)
+        print('PASS reopening Still refreshes pixels and Live updates actual parked-client pixels', flush=True)
         session.move(value['rect']['x']+value['rect']['width']/2, value['rect']['y']+value['rect']['height']/2)
         wait(lambda: preview(session)['hovered'], 'Preview card did not accept pointer hover')
         time.sleep(.35)
