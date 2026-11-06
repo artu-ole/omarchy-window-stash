@@ -779,7 +779,7 @@ PanelWindow {
               {key: "animations", label: "Animations", values: ["full", "reduced", "off"], labels: ["Full", "Reduced", "Off"], section: "motion"},
               {key: "animationSpeed", label: "Animation speed", values: ["slow", "relaxed", "normal", "fast", "ultrafast"], labels: ["Slow (0.5×)", "Relaxed (0.75×)", "Normal", "Fast (1.5×)", "Ultrafast (2.5×)"], section: "motion"},
               {key: "dragMotion", label: "Drag motion", values: ["physics", "direct"], labels: ["Physics", "Direct"], section: "motion"},
-              {key: "floatingAnimation", label: "Unfold animation", values: ["arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop"], labels: ["Arc", "Glide", "Cascade", "Spring", "Swing", "Matryoshka", "Matryoshka hops"], section: "motion"}
+              {key: "floatingAnimation", label: "Unfold animation", values: ["arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop", "jumping"], labels: ["Arc", "Glide", "Cascade", "Spring", "Swing", "Matryoshka", "Matryoshka hops", "Jumping"], section: "motion"}
             ]
             delegate:SettingChoice {}
           }

@@ -268,7 +268,44 @@ function fanSlot(layout, index, first) {
     shown:index>=first && index<first+layout.capacity}
 }
 
+// A linear clock stages anticipation, flight and two damped landing rebounds.
+// Keep deformation inside the tile so frames, artwork and input stay bounded.
+function fanJumpPose(sx, sy, tx, ty, progress, ordinal, layout, area) {
+  var p=Math.max(0,Math.min(1,progress))
+  var result={x:sx,y:sy,bend:0,tilt:0,scale:1,stretchX:1,stretchY:1,jumpPhase:"stacked"}
+  if (p===1) { result.x=tx; result.y=ty; result.jumpPhase="settled"; return result }
+  if (p===0 || (ordinal===0 && sx===tx && sy===ty)) return result
+  var travel=0,bend=0,compression=0
+  var limit=layout.hopLimit===undefined ? layout.curveLimit : layout.hopLimit
+  var sign=layout.horizontal ? -1 : layout.hopSign===1 || layout.hopSign===-1 ? layout.hopSign : layout.curveSign
+  if (p<=.12) {
+    result.jumpPhase="launch"
+    compression=.12*Math.sin(Math.PI*p/.12)
+  } else if (p<.68) {
+    result.jumpPhase="flight"
+    var f=(p-.12)/.56
+    travel=f*f*(3-2*f)
+    bend=Math.sin(Math.PI*f)*limit
+    var impact=Math.max(0,Math.min(1,(f-.85)/.15))
+    compression=-.09*Math.sin(Math.PI*f)+.13*impact*impact*(3-2*impact)
+  } else {
+    result.jumpPhase="landing"
+    var q=(p-.68)/.32,wave=Math.sin(2*Math.PI*q)
+    travel=1
+    bend=limit*.32*Math.pow(1-q,1.3)*wave*wave
+    compression=.13*(1-q)*(1-q)*Math.cos(4*Math.PI*q)
+  }
+  var wide=1+compression*.4,tall=1-compression,fit=Math.max(1,wide,tall)
+  result.stretchX=(layout.horizontal ? wide : tall)/fit
+  result.stretchY=(layout.horizontal ? tall : wide)/fit
+  result.x=Math.max(area.x,Math.min(area.x+area.width-layout.size,sx+(tx-sx)*travel+(layout.horizontal ? 0 : bend*sign)))
+  result.y=Math.max(area.y,Math.min(area.y+area.height-layout.size,sy+(ty-sy)*travel+(layout.horizontal ? bend*sign : 0)))
+  result.bend=bend
+  return result
+}
+
 function fanPose(sx, sy, tx, ty, progress, ordinal, layout, area, style) {
+  if (style==="jumping") return fanJumpPose(sx,sy,tx,ty,progress,ordinal,layout,area)
   var unit=Math.max(0,Math.min(1,progress)),phase=unit>0 && unit<1 ? Math.sin(Math.PI*unit) : 0
   var amplitude=8+Math.max(0,ordinal)*3, tilt=0, shrink=.035
   if (style === "glide") { amplitude=0; shrink=0 }

@@ -40,7 +40,7 @@ assert.equal(motion.duration('reduced', 200, undefined, 'slow'), 0)
 assert.equal(motion.enter('full'), 200); assert.equal(motion.exit('full'), 140); assert.equal(motion.move('full'), 200)
 console.log('Animation speed: five monotonic presets, legacy defaults, accessibility modes and valid duration limits passed')
 
-const styles = ['arc', 'glide', 'cascade', 'spring', 'swing', 'matryoshka', 'matryoshka-hop']
+const styles = ['arc', 'glide', 'cascade', 'spring', 'swing', 'matryoshka', 'matryoshka-hop', 'jumping']
 const area = {x:0, y:26, width:1000, height:700}, anchor = {x:400.375, y:300.625}
 const layout = model.fanLayout(anchor.x+24, anchor.y+24, area, 5, true, 48, 4, 3, 17, 1, 0, anchor)
 
@@ -86,8 +86,12 @@ for (const style of styles) {
         close(pose.x, reference.x, 'Speed changed horizontal trajectory')
         close(pose.y, reference.y, 'Speed changed vertical trajectory')
         close(pose.scale, reference.scale, 'Speed changed transform trajectory')
+        if (style==='jumping') {
+          close(pose.stretchX, reference.stretchX, 'Speed changed squash/stretch horizontally')
+          close(pose.stretchY, reference.stretchY, 'Speed changed squash/stretch vertically')
+        }
       }
     }
   }
 }
-console.log('Animation speed: all seven profiles preserve staggering, shared clocks, bounds and reversal paths at every preset')
+console.log('Animation speed: all eight profiles preserve staggering, shared clocks, bounds and reversal paths at every preset')

@@ -50,6 +50,8 @@ Item {
   property bool ready:false
   property real pageWeight:slotVisible ? 1 : 0
   readonly property alias icon:graphic
+  readonly property real stretchX:jumpStretch.xScale
+  readonly property real stretchY:jumpStretch.yScale
   readonly property bool moving:(sharedMotion && sharedMoving) || spread.running || destinationXAnimation.running || destinationYAnimation.running || pageFade.running
   readonly property real visualProgress:sharedMotion ? sharedProgress : progress
   readonly property real spatialProgress:Motion.full(animations) ? visualProgress : expanded ? 1 : 0
@@ -115,13 +117,20 @@ Item {
     NumberAnimation {
       target:actor; property:"progress"; to:actor.expanded ? 1 : 0
       duration:Math.round(Motion.duration(actor.animations,actor.expanded ? actor.timing.open : actor.timing.close,100,actor.animationSpeed)*actor.remainingFactor)
-      easing.type:!actor.expanded ? Easing.InOutCubic : actor.timing.easing==="back" ? Easing.OutBack : actor.timing.easing==="quint" ? Easing.OutQuint : Easing.OutCubic
+      easing.type:actor.timing.easing==="linear" ? Easing.Linear : !actor.expanded ? Easing.InOutCubic : actor.timing.easing==="back" ? Easing.OutBack : actor.timing.easing==="quint" ? Easing.OutQuint : Easing.OutCubic
       easing.overshoot:actor.timing.overshoot
     }
   }
   StashAnimatedIcon {
     id:graphic
     width:actor.width; height:actor.height
+    transform:Scale {
+      id:jumpStretch
+      origin.x:actor.geometry.horizontal ? graphic.width/2 : actor.geometry.hopSign<0 ? graphic.width : 0
+      origin.y:actor.geometry.horizontal ? graphic.height : graphic.height/2
+      xScale:Motion.full(actor.animations) && actor.pose.stretchX!==undefined ? actor.pose.stretchX : 1
+      yScale:Motion.full(actor.animations) && actor.pose.stretchY!==undefined ? actor.pose.stretchY : 1
+    }
     group:actor.displayGroup
     animations:actor.animations; animationSpeed:actor.animationSpeed
     previewEnabled:actor.previewEnabled

@@ -16,7 +16,7 @@ from native_session import NativeSession
 
 
 STYLES = ('matryoshka', 'matryoshka-hop')
-ALL_STYLES = ('arc', 'glide', 'cascade', 'spring', 'swing', *STYLES)
+ALL_STYLES = ('arc', 'glide', 'cascade', 'spring', 'swing', *STYLES, 'jumping')
 EPSILON = .08
 
 
@@ -138,8 +138,14 @@ def select_native(session, style):
     # Omarchy's dropdown handles arrows rather than Home/End.
     session.keys(*(['-k', 'Up']*len(ALL_STYLES)),
                  *(['-k', 'Down']*ALL_STYLES.index(style)), '-k', 'Return')
-    wait(lambda: shell('status')['settings']['floatingAnimation'] == style,
-         'Native dropdown did not save '+style)
+    try:
+        wait(lambda: shell('status')['settings']['floatingAnimation'] == style,
+             'Native dropdown did not save '+style)
+    except AssertionError as exc:
+        status = shell('status')
+        raise AssertionError(('Native unfold selection was not saved', style,
+                              {'control': control(), 'saved': status['settings'].get('floatingAnimation'),
+                               'error': status.get('error', '')})) from exc
     shell('dismiss')
     session.resting()
 

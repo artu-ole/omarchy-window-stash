@@ -82,12 +82,14 @@ def main():
         for a in windows:park(a)
         w=surface()['usableArea']['width'];ht=surface()['usableArea']['height'];created=dock()['createdIcons']
         anchor(round(w/2),round(ht/2))
-        for index,style in enumerate(('arc','glide','cascade','spring','swing')):
+        styles=('arc','glide','cascade','spring','swing','matryoshka','matryoshka-hop','jumping')
+        for style in (*styles[:5],'jumping'):
+            index=styles.index(style)
             shell('settings')
             def control():return next(c for c in surface()['settingControls'] if c['key']=='floatingAnimation')
             wait(lambda:surface()['dialog']['visible'],'Style settings missing')
             click(control()['rect']);wait(lambda:control()['open'],'Unfold animation dropdown did not open')
-            subprocess.run(['wtype',*(['-k','Up']*5),*(['-k','Down']*index),'-k','Return'],check=True)
+            subprocess.run(['wtype',*(['-k','Up']*len(styles)),*(['-k','Down']*index),'-k','Return'],check=True)
             wait(lambda:shell('status')['settings']['floatingAnimation']==style,'Native style selector did not save '+style)
             shell('dismiss');settle(False)
             for direction in ('vertical','horizontal'):

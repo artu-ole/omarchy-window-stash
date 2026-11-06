@@ -14,10 +14,11 @@ controller; no compiled compositor plugin or additional daemon.
 
 Click the floating stack to fan out the same icons. The front icon stays at its
 original position, with only a small pulse or tilt depending on the style; the
-other icons follow the configured axis toward available screen space. Choose an unfold style in Settings: Arc
-(the original curved motion), Glide (a synchronized straight slide), Cascade
-(staggered icons, folding from the far end), Spring (a weighted overshoot), or
-Swing (a wider arc with a small tilt). Dismissal folds the icons back to their saved
+other icons follow the configured axis toward available screen space. Choose an
+unfold style in Settings: Arc (curved motion), Glide (straight slide), Cascade
+(staggered icons), Spring (weighted overshoot), Swing (a wider arc and tilt),
+Matryoshka / Matryoshka hops (successive stack deposits), or Jumping (squash, hop
+and landing bounce). Dismissal folds the icons back to their saved
 stack position. Leaving the fan starts an 800 ms grace period; returning cancels
 it. Outside clicks fold it immediately and reach the underlying window. Workspace
 changes also collapse the fan. Scroll or drag along the fan to reach overflow;
@@ -133,7 +134,7 @@ omarchy-shell window-stash configure hoverPreview live
 | `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
 | `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock only |
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock only |
-| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`; unfold/fold style, overridden by Reduced/Off |
+| `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`, `jumping`; unfold/fold style, overridden by Reduced/Off |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
 | `dragMotion` | `physics` | `physics`: momentum and gentle collisions; `direct`: direct placement with the existing edge glide |
 | `iconFrame` | `shown` | `shown`, `hidden`; hidden removes border/background and enlarges artwork |
@@ -182,6 +183,10 @@ icon behind at every stop. Matryoshka hops uses the same sequence with an arch
 between stops. The original front icon stays fixed; folding collects the icons
 in reverse. Both follow the floating direction and keep movement inside the
 work area. Reduced/Off use immediate positions instead.
+
+Jumping sends each trailing icon from the stack to its own slot with slight
+squash and stretch and a damped landing bounce. The front icon stays fixed;
+animation speed and Reduced/Off apply as with the other styles.
 
 Horizontal curved styles always arch above the row, whether unfolding left or
 right. Near the top of the work area, arches flatten to fit the available room.
@@ -307,6 +312,7 @@ python3 tests/transparency.py      # rendered alpha, hover, keyboard and persist
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
 python3 tests/floating_panel.py --small-output # fixed background thickness, jumping icons and input
 python3 tests/matryoshka.py --small-output # nested-stack stages, inverse folding, both axes and overflow
+python3 tests/jumping.py           # squash/stretch, landing rebounds, reversal and accessibility
 python3 tests/hover_previews.py --small-output # native captures, hover lifecycle, grouping and bounded placement
 python3 tests/close_actions.py     # isolated ledger: closure, scope and native save prompts
 python3 tests/context_actions.py   # pointer menu, targets, keyboard, click-through and scaled output

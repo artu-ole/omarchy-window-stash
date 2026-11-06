@@ -7,12 +7,12 @@ function library(name) {
   return context
 }
 const model = library('Model'), motion = library('Motion')
-const styles = ['arc', 'glide', 'cascade', 'spring', 'swing', 'matryoshka', 'matryoshka-hop']
+const styles = ['arc', 'glide', 'cascade', 'spring', 'swing', 'matryoshka', 'matryoshka-hop', 'jumping']
 const near = (actual, expected, why) => assert.ok(Math.abs(actual-expected)<1e-7, `${why}: ${actual} != ${expected}`)
 const plain = value => JSON.parse(JSON.stringify(value))
 function eased(time, style) {
   const profile = motion.fanProfile(style)
-  if (profile.chain) return time
+  if (profile.chain || profile.easing==='linear') return time
   if (profile.easing === 'back') {
     const t = time-1, s = profile.overshoot
     return 1+t*t*((s+1)*t+s)

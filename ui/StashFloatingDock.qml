@@ -314,7 +314,7 @@ Item {
     for (var i=0;i<actors.count;i++) {
       var actor=actors.itemAt(i) as StashFanIcon
       if (!actor) continue
-      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,interactive:actor.interactive,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset,stackLag:{x:actor.stackLagX,y:actor.stackLagY,weight:actor.lagWeight}}
+      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,interactive:actor.interactive,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,stretch:{x:actor.stretchX,y:actor.stretchY},jumpPhase:actor.pose.jumpPhase,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset,stackLag:{x:actor.stackLagX,y:actor.stackLagY,weight:actor.lagWeight}}
       states.push(record)
       if ((open || reveal>0) && actor.slotVisible && actor.drawWeight>.01) (actor.retiring ? exiting : icons).push(record)
     }

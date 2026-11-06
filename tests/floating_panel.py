@@ -14,7 +14,7 @@ from live import command, configure, h, shell, wait
 from native_session import NativeSession
 
 
-STYLES = ('arc', 'glide', 'cascade', 'spring', 'swing', 'matryoshka', 'matryoshka-hop')
+STYLES = ('arc', 'glide', 'cascade', 'spring', 'swing', 'matryoshka', 'matryoshka-hop', 'jumping')
 CURVED = ('arc', 'spring', 'swing', 'matryoshka-hop')
 
 
