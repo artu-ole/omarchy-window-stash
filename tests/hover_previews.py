@@ -543,7 +543,9 @@ def main(with_small_output=False):
         assert widths[0] < widths[1] < widths[2], ('Preview size choices did not change card width', widths)
         configure('previewTitles', 'hidden')
         hover(session, icon_ready(session, window_key(two)), two)
-        assert_pixels(session, captured(session, two), 'green')
+        value=captured(session, two)
+        assert all(not tile['closeVisible'] for tile in value['tiles']), 'Hidden titles kept an overlaid close button'
+        assert_pixels(session, value, 'green')
         hidden(session)
         configure('previewTitles', 'shown')
         print('PASS live/still capture modes, three size choices and hidden titles', flush=True)
@@ -559,6 +561,7 @@ def main(with_small_output=False):
                              for address in (red, green, strip_blue)}
         hover(session, source, strip_record)
         value = captured_tiles(session, [strip_record, two, one])
+        assert all(tile['closeVisible'] for tile in value['tiles']), 'A titled thumbnail has no close button'
         assert value['count'] == 3 and len(value['tiles']) == 3 and not value['overflow']
         assert [tile['recordId'] for tile in value['tiles']] == [strip_record['id'], two['id'], one['id']], 'Grouped strip lost newest-first order'
         assert all(not tile['image']['live'] for tile in value['tiles']), 'Grouped Still mode enabled live capture'

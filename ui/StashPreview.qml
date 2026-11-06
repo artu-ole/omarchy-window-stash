@@ -222,7 +222,7 @@ Item {
     width:preview.layout.cardWidth; height:preview.layout.cardHeight
     function details() {
       return {recordId:groupKey,rect:preview.rectOf(tile),imageRect:preview.rectOf(thumbnail),closeRect:preview.rectOf(closeButton),
-        visible:preview.visible && inViewport,image:thumbnail.details()}
+        closeVisible:preview.visible && closeButton.visible,visible:preview.visible && inViewport,image:thumbnail.details()}
     }
     HoverHandler {
       id:tileHover
@@ -268,9 +268,11 @@ Item {
     }
     StashActionButton {
       id:closeButton
+      visible:preview.layout.headerHeight>0 && size>0
       x:parent.width-width-2
-      y:preview.layout.headerHeight>0 ? (preview.layout.headerHeight-height)/2 : 2
-      size:Math.max(0,Math.min(24,parent.width-4,parent.height-4))
+      y:(preview.layout.headerHeight-height)/2
+      size:Math.max(0,Math.min(24,parent.width-4,preview.layout.headerHeight-4))
+      fontSize:Math.max(1,Math.min(preview.fonts.icon,size-4))
       iconText:"×"; tooltipText:"Close window"
       foreground:preview.popupColors.text
       animations:preview.animations; animationSpeed:preview.animationSpeed

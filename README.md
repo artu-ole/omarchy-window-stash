@@ -156,8 +156,9 @@ omarchy-shell window-stash configure hoverPreview live
 
 Preview cards follow the Omarchy popup theme and work across all presentations
 and chooser rows. A collapsed stack previews its front window or app group;
-app groups show their windows side by side, each with its own title and close
-button. Larger groups resize evenly, then scroll horizontally when they exceed
+app groups show their windows side by side, each with its own title and × close
+button when titles are shown. Middle-click closes a window with titles hidden
+as well. Larger groups resize evenly, then scroll horizontally when they exceed
 the available space. Hovering never focuses, moves, or restores a window.
 Pressing or dragging an icon, source motion,
 context menus, settings, and workspace changes dismiss previews. Settings scroll
