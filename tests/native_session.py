@@ -82,7 +82,12 @@ class NativeSession:
         self.resting()
     def __exit__(self,kind,value,trace):
         try:
-            self.pointer.button(False);self.pointer.button(False,273);self.pointer.button(False,274)
+            # A protocol failure can disconnect a test pointer. Desktop state
+            # still needs cleanup when releasing that pointer is impossible.
+            try:
+                self.pointer.button(False);self.pointer.button(False,273);self.pointer.button(False,274)
+            except (OSError, RuntimeError):
+                pass
             shell('dismiss')
             for p in self.processes:
                 if p.poll() is None:p.terminate()
