@@ -617,9 +617,20 @@ PanelWindow {
         font.family: surface.fonts.family
         font.pixelSize: surface.fonts.body
       }
-      ColumnLayout {
-        visible: surface.renderDialogKind === "settings"
-        Layout.fillWidth: true; spacing: surface.metrics.panelGap
+      Flickable {
+        id:settingsViewport
+        visible:surface.renderDialogKind === "settings"
+        Layout.fillWidth:true; Layout.fillHeight:true
+        Layout.preferredHeight:Math.min(contentHeight,Math.max(0,surface.canvasHeight-surface.metrics.popupPadding*2-120))
+        contentWidth:width; contentHeight:settingsContents.implicitHeight
+        boundsBehavior:Flickable.StopAtBounds
+        flickableDirection:Flickable.VerticalFlick
+        clip:true
+        ColumnLayout {
+          id:settingsContents
+          width:Math.max(0,settingsViewport.width-surface.metrics.sm*2)
+          height:implicitHeight
+          spacing:surface.metrics.panelGap
         Repeater {
           id: settingRows
           model: [
@@ -654,6 +665,8 @@ PanelWindow {
             Layout.fillWidth: true
             Text {
               text: settingRow.modelData.label
+              wrapMode:Text.Wrap
+              Layout.minimumWidth:0
               color: surface.popupColors.text
               font.family: surface.fonts.family
               font.pixelSize: surface.fonts.body
@@ -661,7 +674,7 @@ PanelWindow {
             }
             Ui.Dropdown {
               id: settingDropdown
-              Layout.preferredWidth: surface.metrics.dropdownWidth
+              Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
               showLabel: false
               options: settingRow.modelData.values.map(function(value, i) {
                 return {value:value, label:settingRow.modelData.labels[i]}
@@ -681,6 +694,7 @@ PanelWindow {
           Layout.fillWidth:true
           Text {
             text:"Corner radius (px)"
+            wrapMode:Text.Wrap; Layout.minimumWidth:0
             color:surface.popupColors.text
             font.family:surface.fonts.family
             font.pixelSize:surface.fonts.body
@@ -688,8 +702,8 @@ PanelWindow {
           }
           Ui.NumberField {
             id:radiusField
-            Layout.preferredWidth:surface.metrics.dropdownWidth
-            fieldWidth:surface.metrics.dropdownWidth
+            Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+            fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
             from:0; to:64; stepSize:1
             value:surface.config.dockCornerRadius === undefined ? 12 : surface.config.dockCornerRadius
             foreground:surface.popupColors.text
@@ -707,6 +721,7 @@ PanelWindow {
             Layout.fillWidth:true
             Text {
               text:opacityRow.modelData.label
+              wrapMode:Text.Wrap; Layout.minimumWidth:0
               color:surface.popupColors.text
               font.family:surface.fonts.family
               font.pixelSize:surface.fonts.body
@@ -714,8 +729,8 @@ PanelWindow {
             }
             Ui.NumberField {
               id:opacityField
-              Layout.preferredWidth:surface.metrics.dropdownWidth
-              fieldWidth:surface.metrics.dropdownWidth
+              Layout.preferredWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
+              fieldWidth:Math.min(surface.metrics.dropdownWidth,settingsViewport.width*.55)
               from:0; to:100; stepSize:1
               value:surface.config[opacityRow.modelData.key] === undefined ? 100 : surface.config[opacityRow.modelData.key]
               foreground:surface.popupColors.text
@@ -726,12 +741,20 @@ PanelWindow {
         Ui.PanelSeparator { Layout.fillWidth: true; foreground: surface.popupColors.text }
         Text {
           text: "Super+A: minimize focused window\nSuper+Z: restore most recently minimized"
+          wrapMode:Text.Wrap; Layout.fillWidth:true
           color: Qt.darker(surface.popupColors.text, 1.4)
           font.family: surface.fonts.family
           font.pixelSize: surface.fonts.caption
         }
         StashButton { animations:surface.animations; text: "All stashed windows"; focusable: true; foreground: surface.popupColors.text
           onClicked: surface.stash.allWindows(surface.screen.name) }
+        }
+        Controls.ScrollBar.vertical:Controls.ScrollBar {
+          id:settingsScrollbar
+          contentItem:Rectangle { implicitWidth:surface.metrics.sm; radius:Style.cornerRadius
+            color:Style.hoverStateColor(surface.popupColors.text,Commons.Color.accent); opacity:settingsScrollbar.active ? .6 : 0 }
+          background:Item {}
+        }
       }
     }
   }
