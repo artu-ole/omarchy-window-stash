@@ -11,7 +11,13 @@ syntax checks cover all **61 source and test files**. Native suites ran in a
 disposable Bubblewrap home and runtime with a nested Hyprland compositor, real
 GTK, terminal and browser buffers, XWayland and virtual outputs. Installation,
 removal, configuration reload and layout tests used that isolated profile.
-Working-desktop installation and acceptance checks are tracked separately.
+The update was also installed on the working desktop. A preserving acceptance
+check verified seven distinct btop/Ghostty frames, two simultaneously updating
+grouped terminal thumbnails, release on hiding, and no idle rendering. Existing
+windows, stash entries, preferences, focus and runtime monitor geometry were
+restored; Enhanced compatibility is enabled. Configuration-reload recovery was
+verified in the isolated compositor; working-desktop reloads can reposition the
+cursor and dismiss a hover preview.
 
 Standard Live previews remain dependent on application buffer production.
 Enhanced compatibility uses the optional native bridge for only the windows
