@@ -526,6 +526,9 @@ Item {
     z:20000
     x:dock.anchorX; y:dock.anchorY; width:dock.tileSize; height:stackFollow.active ? dock.tileSize : dock.tileSize+dock.stackTail
     enabled:dock.active && !dock.open
+    // The actors paint the stack. Remove this input overlay from hover
+    // delivery while expanded so it cannot mask the stationary first icon.
+    visible:enabled
     readonly property bool previewReady:enabled && !dock.animating && !dock.held && !dock.bodyMoving && !drag.pressed
     onPreviewReadyChanged:if (stackHover.hovered && dock.preview) dock.preview.request(dock.groups[0],handle,previewReady,"floating",null)
     HoverHandler { id:stackHover; onHoveredChanged:if (dock.preview) dock.preview.request(dock.groups[0],handle,hovered,"floating",null) }

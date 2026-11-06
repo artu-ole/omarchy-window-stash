@@ -49,7 +49,7 @@ Item {
   signal restoring()
   x:layout.x; y:layout.y; width:layout.width; height:layout.height
   z:100000
-  visible:reveal>0 && records.length>0
+  visible:reveal>0 && records.length>0 && !pending
   enabled:opened
   opacity:reveal
   clip:true
@@ -59,7 +59,8 @@ Item {
   onHeightChanged:inputChanged()
   onRevealChanged: {
     inputChanged()
-    if (!opened && reveal===0) { sourceGroup=null; selectedId="" }
+    // An outgoing fade can finish while the next icon waits for its delay.
+    if (!opened && reveal===0 && !pending) { sourceGroup=null; selectedId="" }
   }
   onBlockedChanged:if (blocked) dismiss(true)
   onModeChanged:if (!previewEnabled) dismiss(true)
