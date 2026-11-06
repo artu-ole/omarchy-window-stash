@@ -189,6 +189,15 @@ PanelWindow {
     function onDialogScreenChanged() { modelDelay.restart() }
     function onDialogWindowsChanged() { modelDelay.restart() }
     function onDialogQueryChanged() { modelDelay.restart() }
+    function onResetConfirmationChanged() {
+      if (!surface.dialogOpen || surface.renderDialogKind!=="settings") return
+      Qt.callLater(function() {
+        if (!surface.dialogOpen || surface.renderDialogKind!=="settings") return
+        if (surface.stash.resetConfirmation) resetCancel.forceActiveFocus()
+        else if (!surface.stash.resetBusy) resetRequest.forceActiveFocus()
+        else dialog.forceActiveFocus()
+      })
+    }
   }
   function settingItems() {
     var rows=[],repeaters=[generalRows,placementRows,iconRows,dockRows,motionRows,previewRows]
@@ -306,6 +315,9 @@ PanelWindow {
         {key:"previews",title:previewsHeader.text,rect:itemRect(previewsHeader)},
         {key:"shortcuts",title:shortcutsHeader.text,rect:itemRect(shortcutsHeader)}],
       settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight},shortcutControls:shortcutControls,
+      reset:{confirming:stash.resetConfirmation,busy:stash.resetBusy,serial:stash.resetSerial,
+        requestEnabled:resetRequest.enabled,confirmEnabled:resetConfirm.enabled,
+        requestRect:itemRect(resetRequest),cancelRect:itemRect(resetCancel),confirmRect:itemRect(resetConfirm),confirmationRect:itemRect(resetPane)},
       opacityControls:opacityControls,
       cornerControl:{visible:radiusRow.visible,value:radiusRow.numberField.value,rect:itemRect(radiusRow.numberField.field)},
       floatingDock:floatingDock.details(),
@@ -661,7 +673,10 @@ PanelWindow {
       if (search.visible) search.forceActiveFocus()
       else dialog.forceActiveFocus()
     })
-    Keys.onEscapePressed: surface.stash.closeDialog()
+    Keys.onEscapePressed: {
+      if (surface.stash.resetConfirmation) surface.stash.cancelResetSettings()
+      else surface.stash.closeDialog()
+    }
     MouseArea { anchors.fill: parent } // Keep clicks on card padding inside the dialog.
     ColumnLayout {
       id: contents
@@ -674,7 +689,7 @@ PanelWindow {
       RowLayout {
         Layout.fillWidth: true
         Text {
-          text: surface.renderDialogKind === "settings" ? "Window Stash settings" : surface.renderDialogKind === "picker" ? "Stashed windows" : "Window Stash"
+          text: surface.renderDialogKind === "settings" ? surface.stash.resetConfirmation ? "Reset settings?" : "Window Stash settings" : surface.renderDialogKind === "picker" ? "Stashed windows" : "Window Stash"
           textFormat: Text.PlainText
           color: surface.popupColors.text
           font.family: surface.fonts.family
@@ -759,7 +774,8 @@ PanelWindow {
       }
       Flickable {
         id:settingsViewport
-        visible:surface.renderDialogKind === "settings"
+        visible:surface.renderDialogKind === "settings" && !surface.stash.resetConfirmation
+        enabled:!surface.stash.resetBusy
         Layout.fillWidth:true; Layout.fillHeight:true
         Layout.preferredHeight:Math.min(contentHeight,Math.max(0,surface.canvasHeight-surface.metrics.popupPadding*2-120))
         contentWidth:width; contentHeight:settingsContents.implicitHeight
@@ -872,6 +888,52 @@ PanelWindow {
             color:Style.hoverStateColor(surface.popupColors.text,Commons.Color.accent); opacity:settingsScrollbar.active ? .6 : 0 }
           background:Item {}
         }
+      }
+      ColumnLayout {
+        id:resetPane
+        visible:surface.renderDialogKind==="settings" && surface.stash.resetConfirmation
+        Layout.fillWidth:true
+        spacing:surface.metrics.rowGap
+        Text {
+          Layout.fillWidth:true
+          text:"Reset all Window Stash settings to their defaults, including keyboard shortcuts? Stashed windows and saved icon positions will be kept."
+          textFormat:Text.PlainText
+          wrapMode:Text.Wrap
+          color:surface.popupColors.text
+          font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+        }
+        RowLayout {
+          Layout.fillWidth:true
+          spacing:surface.metrics.sm
+          Item { Layout.fillWidth:true }
+          StashButton {
+            id:resetCancel
+            text:"Cancel"; focusable:true
+            enabled:!surface.stash.resetBusy
+            animations:surface.animations; animationSpeed:surface.animationSpeed
+            foreground:surface.popupColors.text
+            onClicked:surface.stash.cancelResetSettings()
+          }
+          StashButton {
+            id:resetConfirm
+            text:"Reset to defaults"; focusable:true
+            enabled:!surface.stash.settingsBusy
+            animations:surface.animations; animationSpeed:surface.animationSpeed
+            foreground:surface.popupColors.text
+            onClicked:surface.stash.resetSettings()
+          }
+        }
+      }
+      Ui.PanelSeparator { visible:surface.renderDialogKind==="settings" && !surface.stash.resetConfirmation; Layout.fillWidth:true; foreground:surface.popupColors.text }
+      StashButton {
+        id:resetRequest
+        visible:surface.renderDialogKind==="settings" && !surface.stash.resetConfirmation
+        text:surface.stash.resetBusy ? "Resetting…" : "Reset to defaults"
+        enabled:!surface.stash.settingsBusy && surface.stash.deferredSettings.length===0
+        focusable:true
+        animations:surface.animations; animationSpeed:surface.animationSpeed
+        foreground:surface.popupColors.text
+        onClicked:surface.stash.askResetSettings()
       }
     }
   }

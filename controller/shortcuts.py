@@ -244,6 +244,44 @@ def configure(config_path, key, value, runner=None, binary=None):
     return {"ok": True, "key": key, "binding": chord, "shortcuts": desired}
 
 
+def reset_settings(config_path, defaults, runner=None, binary=None):
+    """Reset plugin preferences and managed bindings as one guarded edit.
+
+    Only the supplied canonical settings belong to this transaction. Preserve
+    host metadata, other plugins and unrelated concurrent edits in the latest
+    file, but reject changes to settings the reset would otherwise overwrite.
+    """
+    path = _config_path(config_path)
+    runner = runner or _run
+    defaults = dict(defaults)
+
+    def managed_stamp(entry):
+        return json.dumps({key: entry[key] for key in defaults if key in entry},
+                          sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    with _locked(path):
+        _, entry = _read(path)
+        previous = settings(entry)
+        before = managed_stamp(entry)
+        binds, owned = _runtime(runner)
+        desired = validate(defaults, binds, owned)
+        _apply(desired, runner, binary)
+        try:
+            data, latest = _read(path)
+            if managed_stamp(latest) != before:
+                raise RuntimeError("Settings changed during the reset; try again")
+            latest.update(defaults)
+            _atomic_json(path, data)
+        except (OSError, RuntimeError, ValueError) as error:
+            try:
+                _apply(previous, runner, binary)
+            except (OSError, RuntimeError, ValueError) as rollback:
+                raise RuntimeError("Settings reset failed: " + str(error)
+                                   + "; could not restore previous shortcuts: " + str(rollback)) from error
+            raise
+    return {"ok": True, "action": "settings-reset", "settings": defaults, "shortcuts": desired}
+
+
 def sync(config_path=None, runner=None, binary=None):
     path = _config_path(config_path)
     runner = runner or _run

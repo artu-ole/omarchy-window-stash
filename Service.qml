@@ -38,10 +38,17 @@ Item {
   readonly property string shortcutStamp:JSON.stringify(shortcutKeys.map(function(key) { return snapshot.settings[key] }))
   property var deferredSettings:[]
   property string shortcutSyncError:""
+  property bool resetConfirmation:false
+  property bool resetting:false
+  property int resetSerial:0
+  readonly property bool resetBusy:resetting || (worker.running && runningArgs[0]==="reset-settings")
+    || queue.some(function(args) { return args[0]==="reset-settings" })
+  readonly property bool settingsBusy:resetBusy || shortcutsBusy
   onShortcutStampChanged:shortcutSyncDelay.restart()
 
   signal pointerClicked(real x,real y)
   signal shortcutConfigured(string key,string value)
+  signal settingsReset()
   Timer { id:shortcutSyncDelay; interval:0; onTriggered:root.enqueue(["shortcuts-sync"]) }
   StashClickObserver {
     id:clickObserver
@@ -83,6 +90,7 @@ Item {
   function openContext(group,name,point) {
     var m=screenMonitor(name)
     if (!m || !group) return
+    resetConfirmation=false
     contextScreen=name; contextWorkspace=invocationWorkspace(name)
     contextPoint=Qt.point(point.x,point.y)
     contextGroup=Object.assign({},group,{windows:group.windows.slice()})
@@ -151,9 +159,14 @@ Item {
       }
     }
     if (runningArgs[0]==="shortcut") pendingRefresh=true
+    if (runningArgs[0]==="reset-settings") {
+      if (resetting && !lastError) lastError="Could not confirm the settings reset"
+      resetting=false; pendingRefresh=true
+    }
     Qt.callLater(pump)
   }
   function openDialog(kind, name, windows, group) {
+    resetConfirmation=false
     closeContext()
     var m = screenMonitor(name)
     if (!m) return
@@ -165,7 +178,18 @@ Item {
     dialogDestination = ""
     dialogKind = kind
   }
-  function closeDialog() { dialogKind = ""; dialogGroup = null; dialogQuery = "" }
+  function closeDialog() { resetConfirmation=false; dialogKind = ""; dialogGroup = null; dialogQuery = "" }
+  function askResetSettings() {
+    if (dialogKind!=="settings" || settingsBusy || deferredSettings.length) return
+    lastError=""; resetConfirmation=true
+  }
+  function cancelResetSettings() { resetConfirmation=false }
+  function resetSettings() {
+    if (dialogKind!=="settings" || !resetConfirmation || settingsBusy || deferredSettings.length) return
+    resetConfirmation=false; resetting=true; resetSerial++
+    deferredSettings=[]; lastError=""; shortcutSyncError=""
+    enqueue(["reset-settings","--confirm"])
+  }
   function restoreWindow(id, destination) {
     var m = screenMonitor(dialogScreen)
     if (!m) return
@@ -193,6 +217,7 @@ Item {
   }
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
+    if (resetBusy || resetConfirmation) return
     shortcutSyncError=""
     if (shortcutKeys.indexOf(key)>=0) {
       lastError=""
@@ -230,7 +255,7 @@ Item {
     refresh()
   }
   function applyDeferredSettings() {
-    if (shortcutsBusy || !deferredSettings.length) return
+    if (settingsBusy || resetConfirmation || !deferredSettings.length) return
     var edits=deferredSettings.slice(); deferredSettings=[]
     edits.forEach(function(edit) { root.setting(edit[0],edit[1]) })
   }
@@ -292,6 +317,13 @@ Item {
               settings[result.key]=result.binding; next.settings=settings; root.snapshot=next
               root.shortcutConfigured(result.key,result.binding)
             }
+            if (root.runningArgs[0]==="reset-settings" && result.action==="settings-reset" && result.settings) {
+              var resetSnapshot=Object.assign({},root.snapshot)
+              resetSnapshot.settings=Object.assign({},result.settings)
+              root.snapshot=resetSnapshot
+              root.resetting=false
+              root.settingsReset()
+            }
           }
           if (root.runningArgs[0]==="close") root.pendingRefresh=true
         } catch (error) {
@@ -337,6 +369,7 @@ Item {
     target: "window-stash"
     function status(): string {
       return JSON.stringify({loaded: true, windows: root.snapshot.windows.length, settings: root.snapshot.settings,
+        reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,
         screens: root.snapshot.monitors.map(function(m) { return m.name }), dialog: root.contextOpen ? "menu" : root.dialogKind, context:{open:root.contextOpen,screen:root.contextScreen,workspace:root.contextWorkspace,ids:root.contextIds}, pendingCloseIds:Object.keys(root.pendingCloseIds), error: root.lastError,
         queueLength: root.queue.length, controllerBusy: worker.running,

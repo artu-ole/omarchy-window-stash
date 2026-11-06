@@ -65,6 +65,7 @@ Implemented and installed on Omarchy 4.0.6-1 / Hyprland 0.56.2.
 | Dock overflow | Fourteen entries on a 640×480 virtual output; real pointer drag scrolls without restoring a window |
 | Omarchy theme and shared controls | Native buttons, dropdowns, search, and tooltips; live Tokyo Night visual check, all four dropdowns and external-setting synchronization, grouped bubble search/Enter restore, context restore and dock click |
 | Organized settings | Six native Omarchy header groups: General, Placement, Appearance, Motion, Previews and Keyboard shortcuts. Live checks cover all 20 dropdowns, section order, preserved values, conditional controls across static/bubble/floating modes, numeric placement, native dropdown editing and access to the final shortcut field; original preferences, stash, focus and monitor geometry restored |
+| Confirmed settings reset | Native Cancel/default Enter/Escape/outside dismissal, fresh confirmation on reopen, one-shot confirmation, all canonical preferences and active managed shortcuts restored, with stash, positions and client geometry preserved. Twelve Python checks cover mandatory CLI confirmation, default binding conflicts, persistence rollback, concurrent edits, host metadata and file permissions |
 | Safe removal and reinstall | Removal restores a parked window and removes bindings/integration; reinstall reloads successfully |
 
 The live suites use disposable GTK windows and headless virtual outputs. The
@@ -76,7 +77,7 @@ Commands: `python3 tools/check.py`, `python3 tests/live.py`,
 `python3 tests/layouts_monitors.py`, `python3 tests/ui_lifecycle.py`, and
 `python3 tests/overflow.py`, `python3 tests/themed_ui.py`, and
 `python3 tests/scrolling_width.py`, `python3 tests/icon_shapes.py`, and
-`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, and `python3 tests/animation_speed.py`, and `python3 tests/stack_follow.py`, and `python3 tests/floating_panel.py --small-output`, and `python3 tests/shortcuts.py`, and `python3 tests/jumping.py`, and `python3 tests/sizing.py`. Pinned restoration and workspace-ID event handling
+`python3 tests/floating_dock.py`, and `python3 tests/floating_direction.py`, `python3 tests/dock_sides.py`, `python3 tests/floating_placement.py`, `python3 tests/dock_corners.py`, `python3 tests/frame_visibility.py`, `python3 tests/hover_feedback.py`, `python3 tests/animation_modes.py`, `python3 tests/transparency.py`, `python3 tests/floating_fan.py`, `python3 tests/close_actions.py`, `python3 tests/context_actions.py`, `python3 tests/middle_close.py`, `python3 tests/drag_physics.py`, `python3 tests/matryoshka.py --small-output`, and `python3 tests/hover_previews.py --small-output`, and `python3 tests/animation_speed.py`, and `python3 tests/stack_follow.py`, and `python3 tests/floating_panel.py --small-output`, and `python3 tests/shortcuts.py`, and `python3 tests/jumping.py`, and `python3 tests/sizing.py`, and `python3 tests/reset_settings.py`. Pinned restoration and workspace-ID event handling
 were additionally checked directly against the live compositor.
 
 Validation did not upgrade system packages or modify packaged Omarchy files.
@@ -92,14 +93,14 @@ and [Omarchy shell contract](https://github.com/omacom/omarchy/blob/quattro/docs
 
 | Local requirement | Result |
 |---|---|
-| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.22.0`; installed Omarchy validator passes |
+| One root manifest and matching entry point | Schema 1, service kind, `Service.qml`, version `1.23.0`; installed Omarchy validator passes |
 | Namespaced third-party ID | `community.window-stash` is outside reserved `omarchy.*`; no exact match in current registry data, including retired IDs; recheck before submitting |
 | Author and license | `artu-ole` in the manifest and project copyright; SPDX `AGPL-3.0-only` and the full root AGPL license; integration excerpts attributed in `THIRD_PARTY_NOTICES.md` |
 | Documentation | Root README covers dependencies, manual setup, updates, settings, recovery, removal, user-file changes, and local metadata |
 | Consent before configuration edits | Helper displays its plan and prompts before any writes; non-interactive runs require explicit `--yes`; refusal and consent tests pass |
 | File layout | No symlinks, bundled executables, credentials, or private runtime data in the source folder |
 | Shared UI | Uses installed Omarchy theme tokens and UI components; icons are looked up locally rather than bundled |
-| Checks after publishing preparation | 82 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
+| Checks after publishing preparation | 94 Python tests, model checks, publishing metadata checks, manifest validation, and Qt6 QML lint pass |
 
 The current installation path requires manual setup. Generic `omarchy plugin
 add` does not install the controller wrapper or shortcuts, and generic removal

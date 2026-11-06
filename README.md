@@ -103,6 +103,10 @@ Explicit overrides already in that block are retained until uninstallation.
 Settings are grouped into General, Placement, Appearance, Motion, Previews, and
 Keyboard shortcuts. Controls follow the selected mode; preview timing and dock
 corner controls stay with their related options.
+Reset all settings asks for confirmation, then restores every preference and
+default shortcut. Parked windows and saved floating positions are retained.
+The CLI equivalent is `window-stash reset-settings --confirm`. A conflict with
+another desktop shortcut leaves the existing settings and bindings intact.
 Open settings or the global recovery chooser even when the stash is empty:
 
 ```sh
@@ -326,6 +330,7 @@ python3 tests/middle_close.py      # pending icons, grouped close and cancellati
 python3 tests/drag_physics.py      # real flicks, collisions, catching, edges and saved positions
 python3 tests/stack_follow.py      # trailing stack springs, speed presets and unfold handoff
 python3 tests/sizing.py            # size presets, artwork/input, resizing and small-output overflow
+python3 tests/reset_settings.py    # confirmation, cancellation, defaults and preserved window state
 ```
 
 Non-graphical checks require Node.js, `qs`, Qt6 `qmllint`, and Omarchy's validator

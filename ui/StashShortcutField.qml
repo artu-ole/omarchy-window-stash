@@ -28,6 +28,7 @@ ColumnLayout {
     input.text=binding; dirty=false; awaiting=false; submittedText=""
   }
   function submit(value) {
+    if (stash.resetBusy || stash.resetConfirmation) return
     input.text=value
     dirty=value!==binding
     if (!dirty && !stash.lastError) { awaiting=false; submittedText=""; return }
@@ -60,6 +61,7 @@ ColumnLayout {
     target:shortcut.stash
     ignoreUnknownSignals:true
     function onShortcutConfigured(key,value) { shortcut.acknowledged(key,value) }
+    function onSettingsReset() { shortcut.resetDraft() }
     function onLastErrorChanged() {
       if (shortcut.stash.lastError!=="") { shortcut.awaiting=false; shortcut.submittedText="" }
     }

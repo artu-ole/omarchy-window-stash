@@ -545,6 +545,8 @@ def main(argv=None):
     shortcut.add_argument("key",choices=tuple(shortcuts.DEFAULT_SHORTCUTS))
     shortcut.add_argument("binding")
     sub.add_parser("shortcuts-sync",help="Synchronize managed shortcuts with saved settings")
+    reset = sub.add_parser("reset-settings",help="Reset all plugin preferences and shortcuts")
+    reset.add_argument("--confirm",action="store_true",help="Confirm resetting all Window Stash settings")
     pos = sub.add_parser("position")
     pos.add_argument("monitor")
     pos.add_argument("key")
@@ -555,6 +557,12 @@ def main(argv=None):
     rebase.add_argument("new", type=int)
     args = parser.parse_args(argv)
     try:
+        if args.command == "reset-settings":
+            if not args.confirm:
+                raise ValueError("Resetting settings requires --confirm")
+            result = shortcuts.reset_settings(None, DEFAULTS)
+            print(json.dumps(result))
+            return 0
         stash = Stash()
         if args.command in ("shortcut","shortcuts-sync"):
             result=shortcuts.configure(stash.config,args.key,args.binding) if args.command=="shortcut" else shortcuts.sync(stash.config)
