@@ -94,9 +94,9 @@ Item {
   readonly property bool openingMotion:open && (actorsMoving || chainAnimation.running || revealAnimation.running)
   readonly property bool animating:actorsMoving || stackFollow.active || chainAnimation.running || revealAnimation.running || handleAnimation.running || tailAnimation.running || iconModel.busy
   readonly property bool present:active || handleOpacity>0 || reveal>0 || actorsMoving
-  readonly property var currentRects:actorRects(false)
+  readonly property var panelRects:Model.fanPanelRects(actorRects(false,true),geometry)
   readonly property var finalRects:actorRects(true)
-  readonly property var bounds:Model.fanBounds(currentRects,inset,endInset,horizontal,usableArea)
+  readonly property var bounds:Model.fanBounds(panelRects,inset,endInset,horizontal,usableArea)
   readonly property var finalBounds:Model.fanBounds(finalRects,inset,endInset,horizontal,usableArea)
   signal inputChanged()
   signal iconExited(string key,int frames)
@@ -124,6 +124,11 @@ Item {
   }
   function panelContains(x,y) {
     if (preview && preview.fromFloating && preview.containsPoint(x,y)) return true
+    // Interactive icons can be airborne outside the fixed-thickness panel.
+    for (var i=0;i<actors.count;i++) {
+      var actor=actors.itemAt(i) as StashFanIcon
+      if (actor && actor.interactive && Model.iconContains(x-actor.x,y-actor.y,actor.width,actor.icon.inputShape,actor.icon.hitRadius)) return true
+    }
     var px=x-panel.x,py=y-panel.y,r=panel.radius
     if (px<0 || py<0 || px>panel.width || py>panel.height) return false
     var dx=Math.max(r-px,0,px-panel.width+r),dy=Math.max(r-py,0,py-panel.height+r)
@@ -215,12 +220,16 @@ Item {
     for (var i=0;i<actors.count;i++) { var actor=actors.itemAt(i) as StashFanIcon; if (actor && actor.moving) return true }
     return false
   }
-  function actorRects(finalPose) {
+  function actorRects(finalPose,panelPose) {
     var result=[]
     for (var i=0;i<actors.count;i++) {
       var actor=actors.itemAt(i) as StashFanIcon
       if (!actor || actor.retiring || (finalPose ? !actor.slotVisible : actor.drawWeight<.01)) continue
-      result.push({x:finalPose ? actor.destinationX : actor.x,y:finalPose ? actor.destinationY : actor.y,width:tileSize,height:tileSize})
+      // Destinations themselves animate during paging; target chrome and
+      // preview clearance use the settled slots rather than those tweens.
+      var slot=finalPose ? Model.fanSlot(geometry,actor.ordinal,firstIndex) : null
+      result.push({x:finalPose ? slot.x : panelPose ? actor.basePose.x : actor.x,
+        y:finalPose ? slot.y : panelPose ? actor.basePose.y : actor.y,width:tileSize,height:tileSize})
     }
     return result
   }
@@ -305,7 +314,7 @@ Item {
     for (var i=0;i<actors.count;i++) {
       var actor=actors.itemAt(i) as StashFanIcon
       if (!actor) continue
-      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset,stackLag:{x:actor.stackLagX,y:actor.stackLagY,weight:actor.lagWeight}}
+      var record={key:actor.group.key,x:actor.x,y:actor.y,width:actor.width,height:actor.height,appearance:actor.icon.appearance(),progress:actor.visualProgress,moving:actor.moving,interactive:actor.interactive,frames:actor.motionFrames,maxBend:actor.maxBend,maxTilt:actor.maxTilt,minScale:actor.minScale,peakProgress:actor.peakProgress,rotation:actor.rotation,scale:actor.scale,slotVisible:actor.slotVisible,ordinal:actor.ordinal,chainSlot:actor.pose.slot,poseStage:actor.pose.stage,poseSettled:actor.pose.settled,groupOffset:actor.pose.groupOffset,stackLag:{x:actor.stackLagX,y:actor.stackLagY,weight:actor.lagWeight}}
       states.push(record)
       if ((open || reveal>0) && actor.slotVisible && actor.drawWeight>.01) (actor.retiring ? exiting : icons).push(record)
     }
@@ -396,7 +405,8 @@ Item {
     visible:dock.reveal>0
     opacity:dock.reveal
     frameOpacity:panelFeedback.opacityProgress
-    radius:dock.dockFrameVisible ? Model.fanRadius(dock.bounds,dock.currentRects,dock.targetRadius,dock.borderWidth) : 0
+    radius:dock.dockFrameVisible ? Math.min(dock.bounds.width/2,dock.bounds.height/2,
+      Model.fanRadius(dock.finalBounds,dock.finalRects,dock.targetRadius,dock.borderWidth)) : 0
     color:dock.dockFrameVisible ? dock.popupColors.background : "transparent"
     borderSpec:dock.dockFrameVisible ? dock.panelBorder : Border.none()
     onXChanged:dock.inputChanged()

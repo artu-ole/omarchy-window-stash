@@ -8,6 +8,19 @@ function iconRadius(shape, size, bubble, themeRadius) {
   return bubble ? size / 2 : themeRadius
 }
 
+// Match StashIconRegion, including its integer superellipse scanlines.
+function iconContains(x, y, size, shape, radius) {
+  if (size<=0 || x<0 || y<0 || x>=size || y>=size) return false
+  if (shape==="squircle") {
+    return squircleBands(size,size).some(function(band) {
+      return y>=band.y && y<band.y+band.height && x>=band.x && x<band.x+band.width
+    })
+  }
+  radius=Math.max(0,Math.min(size/2,radius || 0))
+  var dx=Math.max(radius-x,0,x-size+radius),dy=Math.max(radius-y,0,y-size+radius)
+  return dx*dx+dy*dy<=radius*radius
+}
+
 function alignedIconSize(frame, desired, scale) {
   scale = Math.max(1, Number(scale) || 1)
   var framePixels = Math.round(frame * scale)
@@ -330,6 +343,20 @@ function fanChainPose(sx, sy, tx, ty, progress, ordinal, layout, area, style, fi
   result.y=Math.max(area.y,Math.min(area.y+area.height-layout.size,y))
   result.bend=bend; result.groupOffset=tail; result.slot=stage+ease
   return result
+}
+
+// Chrome follows the straight row/column, independently of airborne artwork.
+// Capping elastic travel at the last slot prevents a rebound in panel length.
+function fanPanelRects(rects, layout) {
+  if (!layout.capacity) return []
+  var distance=layout.sign*Math.max(0,layout.capacity-1)*layout.step
+  var minX=layout.x+(layout.horizontal ? Math.min(0,distance) : 0)
+  var maxX=layout.x+(layout.horizontal ? Math.max(0,distance) : 0)
+  var minY=layout.y+(layout.horizontal ? 0 : Math.min(0,distance))
+  var maxY=layout.y+(layout.horizontal ? 0 : Math.max(0,distance))
+  return rects.map(function(r) {
+    return {x:Math.max(minX,Math.min(maxX,r.x)),y:Math.max(minY,Math.min(maxY,r.y)),width:layout.size,height:layout.size}
+  })
 }
 
 function fanBounds(rects, inset, endInset, horizontal, area) {

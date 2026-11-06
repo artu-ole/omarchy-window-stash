@@ -167,6 +167,9 @@ between stops. The original front icon stays fixed; folding collects the icons
 in reverse. Both follow the floating direction and keep movement inside the
 work area. Reduced/Off use immediate positions instead.
 
+The floating dock background keeps a fixed thickness while growing along the
+row or column; jumping icons move freely above it without stretching its frame.
+
 With Physics and Full animations, floating icons and the collapsed stack's front
 icon track the pointer directly, then coast after a flick. Icons gently nudge one
 another; edge mode docks near the predicted stopping point and free mode coasts
@@ -277,6 +280,7 @@ python3 tests/animation_modes.py   # native Full / Reduced / Off lifecycles
 python3 tests/animation_speed.py   # speed presets, duration scaling and live changes
 python3 tests/transparency.py      # rendered alpha, hover, keyboard and persistence
 python3 tests/floating_fan.py      # pointer alignment, persistent actors, curves and dismissal
+python3 tests/floating_panel.py --small-output # fixed background thickness, jumping icons and input
 python3 tests/matryoshka.py --small-output # nested-stack stages, inverse folding, both axes and overflow
 python3 tests/hover_previews.py --small-output # native captures, hover lifecycle, grouping and bounded placement
 python3 tests/close_actions.py     # isolated ledger: closure, scope and native save prompts
