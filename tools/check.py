@@ -20,6 +20,13 @@ for name in ('README.md','LICENSE','THIRD_PARTY_NOTICES.md'):
         raise SystemExit('Missing publication document: '+name)
 print('Publishing metadata and documents passed',flush=True)
 
+# Native suites are not imported by unittest discovery. Compile them without
+# execution so syntax errors cannot hide until desktop automation starts.
+sources=sorted(p for directory in ('controller','tests','tools') for p in (ROOT/directory).rglob('*.py'))
+for source in sources:
+    compile(source.read_text(),str(source.relative_to(ROOT)),'exec',dont_inherit=True)
+print(f'Python syntax passed for {len(sources)} source and test files',flush=True)
+
 run('python3','-m','unittest','discover','-s','tests','-v')
 run('node','tests/model.test.cjs')
 run('node','tests/matryoshka.test.cjs')
