@@ -118,6 +118,72 @@ class ControllerTests(unittest.TestCase):
         self.settings(scope="global")
         self.assertEqual(self.stash.restore_last()["id"],second)
 
+    def test_fifo_uses_stash_order_and_preserves_lifo(self):
+        self.hypr.clients.extend([client("0x2"),client("0x3")])
+        with patch('stash.time.time_ns',side_effect=[100,200,300]):
+            first=self.stash.minimize("0x1")["id"]
+            second=self.stash.minimize("0x2")["id"]
+            third=self.stash.minimize("0x3")["id"]
+        # The ledger's array order is not the user's stash order.
+        self.stash.state["windows"].reverse()
+        self.assertEqual(self.stash.restore_oldest()["id"],first)
+        self.assertEqual(self.stash.restore_last()["id"],third)
+        self.assertEqual(self.stash.restore_oldest()["id"],second)
+        self.assertEqual(self.stash.restore_oldest(),dict(ok=True,action="noop"))
+
+    def test_fifo_respects_invoking_workspace_and_global_scope(self):
+        self.hypr.clients[0]["workspace"]=dict(id=2,name="2")
+        first=self.stash.minimize("0x1")["id"]
+        self.hypr.clients.extend([client("0x2"),client("0x3")])
+        second=self.stash.minimize("0x2")["id"]
+        third=self.stash.minimize("0x3")["id"]
+        self.hypr.monitors[0]["activeWorkspace"]=dict(id=4,name="4")
+        self.settings(scope="workspace")
+        self.assertEqual(self.stash.restore_oldest(monitor="eDP-2",workspace=1)["id"],second)
+        self.assertEqual(self.stash.restore_oldest(workspace=1)["id"],third)
+        self.assertEqual(self.stash.restore_oldest(workspace=1)["action"],"noop")
+        self.assertEqual(self.hypr.client("0x1")["workspace"]["name"],SPECIAL)
+        self.settings(scope="global")
+        self.assertEqual(self.stash.restore_oldest(workspace=7)["id"],first)
+        self.assertEqual(self.hypr.client("0x1")["workspace"]["id"],7)
+
+    def test_fifo_skips_closed_and_reused_oldest_windows(self):
+        self.hypr.clients.extend([client("0x2"),client("0x3")])
+        self.stash.minimize("0x1")
+        self.stash.minimize("0x2")
+        third=self.stash.minimize("0x3")["id"]
+        self.hypr.clients.remove(self.hypr.client("0x1"))
+        self.hypr.client("0x2")["pid"]=101
+        self.assertEqual(self.stash.restore_oldest()["id"],third)
+        self.assertEqual(self.hypr.client("0x2")["workspace"]["name"],SPECIAL)
+        self.assertEqual(self.stash.state["windows"],[])
+
+    def test_fifo_retries_oldest_after_partial_restore_failure(self):
+        first=self.stash.minimize("0x1")["id"]
+        self.hypr.clients.append(client("0x2"))
+        second=self.stash.minimize("0x2")["id"]
+        self.hypr.fail="window.float"
+        with self.assertRaises(RuntimeError):self.stash.restore_oldest()
+        self.assertEqual({r["id"] for r in self.stash.state["windows"]},{first,second})
+        self.hypr.fail=None
+        self.assertEqual(self.stash.restore_oldest()["id"],first)
+        self.assertEqual(self.stash.restore_oldest()["id"],second)
+
+    def test_fifo_destination_setting_and_cli_override(self):
+        self.hypr.clients[0]["workspace"]=dict(id=2,name="2")
+        first=self.stash.minimize("0x1")["id"]
+        self.hypr.clients.append(client("0x2",workspace=3))
+        second=self.stash.minimize("0x2")["id"]
+        self.settings(restoreDestination="original")
+        self.assertEqual(self.stash.restore_oldest(workspace=7)["id"],first)
+        self.assertEqual(self.hypr.client("0x1")["workspace"]["id"],2)
+        with patch('stash.Stash',return_value=self.stash),patch('sys.stdout',new_callable=io.StringIO) as output:
+            code=main(['restore-oldest','--to','current','--monitor','eDP-2','--workspace','7'])
+        result=json.loads(output.getvalue())
+        self.assertEqual(code,0)
+        self.assertEqual(result["id"],second)
+        self.assertEqual(result["workspace"]["id"],7)
+
     def test_drag_motion_setting_and_legacy_default(self):
         self.settings(presentation="bubbles")
         self.assertEqual(self.stash.settings()["dragMotion"], "physics")

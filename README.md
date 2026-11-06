@@ -224,6 +224,7 @@ result/error); failures exit nonzero.
 ```sh
 window-stash minimize                          # optional: --address ADDRESS
 window-stash restore-last                      # optional: --to current|original
+window-stash restore-oldest                    # FIFO; same scope and destination options
 window-stash restore ID --to original          # ID or live window address
 window-stash restore-all --to current          # global recovery, ignores scope
 window-stash close ID [ID ...]                 # only owned stashed windows

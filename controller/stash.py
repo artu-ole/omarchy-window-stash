@@ -386,6 +386,12 @@ end''' % (lua("address:"+address), lua(destination), lua(width))
         choices = eligible(self.state["windows"], current, self.settings()["scope"])
         return self.restore(choices[0]["id"], to, monitor, workspace) if choices else {"ok":True,"action":"noop"}
 
+    def restore_oldest(self, to=None, monitor=None, workspace=None):
+        self.reconcile(self.hypr.read("clients"))
+        _, current = self.invoke_context(monitor, workspace)
+        choices = eligible(self.state["windows"], current, self.settings()["scope"])
+        return self.restore(choices[-1]["id"], to, monitor, workspace) if choices else {"ok":True,"action":"noop"}
+
     def close(self, identifiers, monitor=None, workspace=None):
         """Request normal closure, confirming disappearance before ledger removal.
 
@@ -515,7 +521,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     minimize = sub.add_parser("minimize", help="Stash the focused window")
     minimize.add_argument("--address")
-    for action in ("restore", "restore-last", "restore-all", "activate"):
+    for action in ("restore", "restore-last", "restore-oldest", "restore-all", "activate"):
         p = sub.add_parser(action)
         if action in ("restore", "activate"): p.add_argument("id")
         p.add_argument("--to", choices=("current","original"))
@@ -550,6 +556,7 @@ def main(argv=None):
                         stash.hypr.dispatch("focus",window="address:"+address)
                         result=dict(ok=True,action="activated")
             elif args.command == "restore-last": result=stash.restore_last(args.to,args.monitor,args.workspace)
+            elif args.command == "restore-oldest": result=stash.restore_oldest(args.to,args.monitor,args.workspace)
             elif args.command == "restore-all":
                 context, workspace=stash.invoke_context(args.monitor,args.workspace)
                 stash.reconcile(stash.hypr.read("clients"))
