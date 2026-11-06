@@ -181,9 +181,10 @@ Ui.BorderSurface {
       if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(false)
       if (pressedWidth!==icon.width || pressedHeight!==icon.height) { if (icon.draggable) icon.dragFinished();return }
       if (dragging) { icon.dragFinished(); return }
-      if (mouse.button === Qt.MiddleButton) { if (icon.pointerHovered) icon.closeRequested() }
+      var inside=Model.iconContains(mouse.x,mouse.y,icon.width,icon.inputShape,icon.hitRadius)
+      if (mouse.button === Qt.MiddleButton) { if (inside) icon.closeRequested() }
       else if (mouse.button === Qt.RightButton) icon.contextRequested(mouse.x,mouse.y)
-      else icon.activated()
+      else if (inside) icon.activated()
     }
   }
 }
