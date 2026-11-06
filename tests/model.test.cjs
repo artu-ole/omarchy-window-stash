@@ -174,7 +174,7 @@ for (const area of [{x:0,y:26,width:2560,height:1574},{x:0,y:40,width:320,height
         assert.ok(slot.shown && slot.x>=area.x && slot.y>=area.y && slot.x+48<=area.x+area.width && slot.y+48<=area.y+area.height)
         rects.push({...slot,width:48,height:48})
         const pose=ctx.fanPose(area.x+8,area.y+8,slot.x,slot.y,.5,i,fan,area)
-        assert.ok(pose.bend>0 && pose.x>=area.x && pose.y>=area.y && pose.x+48<=area.x+area.width && pose.y+48<=area.y+area.height)
+        assert.ok(pose.bend>=0 && (fan.curveLimit===0 || pose.bend>0) && pose.x>=area.x && pose.y>=area.y && pose.x+48<=area.x+area.width && pose.y+48<=area.y+area.height)
         const end=ctx.fanPose(area.x+8,area.y+8,slot.x,slot.y,1,i,fan,area)
         assert.ok(Math.abs(end.x-slot.x)<1e-6 && Math.abs(end.y-slot.y)<1e-6)
       }
@@ -244,3 +244,49 @@ for (const style of styles) for (const horizontal of [false,true]) {
   }
 }
 console.log('Motion: original icon stays fixed for every style, axis, click offset and fractional anchor')
+
+// Horizontal curves always lift relative to their straight path, including a
+// leftward fan and an already-open fan carrying an old downward preference.
+// The collapsed tail starts below the anchor, so compare against its moving
+// straight baseline rather than the anchor itself.
+for (const area of [sampleArea,{x:-1000.5,y:73.25,width:1000,height:600}]) {
+  for (const topRoom of [0,2,8.625,22.5,90.625,area.height-56]) {
+    const anchor={x:area.x+500.375,y:area.y+topRoom}
+    for (const sign of [-1,1]) for (const preferredCurve of [-1,0,1]) {
+      const fan=ctx.fanLayout(anchor.x+24,anchor.y+24,area,5,true,48,4,3,17,sign,preferredCurve,anchor)
+      assert.equal(fan.sign,sign)
+      assert.equal(fan.capacity,5)
+      assert.equal(fan.curveSign,-1,'Horizontal curvature must ignore a stale downward preference')
+      assert.equal(fan.hopSign,-1,'Horizontal hops must always lift')
+      assert.equal(fan.curveLimit,Math.max(0,Math.min(18,topRoom-3)),'Curve must use only room above the usable area')
+      assert.equal(fan.hopLimit,Math.max(0,Math.min(28,topRoom-3)),'Hop must use only room above the usable area')
+      for (const style of styles) for (let i=0;i<fan.capacity;i++) {
+        const start={x:anchor.x,y:anchor.y+Math.min(i,2)*4},end=ctx.fanSlot(fan,i,0),opening=[]
+        for (let frame=0;frame<=20;frame++) {
+          const p=frame/20,line=ctx.fanPose(start.x,start.y,end.x,end.y,p,i,fan,area,'glide')
+          const pose=ctx.fanPose(start.x,start.y,end.x,end.y,p,i,fan,area,style)
+          opening.push(pose)
+          assert.ok(Math.abs(pose.x-line.x)<1e-8,'Horizontal curve changed axial travel')
+          assert.ok(pose.y<=line.y+1e-8,'Horizontal curve bent below its straight path')
+          assert.ok(Math.abs(pose.y-(line.y-pose.bend))<1e-8,'Top clipping changed the upward curve')
+          assert.ok(pose.y>=area.y && pose.y+48<=area.y+area.height,'Upward curve escaped the usable area')
+          if (i===0) {
+            assert.equal(pose.x,anchor.x);assert.equal(pose.y,anchor.y);assert.equal(pose.bend,0)
+          }
+          if (frame===0 || frame===20) {
+            const endpoint=frame===0 ? start : end
+            assert.equal(pose.x,endpoint.x);assert.equal(pose.y,endpoint.y)
+            assert.equal(pose.bend,0)
+          }
+          if (topRoom<=3 || style==='glide' || style==='cascade') assert.equal(pose.bend,0,'No room above must flatten the curve instead of bending downward')
+          else if (i>0 && frame===10) assert.ok(pose.bend>0,'Available space above must produce an upward arch')
+        }
+        for (let frame=20;frame>=0;frame--) {
+          const p=ctx.fanPose(start.x,start.y,end.x,end.y,frame/20,i,fan,area,style)
+          assert.equal(p.x,opening[frame].x);assert.equal(p.y,opening[frame].y);assert.equal(p.bend,opening[frame].bend)
+        }
+      }
+    }
+  }
+}
+console.log('Motion: horizontal curves always lift in both directions, flatten at reserved top edges, and retrace with fixed endpoints')

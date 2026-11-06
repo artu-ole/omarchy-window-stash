@@ -109,6 +109,58 @@ def place(session, x, y):
     return session.dock()
 
 
+class UpwardCycle(Cycle):
+    """Compare horizontal artwork with its straight, tail-offset baseline."""
+
+    def __init__(self, session):
+        super().__init__(session)
+        self.lift = 0
+
+    def inspect(self, dock, monotonic=None):
+        super().inspect(dock, monotonic)
+        assert dock['fan']['curveSign'] == -1, 'Horizontal curve chose the bottom side'
+        for actor in dock['actors']:
+            if not actor['ordinal']:
+                continue
+            # Collapsed preview cards begin four/eight pixels below the front.
+            # Test the bend independently of that existing stack silhouette.
+            tail = actor['groupOffset'] if dock['style'] == 'matryoshka-hop' else min(actor['ordinal'], 2)*4*(1-actor['progress'])
+            baseline = max(self.area['y'], min(self.area['y']+self.area['height']-actor['height'], self.anchor[1]+tail))
+            lift = baseline-actor['y']
+            assert lift >= -.01, ('Horizontal animation arched downward', dock['style'], dock['fan']['sign'], actor)
+            limit = min(28 if dock['style'] == 'matryoshka-hop' else 18,
+                        max(0, self.anchor[1]-self.area['y']-dock['panel']['inset']))
+            assert lift <= limit+.01, ('Arch exceeded the space above the stack', lift, limit)
+            self.lift = max(self.lift, lift)
+        return dock
+
+
+def horizontal_arcs(session):
+    original = session.dock()['handle']
+    configure('floatingDirection', 'horizontal')
+    area = session.surface()['usableArea']
+    for near_top in (False, True):
+        y = area['y']+8 if near_top else area['y']+area['height']*.4
+        for sign in (1, -1):
+            x = area['x']+24 if sign > 0 else area['x']+area['width']-80
+            for style in CURVED:
+                configure('floatingAnimation', style)
+                place(session, x, y)
+                cycle = UpwardCycle(session)
+                begin(session)
+                dock = cycle.watch(True, 1)
+                assert dock['fan']['sign'] == sign, 'Fixture expanded in the wrong direction'
+                session.keys('-k', 'Escape')
+                cycle.watch(False, -1)
+                assert cycle.lift > 1, ('No upward arch was observed', style, sign, near_top)
+                for actor in session.dock()['actors']:
+                    near(actor['x'], cycle.anchor[0], 'Folding missed the stack horizontally')
+                    near(actor['y'], cycle.anchor[1]+min(actor['ordinal'], 2)*4, 'Folding lost its stack offset')
+        print('PASS all four horizontal curves arch upward left/right through unfold/fold '+
+              ('near the reserved top edge' if near_top else 'with space above'), flush=True)
+    place(session, original['x'], original['y'])
+
+
 def reversal(session):
     cycle = begin(session)
     wait(lambda: cycle.inspect(session.dock())['chain']['progress'] > .3, 'No intermediate unfold frame')
@@ -257,6 +309,7 @@ def main(small=False):
             place(session, *center)
         print('PASS interrupted unfold/fold reversal, negative expansion and work-area bounds', flush=True)
 
+        horizontal_arcs(session)
         airborne_restore(session, records)
         print('PASS an interactive jumping icon outside the thin background restores its own window', flush=True)
         configure('dockCornerRadius', 64)

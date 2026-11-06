@@ -183,6 +183,9 @@ between stops. The original front icon stays fixed; folding collects the icons
 in reverse. Both follow the floating direction and keep movement inside the
 work area. Reduced/Off use immediate positions instead.
 
+Horizontal curved styles always arch above the row, whether unfolding left or
+right. Near the top of the work area, arches flatten to fit the available room.
+
 The floating dock background keeps a fixed thickness while growing along the
 row or column; jumping icons move freely above it without stretching its frame.
 

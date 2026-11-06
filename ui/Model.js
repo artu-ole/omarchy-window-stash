@@ -247,15 +247,17 @@ function fanLayout(px, py, area, count, horizontal, size, gap, inset, endInset, 
   var capacity=count ? Math.min(count,Math.max(1,1+Math.floor(Math.max(0,sign>0 ? ahead : behind)/step))) : 0
   var crossBefore=horizontal ? y-area.y : x-area.x
   var crossAfter=horizontal ? area.y+area.height-y-size : area.x+area.width-x-size
-  // Horizontal hops read as lifting the stack; vertical hops move away from
-  // the nearest edge. Reserve room for the trailing stack's eight-pixel tail.
-  var hopSign=horizontal ? crossBefore>=28+inset || crossBefore>=crossAfter-8 ? -1 : 1
+  // Horizontal curves always lift above the row, in either travel direction.
+  // Near the top, reduce the arch rather than flipping it below the icons.
+  // Vertical curves keep their preferred side or use the available space.
+  var curveSign=horizontal ? -1
     : preferredCurve===1 || preferredCurve===-1 ? preferredCurve : crossBefore>=crossAfter ? -1 : 1
-  var hopRoom=hopSign<0 ? crossBefore : crossAfter-(horizontal ? 8 : 0)
+  var curveRoom=horizontal ? crossBefore : Math.max(crossBefore,crossAfter)
+  var hopSign=curveSign
+  var hopRoom=hopSign<0 ? crossBefore : crossAfter
   return {x:anchor ? x : Math.round(x),y:anchor ? y : Math.round(y),horizontal:horizontal,sign:sign,forward:sign>0,
     capacity:capacity,step:step,size:size,span:dockLength(capacity,size,gap),
-    curveSign:preferredCurve===1 || preferredCurve===-1 ? preferredCurve : crossBefore>=crossAfter ? -1 : 1,
-    curveLimit:Math.max(0,Math.min(18,Math.max(crossBefore,crossAfter)-inset)),
+    curveSign:curveSign,curveLimit:Math.max(0,Math.min(18,curveRoom-inset)),
     hopSign:hopSign,hopLimit:Math.max(0,Math.min(28,hopRoom-inset))}
 }
 

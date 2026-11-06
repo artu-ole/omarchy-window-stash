@@ -10,8 +10,8 @@ const model = library('Model'), motion = library('Motion')
 const styles = ['matryoshka', 'matryoshka-hop']
 const close = (a, b, why) => assert.ok(Math.abs(a-b) < 1e-8, `${why}: ${a} != ${b}`)
 const samePoint = (a, b, why) => { close(a.x, b.x, why+' x'); close(a.y, b.y, why+' y') }
-function scene(area, anchor, count, horizontal, sign) {
-  const layout = model.fanLayout(anchor.x+24, anchor.y+24, area, count, horizontal, 48, 4, 3, 17, sign, 0, anchor)
+function scene(area, anchor, count, horizontal, sign, preferredCurve = 0) {
+  const layout = model.fanLayout(anchor.x+24, anchor.y+24, area, count, horizontal, 48, 4, 3, 17, sign, preferredCurve, anchor)
   return {area, anchor, layout}
 }
 function pose(s, index, progress, style, first = 0, count = s.layout.capacity) {
@@ -87,10 +87,59 @@ for (const horizontal of [false, true]) for (const sign of [-1, 1]) {
   }
 }
 assert.equal(scene(largeArea,{x:500,y:350},3,true,1).layout.hopSign,-1,'Horizontal hop should lift where there is room')
-assert.equal(scene(largeArea,{x:500,y:largeArea.y+8},3,true,1).layout.hopSign,1,'Top edge should send hop into available space')
+const nearTop=scene(largeArea,{x:500,y:largeArea.y+8},3,true,1)
+assert.equal(nearTop.layout.hopSign,-1,'Top edge should reduce lift without reversing the arch')
+assert.equal(nearTop.layout.hopLimit,5,'Top edge must cap lift to the space above the stack')
 assert.equal(scene(largeArea,{x:largeArea.x+8,y:350},3,false,1).layout.hopSign,1,'Left edge should send vertical hop right')
 assert.equal(scene(largeArea,{x:largeArea.x+largeArea.width-56,y:350},3,false,1).layout.hopSign,-1,'Right edge should send vertical hop left')
-console.log('Matryoshka: straight paths, per-stage arches, inward edge direction, and fixed fractional anchor passed')
+console.log('Matryoshka: straight paths, upward horizontal arches, inward vertical direction, and fixed fractional anchor passed')
+
+// Near a reserved top edge the whole remaining stack shares the same smaller
+// upward arch. It must never flip downward or flatten individual tail icons by
+// clipping, even when restoring a stale downward curve preference.
+for (const area of [largeArea,{x:-1000.5,y:73.25,width:1000,height:600}]) {
+  for (const topRoom of [0,2,8.625,22.5,90.625]) {
+    const anchor={x:area.x+500.375,y:area.y+topRoom}
+    for (const sign of [-1,1]) for (const preferredCurve of [-1,0,1]) {
+      const s=scene(area,anchor,5,true,sign,preferredCurve)
+      assert.equal(s.layout.capacity,5)
+      assert.equal(s.layout.hopSign,-1,'Leftward and rightward groups must both hop upward')
+      close(s.layout.hopLimit,Math.max(0,Math.min(28,topRoom-3)),'Hop used space below the stack')
+      const opening=[]
+      for (let frame=0;frame<=100;frame++) {
+        const p=frame/100,actors=[]
+        let base=null
+        for (let i=0;i<5;i++) {
+          const line=pose(s,i,p,'matryoshka'),hop=pose(s,i,p,'matryoshka-hop')
+          actors.push(hop)
+          close(hop.x,line.x,'Upward hop changed horizontal travel')
+          assert.ok(hop.y<=line.y+1e-8,'Horizontal group hopped below its straight path')
+          close(hop.y,line.y-hop.bend,'Work-area clipping distorted the group arch')
+          assert.ok(hop.y>=area.y-1e-8 && hop.y+48<=area.y+area.height+1e-8,'Upward group escaped the usable area')
+          if (i===0) samePoint(hop,anchor,'Front icon moved during an upward hop')
+          if (frame===0) samePoint(hop,{x:anchor.x,y:anchor.y+Math.min(i,2)*4},'Upward hop changed collapsed endpoint')
+          if (frame===100) samePoint(hop,model.fanSlot(s.layout,i,0),'Upward hop changed expanded endpoint')
+          if (!hop.settled) {
+            const groupBase={x:hop.x,y:hop.y-hop.groupOffset}
+            if (base) samePoint(groupBase,base,'Capped upward arch split the remaining stack')
+            else base=groupBase
+          }
+        }
+        opening.push(actors)
+      }
+      for (let stage=0;stage<4;stage++) {
+        const apex=pose(s,stage+1,(stage+.43)/4,'matryoshka-hop')
+        close(apex.bend,s.layout.hopLimit,'Every leg must share the available upward lift')
+      }
+      for (let frame=100;frame>=0;frame--) for (let i=0;i<5;i++) {
+        const hop=pose(s,i,frame/100,'matryoshka-hop')
+        samePoint(hop,opening[frame][i],'Folding retraced a different upward group path')
+        close(hop.bend,opening[frame][i].bend,'Folding changed upward arch amplitude')
+      }
+    }
+  }
+}
+console.log('Matryoshka: both horizontal directions preserve upward group arches at fractional and reserved top edges')
 
 // Sample complete trajectories on every axis, direction, work-area edge, and
 // overflow count. The shared pose has no direction-dependent state, so
