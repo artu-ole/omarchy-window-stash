@@ -80,7 +80,7 @@ live in `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 | Stash focused window | **Super+A** |
 | Restore last eligible window | **Super+Z**; newest first, obeys visibility scope |
 | Restore / choose a grouped window | Click an icon; app groups open a searchable chooser |
-| Restore destination, settings, all windows | Right-click an icon or floating stack |
+| Restore destination, close, settings, all windows | Right-click an icon or floating stack |
 | Move bubbles / floating dock | Drag the icon / stack handle; positions persist per monitor |
 | Navigate chooser / expanded dock | Up/Down, Enter; horizontal docks also support Left/Right |
 | Collapse floating dock | Click outside, switch focus/workspace, or press Escape |
@@ -153,6 +153,12 @@ still applies with animations off. Changes take effect without a shell restart.
 - **Lifetime:** closed windows leave the stash. Shell restarts preserve it;
   logout/compositor restart does not restore application sessions. Existing
   scratchpads and windows minimized by other tools are outside plugin ownership.
+
+Right-click opens a pointer-positioned context menu. Restore and close actions
+above the separator target that icon's window or app group; a collapsed stack
+targets its front icon. Global actions below the separator include Settings,
+the recovery chooser, and Close all (following Stash visibility). Outside clicks
+dismiss the menu and reach the underlying window.
 
 ## Controller API and recovery
 

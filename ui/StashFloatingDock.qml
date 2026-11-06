@@ -194,7 +194,12 @@ Item {
     if (!group || !groups.some(function(g) { return g.key===group.key })) return
     close("restore"); stash.selectGroup(group,screenName)
   }
-  function context(group) { close("menu"); stash.openDialog("menu",screenName,group ? group.windows : windows,group) }
+  function context(group,point) {
+    var target=group || groups[0]
+    if (!target) return
+    stash.openContext(target,screenName,point)
+    close("menu")
+  }
   function details() {
     var icons=[],exiting=[],states=[]
     for (var i=0;i<actors.count;i++) {
@@ -335,7 +340,7 @@ Item {
       hasCursor:dock.open ? dock.selectedKey===groupKey : stackHover.hovered
       externalPressed:!dock.open && drag.pressed
       onActivated:dock.activate(group)
-      onContextRequested:dock.context(group)
+      onContextRequested:function(x,y) { dock.context(group,actor.mapToItem(dock.hostWindow.contentItem,x,y)) }
       onHovered:function(value) { if (value && actor.interactive && !pan.active && !actor.moving) dock.selectIndex(actor.ordinal) }
       onInputChanged: { dock.inputChanged(); motionUpdate.restart() }
       onExited:function(frames) { dock.iconExited(groupKey,frames) }
@@ -383,7 +388,7 @@ Item {
       onReleased:function(mouse) {
         if (dragging) { finishDrag(); return }
         dock.held=false
-        if (mouse.button===Qt.RightButton) dock.context(null)
+        if (mouse.button===Qt.RightButton) dock.context(dock.groups[0],dock.mapToItem(dock.hostWindow.contentItem,dock.anchorX+mouse.x,dock.anchorY+mouse.y))
         else if (dock.windows.length===1) dock.activate(dock.groups[0])
         else dock.unfoldAt(dock.anchorX+mouse.x,dock.anchorY+mouse.y)
       }

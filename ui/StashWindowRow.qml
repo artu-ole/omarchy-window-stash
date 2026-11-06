@@ -15,7 +15,7 @@ Ui.CursorSurface {
   opacity:interaction.visualOpacity
   required property var windowData
   signal activated()
-  signal contextRequested()
+  signal contextRequested(real x,real y)
   signal pointed()
   implicitHeight: Math.max(Style.space(48), labels.implicitHeight + row.metrics.controlPaddingY * 2)
   foreground: row.popupColors.text
@@ -70,10 +70,10 @@ Ui.CursorSurface {
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     onPositionChanged: row.pointed()
     onClicked: function(mouse) {
-      if (mouse.button === Qt.RightButton) row.contextRequested()
+      if (mouse.button === Qt.RightButton) row.contextRequested(mouse.x,mouse.y)
       else row.activated()
     }
-    onPressAndHold: row.contextRequested()
+    onPressAndHold:function(mouse) { row.contextRequested(mouse.x,mouse.y) }
   }
   Ui.PanelToolTip { visible: pointer.containsMouse; text: row.windowData.title }
 }

@@ -19,7 +19,7 @@ PanelWindow {
   required property var stash
   readonly property var monitor: stash.screenMonitor(screen.name)
   readonly property int activeWorkspaceId:monitor ? monitor.activeWorkspace.id : -1
-  onActiveWorkspaceIdChanged:if (floatingDock) floatingDock.close()
+  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (contextMenuOpen) stash.closeContext() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
   readonly property real iconIdleOpacity:(config.iconOpacity === undefined ? 100 : config.iconOpacity)/100
@@ -53,7 +53,9 @@ PanelWindow {
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: config.presentation === "floating"
   readonly property bool floatingDockOpen:floatingDock.open
-  readonly property bool keyboardOpen: dialogOpen || floatingDock.open
+  readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
+  readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen
+  onContextMenuOpenChanged: { refreshInputMask(); if (contextMenuOpen) floatingDock.close("menu") }
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
   readonly property bool snapFloating: config.floatingPlacement !== "free"
@@ -120,6 +122,9 @@ PanelWindow {
     function onDialogQueryChanged() { modelDelay.restart() }
   }
   function details() {
+    var menuDetails=contextMenu.details()
+    var currentDialog=menuDetails.opened ? {x:menuDetails.rect.x,y:menuDetails.rect.y,width:menuDetails.rect.width,height:menuDetails.rect.height,visible:menuDetails.visible,rendered:menuDetails.rendered,progress:menuDetails.progress}
+      : {x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialogOpen && dialogReveal>0.999,rendered:dialog.visible,progress:dialogReveal}
     var points = [], exiting=[]
     for (var i = 0; i < bubbles.count; i++) {
       var b = bubbles.itemAt(i) as StashIcon
@@ -153,13 +158,13 @@ PanelWindow {
         contentHeight:dockViewport.contentHeight,viewportHeight:dockViewport.height,contentY:dockViewport.contentY,
         icons:shelfIcons(false),exitingIcons:shelfIcons(true),progress:shelf.reveal,
         animating:shelfWidthAnimation.running || shelfHeightAnimation.running || shelfRevealAnimation.running},
-      dialog:{x:dialog.x,y:dialog.y,width:dialog.width,height:dialog.height,visible:dialogOpen && dialogReveal>0.999,rendered:dialog.visible,progress:dialogReveal},
+      dialog:currentDialog,contextMenu:menuDetails,
       pickerCount:picker.count, picker:itemRect(picker),
       settingControls:controls,
       opacityControls:opacityControls,
       cornerControl:{visible:radiusRow.visible,value:radiusField.value,rect:itemRect(radiusField.field)},
       floatingDock:floatingDock.details(),
-      actions:{here:itemRect(restoreHereButton),original:itemRect(restoreOriginalButton),settings:Object.assign(itemRect(settingsButton),{feedback:settingsButton.feedbackDetails()})},
+      actions:{here:contextMenu.actionRect("here"),original:contextMenu.actionRect("original"),settings:contextMenu.actionRect("settings")},
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
         accent:String(Commons.Color.accent),fontFamily:surface.fonts.family,bodySize:surface.fonts.body,radius:Style.cornerRadius}}
   }
@@ -197,18 +202,21 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive) : WlrKeyboardFocus.None
-  visible: shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present
+  visible: shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || contextMenu.visible
   mask: Region {
     id: inputMask
     // Keep motion on this surface during a drag, including the gaps between
     // small animated regions. Restore click-through immediately on release.
-    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held ? [dialogRegion] : surface.floatingMode ? floatingDock.inputRegions
-      : surface.bubbleMode ? surface.bubbleRegions : surface.config.presentation==="dock" && surface.groups.length>0 ? [shelfRegion] : []
+    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held ? [dialogRegion]
+      : (surface.floatingMode ? floatingDock.inputRegions : surface.bubbleMode ? surface.bubbleRegions
+          : surface.config.presentation==="dock" && surface.groups.length>0 ? [shelfRegion] : [])
+        .concat(surface.contextMenuOpen ? [contextRegion] : [])
   }
   // Native dropdown popups may extend beyond the card. While a dialog is
   // open, its surface owns the screen, just like Omarchy's keyboard panels.
   Region { id: dialogRegion; width: surface.width; height: surface.height }
   Region { id: shelfRegion; item: shelf; radius:shelf.radius }
+  Region { id: contextRegion; item:contextMenu; radius:contextMenu.radius }
 
   StashDockSurface {
     id: shelf
@@ -289,6 +297,7 @@ PanelWindow {
             id: dockIcons
             model: shelfModel
             delegate: StashAnimatedIcon {
+              id:shelfIcon
               required property string groupKey
               required retiring
               readonly property int liveIndex:shelfModel.activeKeys.indexOf(groupKey)
@@ -307,7 +316,7 @@ PanelWindow {
               frameVisible: surface.config.iconFrame !== "hidden"
               iconShape: surface.config.iconShape || "auto"
               onActivated: surface.stash.selectGroup(group, surface.screen.name)
-              onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
+              onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,shelfIcon.mapToItem(surface.contentItem,x,y)) }
             }
           }
         }
@@ -363,7 +372,7 @@ PanelWindow {
         else Qt.callLater(place)
       }
       onActivated: surface.stash.selectGroup(group, surface.screen.name)
-      onContextRequested: surface.stash.openDialog("menu", surface.screen.name, group.windows, group)
+      onContextRequested:function(x,y) { surface.stash.openContext(group,surface.screen.name,bubbleIcon.mapToItem(surface.contentItem,x,y)) }
       onMoved: function(dx, dy) { x = Math.max(0, Math.min(surface.width - width, x + dx)); y = Math.max(24, Math.min(surface.height - height, y + dy)) }
       onDragFinished: surface.finishBubbleMove(group.key,x,y)
       Component.onCompleted: {
@@ -492,6 +501,7 @@ PanelWindow {
             && (!surface.dialogOpen || surface.stash.snapshot.windows.some(function(live) { return live.id === w.id }))
         })
         delegate: StashWindowRow {
+          id:savedWindowRow
           animations:surface.animations
           required property var modelData
           required property int index
@@ -501,7 +511,7 @@ PanelWindow {
           hasCursor: ListView.isCurrentItem
           onPointed: picker.currentIndex = index
           onActivated: surface.stash.restoreWindow(modelData.id, "")
-          onContextRequested: surface.stash.openDialog("menu", surface.screen.name, [modelData], {windows:[modelData]})
+          onContextRequested:function(x,y) { surface.stash.openContext({key:"window:"+modelData.id,app:modelData.app,title:modelData.title,windows:[modelData]},surface.screen.name,savedWindowRow.mapToItem(surface.contentItem,x,y)) }
         }
         Controls.ScrollBar.vertical: Controls.ScrollBar {
           id: pickerScrollbar
@@ -520,34 +530,6 @@ PanelWindow {
         color: Qt.darker(surface.popupColors.text, 1.4)
         font.family: surface.fonts.family
         font.pixelSize: surface.fonts.body
-      }
-      ColumnLayout {
-        visible: surface.renderDialogKind === "menu"
-        Layout.fillWidth: true
-        StashButton { animations:surface.animations; id: restoreHereButton; text: "Restore here"; visible: surface.renderDialogWindows.length > 0; Layout.fillWidth: true
-          leftAlign: true; focusable: true; foreground: surface.popupColors.text
-          onClicked: {
-            if (surface.renderDialogWindows.length === 1) surface.stash.restoreWindow(surface.renderDialogWindows[0].id, "current")
-            else {
-              surface.stash.openDialog("picker", surface.screen.name, surface.renderDialogWindows, surface.stash.dialogGroup)
-              surface.stash.dialogDestination = "current"
-            }
-          }
-        }
-        StashButton { animations:surface.animations; id: restoreOriginalButton; text: "Restore to original workspace"; visible: surface.renderDialogWindows.length > 0; Layout.fillWidth: true
-          leftAlign: true; focusable: true; foreground: surface.popupColors.text
-          onClicked: {
-            if (surface.renderDialogWindows.length === 1) surface.stash.restoreWindow(surface.renderDialogWindows[0].id, "original")
-            else {
-              surface.stash.openDialog("picker", surface.screen.name, surface.renderDialogWindows, surface.stash.dialogGroup)
-              surface.stash.dialogDestination = "original"
-            }
-          }
-        }
-        StashButton { animations:surface.animations; text: "All stashed windows"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
-          onClicked: surface.stash.allWindows(surface.screen.name) }
-        StashButton { animations:surface.animations; id: settingsButton; text: "Settings"; Layout.fillWidth: true; leftAlign: true; focusable: true; foreground: surface.popupColors.text
-          onClicked: surface.stash.openDialog("settings", surface.screen.name, [], null) }
       }
       ColumnLayout {
         visible: surface.renderDialogKind === "settings"
@@ -664,6 +646,15 @@ PanelWindow {
           onClicked: surface.stash.allWindows(surface.screen.name) }
       }
     }
+  }
+  StashContextMenu {
+    id:contextMenu
+    stash:surface.stash
+    host:surface
+    screenName:surface.screen.name
+    area:surface.usableArea
+    animations:surface.animations
+    onInputChanged:surface.refreshInputMask()
   }
   Component.onCompleted: {
     var next = stash.surfaces.slice(); next.push(surface); stash.surfaces = next
