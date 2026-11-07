@@ -96,7 +96,7 @@ def main():
         chords = shortcut_helpers.free_chords(shell('status')['settings'])
         custom = dict(presentation='dock', scope='workspace', restoreDestination='original', grouping='app',
                       iconShape='squircle', sizePreset='175', floatingDirection='horizontal', floatingAnimation='jumping',
-                      dragMotion='direct', dockSide='left', floatingPlacement='free', dockCorners='custom',
+                      dragMotion='direct', dockSide='left', staticDockLock='unlocked', floatingPlacement='free', dockCorners='custom',
                       dockCornerRadius=39, iconFrame='shown', dockFrame='shown', animations='off', animationSpeed='ultrafast',
                       dockOpacity=33, iconOpacity=44, hoverPreview='still', livePreviewCompatibility='enhanced', previewSize='large', previewPlacement='above',
                       previewTitles='hidden', previewDelay=75, previewHideDelay=87,

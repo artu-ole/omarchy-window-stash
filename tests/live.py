@@ -73,7 +73,7 @@ def fixture_settings():
                 floatingPlacement='free',floatingAnimation='arc',
                 floatingDirection='vertical',iconShape='auto',dockCorners='theme',
                 dockCornerRadius=12,scope='global',restoreDestination='current',
-                grouping='window',presentation='dock',dockSide='bottom')
+                grouping='window',presentation='dock',dockSide='bottom',staticDockLock='locked')
     current=shell('status')['settings']
     for key,value in values.items():
         if current.get(key)!=value:configure(key,value)

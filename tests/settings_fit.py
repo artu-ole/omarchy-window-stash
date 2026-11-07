@@ -366,6 +366,8 @@ def main():
                     configure('presentation', 'dock')
                     dropdown(session, 'dockSide')
                     reached.add('dockSide')
+                    dropdown(session, 'staticDockLock')
+                    reached.add('staticDockLock')
                     configure('presentation', before['presentation'])
                     assert reached == set(DEFAULTS), ('Settings were not all reachable', sorted(set(DEFAULTS)-reached))
                 else:
@@ -377,7 +379,7 @@ def main():
                     long_error(session)
                 assert shell('status')['settings'] == before, 'Accessibility checks changed preferences'
                 assert {w['id'] for w in command('list')['windows']} == session.baseline, 'Accessibility checks changed the stash'
-                print(('PASS %dx%d @ %.2f: '+('six sections/all29 controls, bounded9-option popup and wrapped error; ' if index == 1 else 'bottom shortcuts/actions and preview controls; ')+
+                print(('PASS %dx%d @ %.2f: '+('six sections/all30 controls, bounded9-option popup and wrapped error; ' if index == 1 else 'bottom shortcuts/actions and preview controls; ')+
                        'reserved bounds, Tab/wheel/drag/scrollbar and tiny reset cancellation') %
                       (width, height, scale), flush=True)
                 shell('dismiss')

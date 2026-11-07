@@ -84,6 +84,109 @@ for(const side of ['bottom','top','left','right']) {
 }
 console.log('Model: all four dock sides respect reserved edges, centering, and overflow bounds')
 
+const staticAreas=[
+  ctx.usableArea(1920,1080,[21,48,37,19]),
+  ctx.usableArea(320,240,[12,34,20,16]),
+  {x:-125.25,y:43.5,width:713.5,height:498.25},
+  {x:3.5,y:7.25,width:5,height:3},
+  {x:0,y:0,width:0,height:0},
+]
+for(const area of staticAreas) for(const side of ['top','bottom','left','right']) {
+  const vertical=side==='left'||side==='right',axis=vertical?'y':'x',length=vertical?'height':'width'
+  for(const desiredLength of [0,50,174,5000]) {
+    const desiredWidth=vertical?50:desiredLength,desiredHeight=vertical?desiredLength:50
+    const defaults=ctx.staticDockRect(area,side,desiredWidth,desiredHeight,8,16)
+    const center=area[axis]+Math.round((area[length]-defaults[length])/2)
+    assert.equal(defaults[axis],center,'Default position changed the original rounded center')
+    assert.equal(ctx.staticDockRect(area,side,desiredWidth,desiredHeight,8,16,.5)[axis],center)
+    let previous=-Infinity
+    for(const fraction of [0,.125,.25,.5,.75,.875,1]) {
+      const rect=ctx.staticDockRect(area,side,desiredWidth,desiredHeight,8,16,fraction)
+      assert.ok(Object.values(rect).every(Number.isFinite),'Static position produced nonfinite geometry')
+      assert.ok(rect.width>=0 && rect.height>=0)
+      assert.ok(rect.x>=area.x && rect.y>=area.y)
+      assert.ok(rect.x+rect.width<=area.x+area.width+1e-7 && rect.y+rect.height<=area.y+area.height+1e-7,
+        'Dragging escaped the reserved work area')
+      assert.ok(rect[axis]>=previous,'Increasing the saved fraction moved the dock backwards')
+      previous=rect[axis]
+      assert.equal(vertical?rect.x:rect.y,vertical?defaults.x:defaults.y,'Dragging changed the side gap')
+      const margin=Math.min(16,area[length]/2)
+      const travel=Math.max(0,area[length]-rect[length]-margin*2)
+      const inverse=ctx.staticDockPosition(area,side,desiredWidth,desiredHeight,8,16,rect[axis],fraction)
+      if(travel>0) assert.ok(Math.abs(inverse-fraction)<=.500001/travel,'Position inverse lost more than pixel rounding')
+      else assert.equal(inverse,fraction,'An overflowing dock erased its saved position')
+    }
+    assert.equal(ctx.staticDockPosition(area,side,desiredWidth,desiredHeight,8,16,-1e6,.3),
+      area[length]-defaults[length]-Math.min(16,area[length]/2)*2>0?0:.3)
+    assert.equal(ctx.staticDockPosition(area,side,desiredWidth,desiredHeight,8,16,1e6,.7),
+      area[length]-defaults[length]-Math.min(16,area[length]/2)*2>0?1:.7)
+  }
+}
+console.log('Model: static dock positions preserve centering, all four side gaps, inverse dragging and reserved/tiny/overflow bounds')
+
+const staticArea=ctx.usableArea(640,480,[17,41,29,23])
+for(const side of ['top','bottom','left','right']) {
+  const vertical=side==='left'||side==='right',axis=vertical?'y':'x'
+  for(const fraction of [0,.13755,.5,.82,1]) {
+    const saved=[fraction*10000,0]
+    const first=ctx.staticDockRect(staticArea,side,vertical?50:150,vertical?150:50,8,16,ctx.staticDockSavedPosition(saved))
+    for(const count of [1,3,50,2,1]) {
+      const length=ctx.dockLength(count,44,4)+6
+      const rect=ctx.staticDockRect(staticArea,side,vertical?50:length,vertical?length:50,8,16,ctx.staticDockSavedPosition(saved))
+      assert.ok(rect.x>=staticArea.x && rect.y>=staticArea.y)
+      assert.ok(rect.x+rect.width<=staticArea.x+staticArea.width && rect.y+rect.height<=staticArea.y+staticArea.height)
+      assert.equal(ctx.staticDockSavedPosition(saved),fraction,'Resize or overflow changed the normalized stored position')
+    }
+    const restored=ctx.staticDockRect(staticArea,side,vertical?50:150,vertical?150:50,8,16,ctx.staticDockSavedPosition(saved))
+    assert.equal(restored[axis],first[axis],'Growing and shrinking a dock moved its restored position')
+  }
+}
+for(const [saved,expected] of [[[0,0],0],[[10000,0],1],[[2375.5,0],.23755]])
+  assert.equal(ctx.staticDockSavedPosition(saved),expected)
+for(const saved of [null,undefined,[],[5000],[5000,0,0],['5000',0],[5000,'0'],[5000,1],
+  [NaN,0],[Infinity,0],[-1,0],[10001,0],{0:0,1:0,length:2}])
+  assert.equal(ctx.staticDockSavedPosition(saved),.5,'Malformed stored position did not fall back to center')
+console.log('Model: static position storage keeps fractional basis points and survives growth, overflow and shrink without drifting')
+
+const validStatic=[staticArea,'bottom',180,50,8,16]
+const centered=JSON.stringify(ctx.staticDockRect(...validStatic))
+for(const invalid of [undefined,null,NaN,Infinity,-Infinity,'0','1',false,{}]) {
+  assert.equal(JSON.stringify(ctx.staticDockRect(...validStatic,invalid)),centered)
+  assert.equal(ctx.staticDockPosition(...validStatic,invalid,.27),.27)
+}
+assert.equal(JSON.stringify(ctx.staticDockRect(...validStatic,-2)),JSON.stringify(ctx.staticDockRect(...validStatic,0)))
+assert.equal(JSON.stringify(ctx.staticDockRect(...validStatic,2)),JSON.stringify(ctx.staticDockRect(...validStatic,1)))
+assert.equal(ctx.staticDockPosition(staticArea,'bottom',5000,50,8,16,200,NaN),.5)
+assert.equal(ctx.staticDockPosition(staticArea,'bottom',5000,50,8,16,200,2),1)
+for(const args of [
+  [null,'bottom',NaN,Infinity,NaN,Infinity],
+  [{x:NaN,y:Infinity,width:NaN,height:-50},'left',Infinity,-1,-8,'16'],
+  [{x:Number.MAX_VALUE,y:-Number.MAX_VALUE,width:Number.MAX_VALUE,height:Number.MAX_VALUE},'top',Number.MAX_VALUE,50,8,16],
+]) {
+  const rect=ctx.staticDockRect(...args,.8)
+  assert.ok(Object.values(rect).every(Number.isFinite),'Malformed static geometry was not finite')
+  assert.ok(rect.width>=0 && rect.height>=0)
+  const inverse=ctx.staticDockPosition(...args,300,.8)
+  assert.ok(Number.isFinite(inverse) && inverse>=0 && inverse<=1)
+}
+console.log('Model: static dragging clamps fractions, validates coordinates and keeps malformed geometry finite')
+
+const anonymousOutput={name:'HEADLESS-1',make:'',model:'',serial:'',description:''}
+assert.equal(ctx.monitorKey(anonymousOutput),'|||','Static fallback changed existing floating/bubble identity')
+assert.equal(ctx.staticDockMonitorKey(anonymousOutput),'output:HEADLESS-1')
+assert.equal(ctx.staticDockMonitorKey({...anonymousOutput}),ctx.staticDockMonitorKey(anonymousOutput),
+  'An anonymous output lost its stable named fallback')
+assert.notEqual(ctx.staticDockMonitorKey({...anonymousOutput,name:'HEADLESS-2'}),ctx.staticDockMonitorKey(anonymousOutput),
+  'Anonymous outputs shared a static position')
+assert.equal(ctx.staticDockMonitorKey({name:'DP-1'}),'output:DP-1')
+assert.equal(ctx.staticDockMonitorKey({name:'DP-2',make:' ',model:'\t',serial:'',description:''}),'output:DP-2')
+const identifiedOutput={name:'DP-3',make:'Display vendor',model:'Panel',serial:'001',description:'Physical display'}
+assert.equal(ctx.staticDockMonitorKey(identifiedOutput),ctx.monitorKey(identifiedOutput))
+assert.equal(ctx.staticDockMonitorKey({...identifiedOutput,name:'DP-4'}),ctx.monitorKey(identifiedOutput),
+  'An identified display lost its existing connector-independent identity')
+assert.equal(ctx.staticDockMonitorKey(null),'output:')
+console.log('Model: static docks isolate anonymous output names while preserving existing real-display and floating identities')
+
 for(const [w,h] of [[320,240],[1920,1080],[600,1000]]) {
   const area=ctx.usableArea(w,h,[12,34,20,16])
   for(const p of [[w/2,h/2],[0,h/2],[w,h/2],[w/2,0],[w/2,h]]) {

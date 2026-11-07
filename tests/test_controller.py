@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
-from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, atomic_json, eligible, lua, restored_geometry, main
+from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
+import shortcuts
 
 
 def monitor(name="eDP-2", ident=0, x=0, width=1920):
@@ -574,7 +575,7 @@ class ControllerTests(unittest.TestCase):
     def test_floating_dock_presentation_preserves_other_choices(self):
         self.settings(presentation="floating", scope="workspace", grouping="app", iconShape="squircle")
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
-            grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
+            grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             minimizeShortcut="SUPER + A",restoreLastShortcut="SUPER + Z",restoreOldestShortcut=""))
 
@@ -670,6 +671,63 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(self.stash.settings()["floatingDirection"], "horizontal")
         self.settings(dockSide="invalid")
         self.assertEqual(self.stash.settings()["dockSide"], "bottom")
+
+    def test_static_dock_lock_defaults_validation_and_settings_preservation(self):
+        positions = {"output-a": {"dock:static:bottom": [1250, 0], "dock:static:left": [8750, 0]},
+                     "output-b": {"dock:static:bottom": [6500, 0]}}
+        atomic_json(self.stash.positions, positions)
+        saved = self.stash.positions.read_bytes()
+        self.settings(presentation="dock", dockSide="left", scope="workspace", iconOpacity=62)
+        self.assertEqual(self.stash.settings()["staticDockLock"], "locked")
+        for value in ("locked", "unlocked", "invalid", "", None, True, False, 0, 1, [], {}):
+            with self.subTest(value=value):
+                self.settings(staticDockLock=value, presentation="dock", dockSide="left", scope="workspace", iconOpacity=62)
+                before = self.stash.config.read_bytes()
+                result = self.stash.listing()
+                expected = value if value in ("locked", "unlocked") else "locked"
+                self.assertEqual(result["settings"]["staticDockLock"], expected)
+                self.assertEqual((result["settings"]["presentation"], result["settings"]["dockSide"],
+                                  result["settings"]["scope"], result["settings"]["iconOpacity"]),
+                                 ("dock", "left", "workspace", 62))
+                self.assertEqual(result["positions"], positions)
+                self.assertEqual(self.stash.positions.read_bytes(), saved)
+                self.assertEqual(self.stash.config.read_bytes(), before)
+
+    def test_static_edge_position_cli_restart_and_reset_preserve_saved_placements(self):
+        expected = {"output-a": {"window:unchanged": [321, 234], "dock:floating": [450, 600]}}
+        atomic_json(self.stash.positions, expected)
+        sides = ("bottom", "top", "left", "right")
+        for output, values in (("output-a", (0, 2500, 7500, 10000)), ("output-b", (10000, 7500, 2500, 0))):
+            for side, normalized in zip(sides, values):
+                key = "dock:static:"+side
+                with patch("stash.Stash", return_value=self.stash), patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                    code = main(["position", output, key, str(normalized), "0"])
+                self.assertEqual(code, 0, stdout.getvalue())
+                self.assertEqual(json.loads(stdout.getvalue()), dict(ok=True))
+                expected.setdefault(output, {})[key] = [normalized, 0]
+        self.assertEqual(self.stash.listing()["positions"], expected)
+        self.settings(staticDockLock="unlocked", presentation="dock", dockSide="right")
+        restarted = Stash(self.hypr, self.root/"run", self.root/"shell.json", self.root/"state")
+        with restarted.locked():
+            snapshot = restarted.listing()
+        self.assertEqual(snapshot["settings"]["staticDockLock"], "unlocked")
+        self.assertEqual(snapshot["positions"], expected)
+        positions_before = self.stash.positions.read_bytes()
+        state_before = self.stash.path.read_bytes()
+        entry = dict(id=PLUGIN, staticDockLock="unlocked", dockSide="right", enabled=False, hostMetadata={"keep": True})
+        other = dict(id="another.plugin", value=7)
+        atomic_json(self.stash.config, dict(plugins=[other, entry]))
+        def runner(*args):
+            return "[]" if args[0] in ("repl", "binds") else "ok"
+        result = shortcuts.reset_settings(self.stash.config, DEFAULTS, runner=runner, binary=self.root/"window-stash")
+        self.assertEqual(result["settings"]["staticDockLock"], "locked")
+        config = json.loads(self.stash.config.read_text())
+        self.assertEqual(config["plugins"][0], other)
+        self.assertEqual(config["plugins"][1], dict(entry, **DEFAULTS))
+        self.assertEqual(self.stash.positions.read_bytes(), positions_before)
+        self.assertEqual(self.stash.path.read_bytes(), state_before)
+        self.assertEqual(self.stash.listing()["positions"], expected)
+        self.assertEqual(self.hypr.commands, [], "Saving and resetting placements must not mutate windows")
 
     def test_floating_placement_defaults_and_validation(self):
         self.assertEqual(self.stash.settings()["floatingPlacement"], "edges")

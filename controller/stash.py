@@ -20,14 +20,14 @@ PLUGIN = "community.window-stash"
 SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
-DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
+DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
                sizePreset=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
-               floatingDirection=("vertical", "horizontal"), floatingAnimation=("arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop", "jumping"), dragMotion=("physics", "direct"), dockSide=("bottom", "top", "left", "right"),
+               floatingDirection=("vertical", "horizontal"), floatingAnimation=("arc", "glide", "cascade", "spring", "swing", "matryoshka", "matryoshka-hop", "jumping"), dragMotion=("physics", "direct"), dockSide=("bottom", "top", "left", "right"), staticDockLock=("locked", "unlocked"),
                floatingPlacement=("edges", "free"), dockCorners=("theme", "custom"),
                dockCornerRadius=range(65), iconFrame=("shown", "hidden"), dockFrame=("shown", "hidden"),
                animations=("full", "reduced", "off"), animationSpeed=("slow", "relaxed", "normal", "fast", "ultrafast"), dockOpacity=range(101), iconOpacity=range(101),

@@ -118,6 +118,15 @@ function monitorKey(monitor) {
   return [monitor.make || "", monitor.model || "", monitor.serial || "", monitor.description || ""].join("|")
 }
 
+// Keep existing floating/bubble keys unchanged. Static docks need distinct
+// output names when a display supplies no identifying metadata at all.
+function staticDockMonitorKey(monitor) {
+  monitor=monitor || {}
+  var identity=monitorKey(monitor)
+  return identity.split("|").some(function(part) { return part.trim().length>0 })
+    ? identity : "output:"+String(monitor.name || "")
+}
+
 function bubblePosition(saved, index, width, height, count, itemSize) {
   var size=itemSize===undefined ? 48 : itemSize,scale=size/48,step=size+16*scale
   var rowsPerColumn = Math.max(1, Math.floor((height - 32 - 58*scale) / Math.max(1,step)))
@@ -153,19 +162,69 @@ function usableArea(width, height, reserved) {
   return {x:left, y:top, width:Math.max(0, width-left-right), height:Math.max(0, height-top-bottom)}
 }
 
-function staticDockRect(area, side, desiredWidth, desiredHeight, gap, longMargin) {
+function staticDockNumber(value, fallback) {
+  // Keep geometry arithmetic finite even for malformed, enormous inputs.
+  var limit=Number.MAX_SAFE_INTEGER/4
+  return typeof value==="number" && isFinite(value) ? Math.max(-limit,Math.min(limit,value)) : fallback
+}
+
+function staticDockFraction(value) {
+  return typeof value==="number" && isFinite(value) ? Math.max(0,Math.min(1,value)) : .5
+}
+
+function staticDockMetrics(area, side, desiredWidth, desiredHeight, gap, longMargin) {
+  area=area || {}
+  area={x:staticDockNumber(area.x,0),y:staticDockNumber(area.y,0),
+    width:Math.max(0,staticDockNumber(area.width,0)),height:Math.max(0,staticDockNumber(area.height,0))}
+  gap=Math.max(0,staticDockNumber(gap,0)); longMargin=Math.max(0,staticDockNumber(longMargin,0))
+  desiredWidth=Math.max(0,staticDockNumber(desiredWidth,0)); desiredHeight=Math.max(0,staticDockNumber(desiredHeight,0))
   var vertical = side === "left" || side === "right"
   var marginX = Math.min(vertical ? gap : longMargin, area.width / 2)
   var marginY = Math.min(vertical ? longMargin : gap, area.height / 2)
   var width = Math.max(0, Math.min(desiredWidth, area.width - marginX * 2))
   var height = Math.max(0, Math.min(desiredHeight, area.height - marginY * 2))
+  return {area:area,vertical:vertical,width:width,height:height,marginX:marginX,marginY:marginY,
+    start:vertical ? area.y+marginY : area.x+marginX,
+    travel:Math.max(0,vertical ? area.height-height-marginY*2 : area.width-width-marginX*2)}
+}
+
+// Position is the fraction of available long-axis travel between edge margins.
+// The default retains the original pixel-rounded center exactly.
+function staticDockRect(area, side, desiredWidth, desiredHeight, gap, longMargin, position) {
+  var metrics=staticDockMetrics(area,side,desiredWidth,desiredHeight,gap,longMargin)
+  area=metrics.area
+  var vertical=metrics.vertical,width=metrics.width,height=metrics.height
+  var marginX=metrics.marginX,marginY=metrics.marginY
+  position=staticDockFraction(position)
   var x = area.x + Math.round((area.width-width)/2)
   var y = area.y + Math.round((area.height-height)/2)
+  if (position!==.5) {
+    if (vertical) y=area.y+Math.round(marginY+metrics.travel*position)
+    else x=area.x+Math.round(marginX+metrics.travel*position)
+  }
   if (side === "left") x = area.x + marginX
   else if (side === "right") x = area.x + area.width - marginX - width
   else if (side === "top") y = area.y + marginY
   else y = area.y + area.height - marginY - height
+  x=Math.max(area.x,Math.min(area.x+area.width-width,x))
+  y=Math.max(area.y,Math.min(area.y+area.height-height,y))
   return {x:x, y:y, width:width, height:height}
+}
+
+// Coordinate is the desired leading x (horizontal) or y (vertical), not the
+// pointer center. Keep the saved fraction when overflow leaves no travel.
+function staticDockPosition(area, side, desiredWidth, desiredHeight, gap, longMargin, coordinate, fallback) {
+  fallback=staticDockFraction(fallback)
+  var metrics=staticDockMetrics(area,side,desiredWidth,desiredHeight,gap,longMargin)
+  if (!metrics.travel || typeof coordinate!=="number" || !isFinite(coordinate)) return fallback
+  return Math.max(0,Math.min(1,(coordinate-metrics.start)/metrics.travel))
+}
+
+// Stored with the other position tuples as [basis points, 0], independently
+// for each static side. Decimal basis points preserve drag precision.
+function staticDockSavedPosition(saved) {
+  return Array.isArray(saved) && saved.length===2 && typeof saved[0]==="number" && isFinite(saved[0])
+    && saved[0]>=0 && saved[0]<=10000 && saved[1]===0 ? saved[0]/10000 : .5
 }
 
 function edgeTargets(point, area, width, height) {

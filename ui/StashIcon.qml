@@ -31,6 +31,13 @@ Ui.BorderSurface {
   property bool bubble: false
   property real sizeScale:1
   property bool draggable:bubble
+  property bool dragCursor:false
+  function cancelPointerInteraction() {
+    if (!pointer.pressed) return
+    pointer.dragging=true
+    dragHeld(false)
+    dragFinished()
+  }
   property string iconShape: "auto"
   property bool hasCursor: false
   property bool cursorManaged: false
@@ -157,7 +164,7 @@ Ui.BorderSurface {
     id:iconHover
     enabled:icon.enabled && !icon.retiring
     blocking:false
-    cursorShape:Qt.PointingHandCursor
+    cursorShape:icon.dragCursor ? (icon.positionHeld ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.PointingHandCursor
     onHoveredChanged: { if (!hovered) icon.previewSuppressed=false; icon.hovered(hovered && !icon.previewSuppressed) }
   }
   MouseArea {
@@ -165,7 +172,7 @@ Ui.BorderSurface {
     anchors.fill: parent
     preventStealing: icon.draggable
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-    cursorShape: Qt.PointingHandCursor
+    cursorShape: icon.dragCursor ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.PointingHandCursor
     property point start
     property real pressedWidth:0
     property real pressedHeight:0

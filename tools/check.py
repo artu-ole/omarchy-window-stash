@@ -42,6 +42,7 @@ run('node','tests/drag_physics.test.cjs')
 run('python3','tests/collection_model.py')
 run('python3','tests/drag_world.py')
 run('python3','tests/stack_follow_qt.py')
+run('python3','tests/static_dock_position.py')
 run('omarchy','plugin','validate',str(ROOT))
 with tempfile.TemporaryDirectory(prefix='window-stash-qml-') as directory:
     qs=Path(directory)/'qs';qs.mkdir()

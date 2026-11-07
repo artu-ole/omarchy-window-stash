@@ -13,7 +13,7 @@ gravity, transparent dock background, frameless icons, Normal animation speed.
 
 | Presentation | Behavior |
 |---|---|
-| Static dock | Any of four screen edges; respects bar reservations and scrolls on overflow. |
+| Static dock | Any of four edges; unlock to slide along its edge, respect bar reservations, and scroll on overflow. |
 | Floating icons | Individual draggable icons, initially at the middle right; edge gravity or free placement. |
 | Floating dock | One draggable stack; one window restores directly, multiple windows unfold into a row or column. |
 
@@ -73,6 +73,7 @@ block and known switcher edits; saved positions remain. Run it **before** generi
 | Window actions and global actions | Right-click an icon or stack; pointer-positioned context menu |
 | Close represented stashed window(s) | Middle-click an icon; collapsed stacks target the front icon |
 | Move floating icons / dock | Drag; positions persist per monitor |
+| Move static dock | Unlock in Placement, then drag an icon or the background along its edge |
 | Navigate chooser / unfolded dock | Arrow keys and Enter; navigation follows dock direction |
 | Fold floating dock | Escape, outside click or workspace change |
 | Preview a window | Hover an icon, stack or chooser row; enable previews in Settings |
@@ -98,6 +99,11 @@ shortcut atomically. Conflicts leave
 settings and bindings intact; parked windows and positions are retained.
 CLI equivalent: `window-stash reset-settings --confirm`.
 
+To move a static dock, unlock **Placement → Static dock position**, then drag
+any icon or its background along the selected edge. Lock it again to keep that
+placement, or leave it unlocked. Each completed drag is saved separately for
+each monitor and edge; positions survive locking and shell restarts.
+
 ## Configuration reference
 
 Settings live in the `community.window-stash` entry in `~/.config/omarchy/shell.json`.
@@ -119,6 +125,7 @@ omarchy-shell window-stash configure hoverPreview live
 | `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle`; retained while frameless |
 | `sizePreset` | `100` | `50`, `75`, `100`, `125`, `150`, `175`, `200`, `250`, `300` percent; all presentations |
 | `dockSide` | `bottom` | `bottom`, `top`, `left`, `right`; static dock |
+| `staticDockLock` | `locked` | `locked`, `unlocked`; allow dragging the static dock along its edge |
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock |
 | `floatingAnimation` | `arc` | `arc`, `glide`, `cascade`, `spring`, `swing`, `matryoshka`, `matryoshka-hop`, `jumping` |
 | `floatingPlacement` | `edges` | `edges`, `free`; both floating presentations |
@@ -252,7 +259,7 @@ restores for retry. [controller/shortcuts.py](controller/shortcuts.py) owns runt
 | Data | Location |
 |---|---|
 | Session ledger | `$XDG_RUNTIME_DIR/omarchy-window-stash/<sanitized compositor signature>/state.json` |
-| Floating positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
+| Icon and dock positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
 | Optional bridge build cache | `$XDG_CACHE_HOME/omarchy/window-stash/preview-bridge/<Hyprland commit>/` |
 | Settings / empty shortcut lock | `$XDG_CONFIG_HOME/omarchy/shell.json` / `.window-stash-shortcuts.lock` |
 

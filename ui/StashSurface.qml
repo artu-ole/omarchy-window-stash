@@ -55,6 +55,7 @@ PanelWindow {
   readonly property string dockSide: config.dockSide || "bottom"
   readonly property bool dockFrameVisible: config.dockFrame === "shown"
   readonly property bool verticalDock: dockSide === "left" || dockSide === "right"
+  readonly property bool staticDockLocked:config.staticDockLock!=="unlocked"
   readonly property var usableArea: Model.usableArea(canvasWidth, canvasHeight, monitor ? monitor.reserved : [])
   readonly property real requestedStaticIconSize:Model.iconSize(config.sizePreset,false,usableArea)
   readonly property real requestedFloatingIconSize:Model.iconSize(config.sizePreset,true,usableArea)
@@ -111,6 +112,29 @@ PanelWindow {
   }
   readonly property string monitorKey: monitor ? Model.monitorKey(monitor) : screen.name
   readonly property var savedPositions: stash.snapshot.positions[monitorKey] || ({})
+  StashStaticDockPosition {
+    id:staticPlacement
+    dock:shelf; area:surface.usableArea; monitor:surface.monitor
+    monitorKey:Model.staticDockMonitorKey(surface.monitor || ({name:surface.screen.name})); side:surface.dockSide
+    savedPositions:surface.stash.snapshot.positions[staticPlacement.monitorKey] || ({})
+    gap:Math.max(Style.gapsOut,surface.metrics.lg)
+    longMargin:surface.metrics.popupPadding
+    enabled:!surface.staticDockLocked && surface.config.presentation==="dock" && surface.groups.length>0
+      && !surface.dialogOpen && !surface.contextMenuOpen
+    layoutKey:JSON.stringify([surface.config.presentation,surface.dockSide,surface.monitorKey,
+      surface.activeWorkspaceId,surface.config.scope,surface.config.grouping,surface.config.sizePreset,
+      surface.usableArea,gap,longMargin,surface.groups.map(function(group) { return group.key })])
+    onStarted:windowPreview.dismiss(true)
+    onHeldChanged:surface.refreshInputMask()
+    onCanceled: {
+      for (var i=0;i<dockIcons.count;i++) {
+        var icon=dockIcons.itemAt(i) as StashIcon
+        if (icon) icon.cancelPointerInteraction()
+      }
+      if (shelfPointer.pressed) shelfPointer.canceledGesture=true
+    }
+    onCommitted:function(monitor,key,position) { surface.stash.recordPosition(monitor,key,position,0) }
+  }
   readonly property bool snapFloating: config.floatingPlacement !== "free"
   readonly property alias dragWorld:motionWorld
   function bubbleForKey(key:string):StashIcon {
@@ -385,7 +409,7 @@ PanelWindow {
     visible:(["previewSize","previewPlacement","previewTitles"].indexOf(modelData.key)<0 || surface.previewsEnabled)
       && (modelData.key!=="livePreviewCompatibility" || surface.config.hoverPreview==="live")
       && ((modelData.key!=="floatingDirection" && modelData.key!=="floatingAnimation") || surface.floatingMode)
-      && (modelData.key!=="dockSide" || surface.config.presentation==="dock")
+      && (["dockSide","staticDockLock"].indexOf(modelData.key)<0 || surface.config.presentation==="dock")
       && (modelData.key!=="floatingPlacement" || surface.bubbleMode || surface.floatingMode)
       && (modelData.key!=="dragMotion" || surface.bubbleMode || surface.floatingMode)
       && (modelData.key!=="dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
@@ -484,6 +508,8 @@ PanelWindow {
       motion:{mode:animations,speed:animationSpeed,exitSerial:exitSerial,completedExits:completedExits,createdShelfIcons:createdShelfIcons,dialogFrames:dialogFrames,shelfBusy:shelfModel.busy,bubbleBusy:bubblesModel.busy,dialogProgress:dialogReveal,dragWorld:motionWorld.details()},
       usableArea:usableArea,
       shelf:{x:shelf.x,y:shelf.y,width:shelf.width,height:shelf.height,side:dockSide,radius:shelf.radius,frameVisible:dockFrameVisible,background:String(shelf.color),
+        locked:staticDockLocked,held:staticPlacement.held,dragging:staticPlacement.dragging,
+        position:Math.round(staticPlacement.position*10000),positionKey:staticPlacement.positionKey,
         borderWidth:Math.max(shelf.borderLeft,shelf.borderRight,shelf.borderTop,shelf.borderBottom),
         insets:{left:shelf.insetLeft,right:shelf.insetRight,top:shelf.insetTop,bottom:shelf.insetBottom},feedback:shelfFeedback.details(),
         contentWidth:dockViewport.contentWidth,viewportWidth:dockViewport.width,contentX:dockViewport.contentX,
@@ -555,7 +581,7 @@ PanelWindow {
     id: inputMask
     // Keep motion on this surface during a drag, including the gaps between
     // small animated regions. Restore click-through immediately on release.
-    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held ? [dialogRegion]
+    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held || staticPlacement.held ? [dialogRegion]
       : (surface.floatingMode ? floatingDock.inputRegions : surface.bubbleMode ? surface.bubbleRegions
           : surface.config.presentation==="dock" && surface.groups.length>0 ? [shelfRegion] : [])
         .concat(surface.contextMenuOpen ? [contextRegion] : [])
@@ -603,14 +629,51 @@ PanelWindow {
       Math.max(Style.gapsOut, surface.metrics.lg), surface.metrics.popupPadding)
     width: geometry.width
     height: geometry.height
-    x:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).x
-    y:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,Math.max(Style.gapsOut,surface.metrics.lg),surface.metrics.popupPadding).y
-    Behavior on width { enabled:!surface.sizeResizing; NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
-    Behavior on height { enabled:!surface.sizeResizing; NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+    x:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,staticPlacement.gap,staticPlacement.longMargin,staticPlacement.position).x
+    y:Model.staticDockRect(surface.usableArea,surface.dockSide,width,height,staticPlacement.gap,staticPlacement.longMargin,staticPlacement.position).y
+    onXChanged:surface.refreshInputMask()
+    onYChanged:surface.refreshInputMask()
+    Behavior on width { enabled:!surface.sizeResizing && !staticPlacement.held; NumberAnimation { id:shelfWidthAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
+    Behavior on height { enabled:!surface.sizeResizing && !staticPlacement.held; NumberAnimation { id:shelfHeightAnimation; duration:Motion.move(surface.animations,surface.animationSpeed); easing.type:Easing.OutCubic } }
     radius: !surface.dockFrameVisible ? 0 : Model.dockRadius(surface.config.dockCorners, surface.config.dockCornerRadius, Style.cornerRadius, width, height)
     onRadiusChanged: surface.refreshInputMask()
     color: surface.dockFrameVisible ? surface.popupColors.background : "transparent"
     borderSpec: surface.dockFrameVisible ? frameSpec : Border.none()
+    MouseArea {
+      id:shelfPointer
+      anchors.fill:parent
+      z:1
+      enabled:staticPlacement.movable
+      acceptedButtons:Qt.LeftButton
+      preventStealing:true
+      cursorShape:pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+      property point start
+      property bool dragging:false
+      property bool canceledGesture:false
+      onPressed:function(mouse) {
+        var point=dockViewport.mapFromItem(shelf,mouse.x,mouse.y)
+        if (point.x>=0 && point.y>=0 && point.x<dockViewport.width && point.y<dockViewport.height) {
+          for (var i=0;i<dockIcons.count;i++) {
+            var icon=dockIcons.itemAt(i) as StashIcon
+            if (!icon || !icon.visible || !icon.enabled) continue
+            var local=icon.mapFromItem(shelf,mouse.x,mouse.y)
+            if (local.x>=0 && local.y>=0 && local.x<icon.width && local.y<icon.height) {
+              mouse.accepted=false
+              return
+            }
+          }
+        }
+        start=Qt.point(mouse.x,mouse.y);dragging=false;canceledGesture=false
+        staticPlacement.press()
+      }
+      onPositionChanged:function(mouse) {
+        if (!pressed || canceledGesture) return
+        var dx=mouse.x-start.x,dy=mouse.y-start.y
+        if (dragging || Math.abs(dx)+Math.abs(dy)>6) { dragging=true;staticPlacement.move(dx,dy) }
+      }
+      onReleased:staticPlacement.release()
+      onCanceled:staticPlacement.release()
+    }
     Widgets.ClippingRectangle {
       anchors.fill:parent
       radius:shelf.radius
@@ -620,6 +683,7 @@ PanelWindow {
       border.width:surface.dockFrameVisible ? Math.max(shelf.frameLeft,shelf.frameRight,shelf.frameTop,shelf.frameBottom) : 0
       Flickable {
         id: dockViewport
+        interactive:!staticPlacement.movable
         anchors.fill: parent
         anchors.leftMargin: shelf.insetLeft
         anchors.rightMargin: shelf.insetRight
@@ -668,6 +732,12 @@ PanelWindow {
               onExited:function(frames) { surface.recordExit("dock",groupKey,frames) }
               Component.onCompleted: { surface.createdShelfIcons++; if (liveIndex>=0) lastSlot=liveIndex }
               enabled:!retiring && surface.config.presentation==="dock"
+              draggable:staticPlacement.movable && !surface.stash.groupClosing(group)
+              dragCursor:draggable
+              positionHeld:staticPlacement.held
+              onDragHeld:function(pressed) { if (pressed) staticPlacement.press(); else staticPlacement.release() }
+              onMoved:function(dx,dy) { staticPlacement.move(dx,dy) }
+              onDragFinished:staticPlacement.release()
               frameVisible: surface.config.iconFrame === "shown"
               iconShape: surface.config.iconShape || "auto"
               previewEnabled:surface.previewsEnabled
@@ -1011,6 +1081,7 @@ PanelWindow {
             id:placementRows
             model:[
               {key: "dockSide", label: "Dock side", values: ["bottom", "top", "left", "right"], labels: ["Bottom", "Top", "Left", "Right"], section: "placement"},
+              {key: "staticDockLock", label: "Static dock position", values: ["locked", "unlocked"], labels: ["Locked", "Unlocked"], section: "placement"},
               {key: "floatingDirection", label: "Floating dock direction", values: ["vertical", "horizontal"], labels: ["Vertical", "Horizontal"], section: "placement"},
               {key: "floatingPlacement", label: "Floating placement", values: ["edges", "free"], labels: ["Snap to edges", "Free placement"], section: "placement"}
             ]
