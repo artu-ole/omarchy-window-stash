@@ -1,10 +1,43 @@
-# Validation — v1.24.0, 6 November 2026
+# Validation
+
+## v1.25.0 — 7 November 2026
+
+Static dock placement passes the complete new native suite and six related
+regression suites: dock sides, small-screen settings, reset, floating fans, hover
+previews and middle-click closure. Checks ran in a disposable nested compositor;
+existing windows and configuration on the working desktop were not used as fixtures.
+
+The non-graphical suite passes **170 Python tests**, **11 Node suites**, **four
+offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **63 Python files**. The update is installed on the working desktop;
+a preserving native check verifies icon dragging, persisted placement, the actual
+Placement relock control and locked gesture refusal. Existing windows, stash,
+preferences, positions, focus and runtime monitor geometry remain unchanged.
+The already loaded Enhanced preview implementation remains compatible without
+restarting Hyprland.
+
+| Requirement | Evidence |
+|---|---|
+| Unlock and relock | Native Placement dropdown; icon and background drags on all four edges; fixed cross-axis position; ordinary clicks restore in both states; locked/outside releases preserve the stash |
+| Persistent placement | Each completed drag saves a normalized position per monitor and edge; all four positions and lock state survive shell restart, scope changes and icon-size reflow |
+| Interrupted gestures | Native end-stop clamps and lock/edge/presentation changes during an active drag; no unintended restore or close; compact single-icon locked docks reject left/middle drag gestures |
+| Overflow and reserved areas | Locked/unlocked axis-wheel scrolling on every edge at 320×240 logical pixels and 1.25 scale; temporary bar appearance/removal preserves placement |
+| Independent monitors | A real second virtual-output drag preserves every saved first-output edge position; anonymous displays use output names without changing older floating-position keys |
+| Drag state races | Actual QML offscreen checks cover resizing into overflow, acknowledgements received while held, one-time cancellation/save, and correct edge/monitor ownership; negative controls reproduce the two races |
+| Native preview updates | Independent native implementation version accepts the unchanged loaded 1.24 bridge across UI-only 1.25 upgrades; 35 builder/helper checks retain strict protocol, implementation-version and compositor ABI guards |
+
+```sh
+python3 tools/check.py
+python3 tests/static_dock_drag.py --small-output
+```
+
+## v1.24.0 baseline — 6 November 2026
 
 Validated against Omarchy **4.5.0-3**, Hyprland **0.56.2-4** (build
 `efb5099`), Quickshell **0.3.2.r7.g2b4501a-1**, Qt **6.12** and Ghostty
 **1.4.0**.
 
-The completed regression matrix passes **36 native suites**, including their
+The completed v1.24.0 regression matrix passed **36 native suites**, including their
 small-output variants, **164 Python tests**, **11 Node suites**, **three
 offscreen Qt suites**, manifest validation and warning-free QML lint. Python
 syntax checks cover all **61 source and test files**. Native suites ran in a
