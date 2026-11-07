@@ -68,7 +68,9 @@ class PreviewBridge:
         self.hypr = hypr or Hyprland()
         self.progress = progress or (lambda value: None)
         self.cancelled = cancelled or (lambda: False)
-        self.version = json.loads((ROOT/'manifest.json').read_text())['version']
+        self.version = (ROOT/'native/version.txt').read_text().strip()
+        if not re.fullmatch(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)', self.version):
+            raise RuntimeError('Invalid native preview bridge version in native/version.txt')
         self.probe = PROBE + 'if info.version ~= ' + lua(self.version) + " then error('" + RESTART_REQUIRED + "') end\n"
         self.ready = False
         self.generation = 0

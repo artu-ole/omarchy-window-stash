@@ -17,7 +17,7 @@ from stash import PLUGIN, SPECIAL, Stash, atomic_json
 
 IDENT = 'a'*32
 OTHER = 'b'*32
-VERSION = json.loads((Path(__file__).resolve().parents[1]/'manifest.json').read_text())['version']
+VERSION = (Path(__file__).resolve().parents[1]/'native/version.txt').read_text().strip()
 
 
 def record(ident=IDENT, address='0x123'):
@@ -226,6 +226,54 @@ class PreviewCompatibilityTests(unittest.TestCase):
             bridge.ensure()
         run.assert_not_called()
         self.assertEqual(len(ipc.evals), 1)
+
+    @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
+    def test_shell_release_update_accepts_unchanged_loaded_native_implementation(self):
+        root = Path(self.temporary.name)
+        (root/'native').mkdir()
+        (root/'native/version.txt').write_text('1.24.0\n')
+        manifest = root/'manifest.json'
+        manifest.write_text(json.dumps(dict(version='1.25.0')))
+        class Loaded:
+            def __init__(self): self.calls = 0
+            def eval(self, script):
+                self.calls += 1
+                source = ('hl={plugin={window_stash_preview={status=function() return '
+                          '{protocol=1,version="1.24.0"} end,update=function() end}}}\n'+script)
+                result = subprocess.run(['lua', '-'], input=source, text=True, capture_output=True)
+                if result.returncode:
+                    raise RuntimeError(result.stderr)
+            def read(self, _subject): raise AssertionError('Compatible loaded code needs no compositor version query')
+        ipc = Loaded()
+        with patch('preview.ROOT', root), patch('preview.subprocess.run', wraps=subprocess.run) as run:
+            for shell_version in ('1.25.0', '2.0.0', None):
+                if shell_version is None:
+                    manifest.unlink()
+                else:
+                    manifest.write_text(json.dumps(dict(version=shell_version)))
+                bridge = PreviewBridge(ipc)
+                self.assertEqual(bridge.version, '1.24.0')
+                bridge.ensure()
+                self.assertTrue(bridge.ready)
+        self.assertEqual(ipc.calls, 3)
+        self.assertTrue(all(call.args[0] == ['lua', '-'] for call in run.call_args_list),
+                        'An unchanged native bridge must never rebuild or reload after a shell update')
+
+    def test_missing_or_invalid_native_version_refuses_before_ipc(self):
+        root = Path(self.temporary.name)
+        (root/'native').mkdir()
+        version_file = root/'native/version.txt'
+        ipc = unittest.mock.Mock()
+        with patch('preview.ROOT', root):
+            for value in ('', 'development', '1.2', '01.2.3', '1.2.3-extra', '1.2.3\n4.5.6'):
+                with self.subTest(value=value):
+                    version_file.write_text(value)
+                    with self.assertRaisesRegex(RuntimeError, 'Invalid native preview bridge version'):
+                        PreviewBridge(ipc)
+            version_file.unlink()
+            with self.assertRaises(FileNotFoundError):
+                PreviewBridge(ipc)
+        self.assertEqual(ipc.mock_calls, [])
 
     def test_wrong_runtime_identity_refuses_to_build(self):
         class Missing:

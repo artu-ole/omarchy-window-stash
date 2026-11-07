@@ -20,6 +20,13 @@ The builder prints JSON with the binary path, build hash, version and protocol.
 running compositor. Loading also checks the full Hyprland and dependency ABI.
 The source uses Hyprland internals; rebuild after compositor updates.
 
+`native/version.txt` identifies the native implementation independently of the
+shell plugin's manifest version. Bump it whenever `preview.cpp` changes; UI-only
+releases keep it unchanged so an already loaded, compatible bridge remains usable.
+The builder embeds this version and includes it in the cache fingerprint. The
+helper requires an exact match alongside protocol and compositor ABI checks;
+changing native versions requires restarting Hyprland to replace loaded code.
+
 The Lua API lives under `hl.plugin.window_stash_preview`:
 
 ```lua

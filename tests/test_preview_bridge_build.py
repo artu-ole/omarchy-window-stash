@@ -25,7 +25,9 @@ class PreviewBridgeBuildTests(unittest.TestCase):
         (self.root/'native').mkdir()
         self.source = self.root/'native/preview.cpp'
         self.source.write_text('// fake bridge source\n')
-        (self.root/'manifest.json').write_text(json.dumps(dict(version='1.0.0')))
+        self.version = self.root/'native/version.txt'
+        self.version.write_text('1.0.0\n')
+        (self.root/'manifest.json').write_text(json.dumps(dict(version='9.0.0')))
         self.headers = self.root/'include/hyprland'
         (self.headers/'src').mkdir(parents=True)
         self.header = self.headers/'src/version.h'
@@ -64,7 +66,8 @@ class PreviewBridgeBuildTests(unittest.TestCase):
     def test_matching_build_is_cached_without_touching_binary(self):
         result = self.build()
         before = self.output.stat().st_mtime_ns
-        self.assertEqual((result['path'], result['hyprlandHash'], result['protocol']), (str(self.output), COMMIT, 1))
+        self.assertEqual((result['path'], result['hyprlandHash'], result['protocol'], result['version']),
+                         (str(self.output), COMMIT, 1, '1.0.0'))
         self.assertEqual(self.build(), result)
         self.assertEqual(self.output.stat().st_mtime_ns, before)
         self.assertEqual(len(self.compiles), 1)
@@ -90,12 +93,36 @@ class PreviewBridgeBuildTests(unittest.TestCase):
         self.build()
         changes = [lambda: self.source.write_text('// changed bridge\n'),
                    lambda: self.header.write_text(self.header.read_text()+'// changed headers\n'),
-                   lambda: (self.root/'manifest.json').write_text(json.dumps(dict(version='1.0.1'))),
+                   lambda: self.version.write_text('1.0.1\n'),
                    lambda: setattr(self, 'flags', self.flags+' -DCHANGED_OPTION=1')]
         for index, change in enumerate(changes, 2):
             change()
             self.build()
             self.assertEqual(len(self.compiles), index)
+
+    def test_shell_manifest_update_does_not_rebuild_or_change_native_version(self):
+        result = self.build()
+        before = self.output.read_bytes(), self.metadata().read_bytes(), self.output.stat().st_mtime_ns
+        (self.root/'manifest.json').write_text(json.dumps(dict(version='9.1.0')))
+        self.assertEqual(self.build(), result)
+        (self.root/'manifest.json').unlink()
+        self.assertEqual(self.build(), result)
+        self.assertEqual((self.output.read_bytes(), self.metadata().read_bytes(), self.output.stat().st_mtime_ns), before)
+        self.assertEqual(len(self.compiles), 1)
+        self.assertIn('-DSTASH_BRIDGE_VERSION="1.0.0"', self.compiles[0])
+
+    def test_missing_or_invalid_native_version_refuses_without_compiling(self):
+        for version in ('', 'development', '1.2', '01.2.3', '1.2.3-extra', '1.2.3\n4.5.6'):
+            with self.subTest(version=version):
+                self.version.write_text(version)
+                with self.assertRaisesRegex(RuntimeError, 'Invalid native preview bridge version'):
+                    self.build()
+        self.version.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.build()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.metadata().exists())
+        self.assertEqual(self.compiles, [])
 
     def test_corrupt_binary_or_metadata_rebuilds(self):
         self.build()

@@ -21,6 +21,9 @@ def main():
     parser.add_argument('--expected-hash', help='Reject headers from another compositor build')
     args = parser.parse_args()
     source = ROOT / 'native/preview.cpp'
+    version = (ROOT / 'native/version.txt').read_text().strip()
+    if not re.fullmatch(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)', version):
+        raise RuntimeError('Invalid native preview bridge version in native/version.txt')
     flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', 'hyprland'], text=True))
     include_roots = [Path(value[2:]) for value in flags if value.startswith('-I')]
     header = next((p / 'src/version.h' for p in include_roots if (p / 'src/version.h').is_file()), None)
@@ -32,7 +35,6 @@ def main():
     hypr_hash = match.group(1)
     if args.expected_hash and args.expected_hash != hypr_hash:
         raise RuntimeError('Installed Hyprland headers do not match the running compositor; update or restart Hyprland first')
-    version = json.loads((ROOT / 'manifest.json').read_text())['version']
     compiler = shlex.split(os.environ.get('CXX', 'c++'))
     compiler_version = subprocess.check_output([*compiler, '--version'], text=True).splitlines()[0]
     options = ['-std=c++26', '-shared', '-fPIC', '-O2', '-Wall', '-Wextra',
