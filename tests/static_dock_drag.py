@@ -122,7 +122,7 @@ def background(value):
     return dict(x=x-.5, y=y-.5, width=1, height=1)
 
 
-def move_pointer(session, rect, dx, dy, during=None):
+def move_pointer(session, rect, dx, dy, during=None, button=272):
     x, y = rect['x']+rect['width']/2, rect['y']+rect['height']/2
     area = session.surface()
     def move(px, py):
@@ -134,7 +134,7 @@ def move_pointer(session, rect, dx, dy, during=None):
     # Let the mapped edge region and hover delivery settle before pressing,
     # as Pointer.click does after changing the physical cursor position.
     time.sleep(.06)
-    session.pointer.button(True)
+    session.pointer.button(True, button)
     # Match Pointer.click's press delivery interval before injecting motion;
     # thin gutters otherwise leave the region before Qt can acquire the grab.
     time.sleep(.05)
@@ -145,7 +145,7 @@ def move_pointer(session, rect, dx, dy, during=None):
             if step == 5 and during:
                 during()
     finally:
-        session.pointer.button(False)
+        session.pointer.button(False, button)
 
 
 def drag(session, target, along, cross, movable=True):
@@ -426,6 +426,20 @@ def main(with_small_output=False):
         restore_click(session, records, True)
         restore_click(session, records, False)
         print('PASS lock and all edge positions survive restart; ordinary clicks restore correctly in both lock states', flush=True)
+        configure('dockSide', 'bottom')
+        configure('grouping', 'app')
+        configure('staticDockLock', 'locked')
+        wait(lambda: len(settled(session)['icons']) == 1, 'Compact locked dock did not group its fixtures')
+        before_ids = ids()
+        for preset in ('100', '50'):
+            configure('sizePreset', preset)
+            for button in (272, 274):
+                for dx in (100, 0):
+                    move_pointer(session, settled(session)['icons'][0], dx, -65, button=button)
+                    assert ids() == before_ids, 'Dragging outside a compact locked dock activated or closed its icon'
+        configure('sizePreset', '100')
+        print('PASS compact single-icon locked docks reject left/middle drag gestures without restoring or closing', flush=True)
+        configure('grouping', 'window')
         if with_small_output:
             small_output(session)
 

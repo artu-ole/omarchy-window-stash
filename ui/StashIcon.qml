@@ -12,6 +12,7 @@ Ui.BorderSurface {
   readonly property var popupColors: Commons.Color.popups
   readonly property var fonts: Style.font
   readonly property var metrics: Style.spacing
+  readonly property var dragHints:Qt.styleHints
   required property var group
   property string animations:"full"
   property string animationSpeed:"normal"
@@ -179,9 +180,14 @@ Ui.BorderSurface {
     property bool dragging: false
     onPressed: function(mouse) { pressedWidth=icon.width;pressedHeight=icon.height;icon.previewSuppressed=true; icon.pointerPressed(mouse.button); start = Qt.point(mouse.x, mouse.y); dragging = false; if (icon.draggable && mouse.button === Qt.LeftButton) icon.dragHeld(true) }
     onPositionChanged: function(mouse) {
-      if (!icon.draggable || !pressed || pressedButtons !== Qt.LeftButton) return
+      if (!pressed || (pressedButtons !== Qt.LeftButton && pressedButtons !== Qt.MiddleButton)) return
       var dx = mouse.x - start.x, dy = mouse.y - start.y
-      if (dragging || Math.abs(dx) + Math.abs(dy) > 6) { dragging = true; icon.moved(dx, dy) }
+      var moving=icon.draggable && pressedButtons===Qt.LeftButton
+      var threshold=moving ? 6 : Math.min(Number(icon.dragHints.startDragDistance) || 10,Math.max(1,icon.width/4))
+      if (dragging || Math.abs(dx) + Math.abs(dy) > threshold) {
+        dragging = true
+        if (moving) icon.moved(dx, dy)
+      }
     }
     onCanceled: { if (icon.draggable) { icon.dragHeld(false); icon.dragFinished() } }
     onReleased: function(mouse) {
