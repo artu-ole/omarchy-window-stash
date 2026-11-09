@@ -15,6 +15,16 @@ checks for **63 Python files**. All three lifecycle command examples also pass
 shell syntax checks. No desktop input or installed configuration was changed
 for these checks.
 
+On the working desktop, the previous manual installation was removed through
+cleanup and `omarchy plugin remove`, then cloned from public GitHub with
+`omarchy plugin add`. Setup from that checkout, CLI enablement and a shell
+restart succeeded. The user's existing explicit shortcut override was preserved
+before setup. Native checks passed for Settings, all three presentations,
+click restoration with exact floating geometry, configurable keyboard actions,
+thumbnail capture and release, and five distinct Enhanced Ghostty/btop frames
+with unchanged focus/geometry and released rendering leases. Preferences, saved
+positions, personal bindings and the monitor profile were verified afterwards.
+
 ## v1.25.0 — 7 November 2026
 
 Static dock placement passes the complete new native suite and six related
