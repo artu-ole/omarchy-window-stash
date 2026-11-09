@@ -1,5 +1,20 @@
 # Validation
 
+## CLI-managed installation — 9 November 2026
+
+The README uses the installed `omarchy plugin add`, `enable`, `update` and
+`remove` commands. Installer regressions use temporary files and mocked desktop
+IPC to verify repeatable setup within a Git checkout, unchanged source/local
+files, preserved preferences and positions, and cleanup before CLI removal.
+Failed restoration or unconfirmed shell disablement prevents successful cleanup;
+delayed shortcut synchronization respects the disabled-plugin setting.
+
+The non-graphical suite passes **181 Python tests**, **11 Node suites**, **four
+offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **63 Python files**. All three lifecycle command examples also pass
+shell syntax checks. No desktop input or installed configuration was changed
+for these checks.
+
 ## v1.25.0 — 7 November 2026
 
 Static dock placement passes the complete new native suite and six related

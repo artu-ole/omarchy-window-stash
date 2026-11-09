@@ -25,22 +25,20 @@ and per-window or per-app grouping. An empty stash takes no screen space or inpu
 Works on Omarchy 4 and 4.5. The shell must provide `qs.Commons`, `qs.Ui`,
 `Quickshell.Widgets`, `QtQuick.Effects` and `Quickshell.Wayland`.
 Have `omarchy`, `omarchy-shell`, `hyprctl`, `~/.config/hypr/bindings.lua` and
-`~/.config/omarchy/shell.json` available. Run as your normal desktop user:
+`~/.config/omarchy/shell.json` available. Install as your normal desktop user:
 
 ```sh
-git clone https://github.com/artu-ole/omarchy-window-stash.git
-cd omarchy-window-stash
-python3 tools/install.py
-omarchy restart shell
+omarchy plugin add https://github.com/artu-ole/omarchy-window-stash
+python3 ~/.config/omarchy/plugins/community.window-stash/tools/install.py &&
+    omarchy plugin enable community.window-stash &&
+    omarchy restart shell
 ```
 
-**Use the helper.** Generic Omarchy plugin installation does not install the
-controller or shortcuts. Keep this checkout for updates and removal.
-
-The helper previews changes and asks for confirmation (`--yes` for automation).
-It installs `community.window-stash` in `~/.config/omarchy/plugins/`, creates
-`~/.local/bin/window-stash`, enables the plugin in `shell.json`, and adds a marked
-shortcut loader to `bindings.lua`. It checks shortcut conflicts, backs up config,
+When `add` asks whether to enable the plugin, choose **No**; enable it after setup.
+`omarchy plugin add` manages the Git checkout. The bundled setup creates
+`~/.local/bin/window-stash` and adds a marked shortcut loader
+to `bindings.lua`. The helper previews changes and asks for confirmation (`--yes`
+for automation). It checks shortcut conflicts, backs up config,
 reloads Hyprland while preserving runtime monitor geometry, and rescans plugins.
 It uses no root privileges or packaged-file edits. `community.window-switcher`, if
 present, is patched for restoration; incompatible anchors abort installation.
@@ -49,18 +47,32 @@ Tested with switcher 1.0.0.
 Window Stash uses its own hidden workspace. Updating migrates only verified
 plugin-owned legacy entries; other minimized windows stay untouched.
 
-Update with `git pull`, rerun the helper, then `omarchy restart shell`. Existing
-preferences persist. Remove from the checkout:
+Update the CLI-managed checkout and rerun setup; existing preferences persist:
 
 ```sh
-python3 tools/install.py --uninstall
+omarchy plugin update community.window-stash
+python3 ~/.config/omarchy/plugins/community.window-stash/tools/install.py
+omarchy restart shell
 ```
 
-Removal restores parked windows and removes the plugin, wrapper, managed binding
-block and known switcher edits; saved positions remain. Run it **before** generic
-`omarchy plugin remove`, which does not run cleanup hooks. Backups are under
+Before removal, run cleanup to restore parked windows, disable the plugin and
+remove its wrapper, managed binding block and known switcher edits. Then let the
+CLI remove the checkout:
+
+```sh
+python3 ~/.config/omarchy/plugins/community.window-stash/tools/install.py --prepare-remove &&
+    omarchy plugin remove community.window-stash
+```
+
+**Run cleanup first:** `omarchy plugin remove` does not run cleanup hooks.
+Preferences and saved positions remain. Backups are under
 `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 `~/.local/state/omarchy/window-stash/backups`).
+
+For an older helper-only installation, run `python3 tools/install.py --prepare-remove`
+from an up-to-date source checkout, then `omarchy plugin remove community.window-stash`
+and follow the install commands above. This converts it
+to a CLI-managed checkout while keeping preferences and positions.
 
 ## Use
 
