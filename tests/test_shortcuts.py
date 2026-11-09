@@ -35,7 +35,7 @@ class FakeIPC:
         return self.apply_error or 'ok'
 
 
-def binding(key='A', mods=64, description='Other action', arg='17', **extra):
+def binding(key='A', mods=72, description='Other action', arg='17', **extra):
     result = dict(key=key, modmask=mods, dispatcher='__lua', arg=arg, description=description, submap='')
     result.update(extra)
     return result
@@ -69,13 +69,15 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(shortcuts.settings({'minimizeShortcut': '', 'restoreLastShortcut': 'ctrl+z',
                                              'restoreOldestShortcut': False}),
                          {'minimizeShortcut': '', 'restoreLastShortcut': 'CTRL + Z', 'restoreOldestShortcut': ''})
-        self.assertEqual(shortcuts.settings({'minimizeShortcut': None})['minimizeShortcut'], 'SUPER + A')
+        self.assertEqual(shortcuts.settings({'minimizeShortcut': None})['minimizeShortcut'], shortcuts.DEFAULT_SHORTCUTS['minimizeShortcut'])
+        self.assertEqual(shortcuts.settings({'minimizeShortcut': 'SUPER + A', 'restoreLastShortcut': 'SUPER + Z'}),
+                         dict(shortcuts.DEFAULT_SHORTCUTS,minimizeShortcut='SUPER + A',restoreLastShortcut='SUPER + Z'))
 
     def test_duplicate_or_foreign_conflicts_do_not_change_settings_or_apply(self):
         before = self.config.read_bytes()
-        cases = [('restoreOldestShortcut', 'SUPER+Z', FakeIPC()),
+        cases = [('restoreOldestShortcut', shortcuts.DEFAULT_SHORTCUTS['restoreLastShortcut'], FakeIPC()),
                  ('restoreOldestShortcut', 'ALT+F2', FakeIPC([binding('F2', 8)])),
-                 ('minimizeShortcut', 'SUPER+A', FakeIPC([binding(description='Window Stash: pretend')]))]
+                 ('minimizeShortcut', 'SUPER+A', FakeIPC([binding(mods=64,description='Window Stash: pretend')]))]
         for key, value, ipc in cases:
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'already'):
                 shortcuts.configure(self.config, key, value, ipc)
@@ -153,6 +155,72 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(result['shortcuts'],shortcuts.DEFAULT_SHORTCUTS)
         self.assertEqual([arguments[0] for arguments in ipc.calls],['repl','binds','eval'])
         self.assertIn('m.apply(',ipc.calls[-1][1])
+
+    def test_default_dispatch_uses_bundled_python_controller_and_explicit_argv_is_preserved(self):
+        expected=[sys.executable,str(ROOT/'controller/stash.py')]
+        self.assertEqual(shortcuts.controller_command(),expected)
+        self.assertEqual(shortcuts.controller_command(Path('/tmp/legacy wrapper')),['/tmp/legacy wrapper'])
+        explicit=['/tmp/python executable',"/tmp/user's plugin/controller.py"]
+        self.assertEqual(shortcuts.controller_command(explicit),explicit)
+        for invalid in ([],[''],[None],False,''):
+            with self.subTest(invalid=invalid),self.assertRaises(ValueError):shortcuts.controller_command(invalid)
+        ipc=FakeIPC()
+        shortcuts.sync(self.config,ipc)
+        self.assertIn(shortcuts._lua(expected[0]),ipc.calls[-1][1])
+        self.assertIn(shortcuts._lua(expected[1]),ipc.calls[-1][1])
+        self.assertNotIn('.local/bin/window-stash',ipc.calls[-1][1])
+
+    def test_startup_conflict_keeps_other_actions_and_desired_preferences(self):
+        before=self.config.read_bytes()
+        ipc=FakeIPC([binding(description='Existing desktop action')])
+        result=shortcuts.sync(self.config,ipc)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['shortcuts'],shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual(result['activeShortcuts'],dict(shortcuts.DEFAULT_SHORTCUTS,minimizeShortcut=''))
+        self.assertEqual(set(result['conflicts']),{'minimizeShortcut'})
+        self.assertIn('Existing desktop action',result['conflicts']['minimizeShortcut'])
+        self.assertIn('Settings',result['conflicts']['minimizeShortcut'])
+        self.assertIn('minimizeShortcut=""',ipc.calls[-1][1])
+        self.assertIn('restoreLastShortcut="SUPER + ALT + Z"',ipc.calls[-1][1])
+        self.assertEqual(self.config.read_bytes(),before)
+
+    def test_startup_duplicate_only_disables_the_later_action_without_changing_preferences(self):
+        self.original['plugins'][1].update(minimizeShortcut='ALT + F8',restoreLastShortcut='ALT + F8')
+        self.config.write_text(json.dumps(self.original))
+        before=self.config.read_bytes()
+        result=shortcuts.sync(self.config,FakeIPC())
+        self.assertEqual(result['activeShortcuts']['minimizeShortcut'],'ALT + F8')
+        self.assertEqual(result['activeShortcuts']['restoreLastShortcut'],'')
+        self.assertEqual(set(result['conflicts']),{'restoreLastShortcut'})
+        self.assertEqual(self.config.read_bytes(),before)
+
+    def test_owner_claim_is_locked_and_sync_checks_the_current_owner(self):
+        ipc=FakeIPC()
+        with patch.object(shortcuts,'_locked',wraps=shortcuts._locked) as lock:
+            result=shortcuts.claim('current-generation',self.config,ipc)
+        lock.assert_called_once_with(self.config.resolve())
+        self.assertEqual(result['owner'],'current-generation')
+        self.assertIn('m.claim("current-generation")',ipc.calls[-1][1])
+        shortcuts.sync(self.config,ipc,owner='current-generation')
+        self.assertIn(',"current-generation")',ipc.calls[-1][1])
+        self.assertIn('Shortcut owner changed',ipc.calls[-1][1])
+
+    def test_cleanup_and_owner_query_do_not_load_files_from_a_removed_checkout(self):
+        ipc=FakeIPC()
+        with patch.object(shortcuts,'__file__','/deleted plugin/controller/shortcuts.py'):
+            shortcuts.disable(self.config,ipc,owner='old-generation')
+            for answer,expected in (('true',True),('false',False)):
+                calls=[]
+                def query(*args):calls.append(args);return answer
+                self.assertIs(shortcuts.is_owner('old-generation',query),expected)
+                self.assertNotIn('loadfile',calls[0][1])
+            self.assertNotIn('loadfile',ipc.calls[-1][1])
+            self.assertIn('m.owner=="old-generation"',ipc.calls[-1][1])
+        with self.assertRaisesRegex(RuntimeError,'ownership'):
+            shortcuts.is_owner('old-generation',lambda *_:'[]')
+        for invalid in ('',None,'x\n',[1],'x'*129):
+            with self.subTest(invalid=invalid),self.assertRaises(ValueError):
+                shortcuts.is_owner(invalid,lambda *_:self.fail('Invalid token reached IPC'))
 
     def test_apply_failure_never_persists_new_value(self):
         before = self.config.read_bytes()
@@ -255,6 +323,64 @@ assert(executions[1]:find(' sync ',1,true))
         self.assertEqual(len(owned), 6)
         self.assertTrue(all(not entry['enabled'] for entry in owned))
         self.assertTrue(all(entry['description'].startswith('Window Stash:') for entry in owned))
+
+    @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
+    def test_argv_quoting_owner_handoff_and_cleanup_after_module_deletion(self):
+        root=Path(self.directory.name)
+        module=root/'copied shortcuts.lua'
+        shutil.copy2(ROOT/'controller/shortcuts.lua',module)
+        recorder=root/"controller user's file.py"
+        recorder.write_text('import json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+        marker=root/'must-not-exist'
+        payload="$(touch "+str(marker)+") `touch "+str(marker)+"` user's literal"
+        final_argument='two lines\nstay one argument'
+        commands=root/'dispatch.txt'
+        ipc=FakeIPC()
+        shortcuts.disable(self.config,ipc,owner='old-owner');old_cleanup=ipc.calls[-1][1]
+        shortcuts.disable(self.config,ipc,owner='new-owner');new_cleanup=ipc.calls[-1][1]
+        script=root/'handoff.lua'
+        script.write_text(r'''
+local all, commands = {}, {}
+hl={dsp={exec_cmd=function(command) return command end}}
+function hl.bind(chord,command,options)
+  local h={handler='__lua',arg=tostring(#all+1),description=options.description,
+    key='A',modmask=72,submap='',enabled=true}
+  function h:set_enabled(value) self.enabled=value end
+  function h:is_enabled() return self.enabled end
+  all[#all+1]=h; commands[#commands+1]=command
+  return h
+end
+local foreign=hl.bind('SUPER + A','foreign',{description='Other app'})
+local historical=hl.bind('SUPER + A','legacy',{description='Window Stash: old shortcut'})
+_community_window_stash_shortcuts={version=1,cache={legacy={handle=historical}}}
+local m=assert(loadfile(arg[1]))('runtime')
+assert(m.version==2 and not historical.enabled and foreign.enabled)
+assert(m.cache.legacy.handle==historical)
+local values={minimizeShortcut='SUPER + ALT + A',restoreLastShortcut='',restoreOldestShortcut=''}
+local argv={arg[3],arg[4],arg[5],arg[6]}
+m.claim('old-owner');assert(m.apply(values,argv,'old-owner'))
+assert(#all==3 and all[3].enabled)
+local out=assert(io.open(arg[2],'wb'));out:write(commands[3]);out:close()
+assert(os.remove(arg[1]));assert(not loadfile(arg[1]))
+m.claim('new-owner')
+assert(not m.apply(values,argv,'old-owner'))
+assert(#all==3 and all[3].enabled)
+assert(load(arg[7]))()
+assert(all[3].enabled and foreign.enabled)
+assert(m.apply(values,argv,'new-owner'))
+assert(#all==3)
+assert(load(arg[8]))()
+assert(not all[3].enabled and foreign.enabled and not historical.enabled)
+''')
+        result=subprocess.run(['lua',str(script),str(module),str(commands),sys.executable,
+                               str(recorder),payload,final_argument,old_cleanup,new_cleanup],
+                              capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(module.exists())
+        executed=subprocess.run(commands.read_text(),shell=True,capture_output=True,text=True)
+        self.assertEqual(executed.returncode,0,executed.stderr)
+        self.assertEqual(json.loads(executed.stdout),[payload,final_argument,'minimize'])
+        self.assertFalse(marker.exists(),'A quoted controller argument was executed by the shell')
 
 
 if __name__ == '__main__':

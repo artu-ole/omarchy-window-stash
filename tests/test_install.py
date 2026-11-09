@@ -274,8 +274,8 @@ class InstallerShortcutTests(unittest.TestCase):
     def test_legacy_lookalike_duplicate_remains_a_conflict(self):
         self.bindings.write_text(self.legacy())
         before=self.bindings.read_bytes(),self.shell.read_bytes()
-        live=[self.live('minimizeShortcut',reference='1'),self.live('minimizeShortcut',reference='2'),
-              self.live('restoreLastShortcut',reference='3')]
+        live=[self.live('minimizeShortcut','SUPER + A',reference='1'),self.live('minimizeShortcut','SUPER + A',reference='2'),
+              self.live('restoreLastShortcut','SUPER + Z',reference='3')]
         with self.assertRaisesRegex(RuntimeError,'already assigned'):
             self.invoke(live=live)
         self.assert_unchanged(*before)
@@ -324,18 +324,18 @@ class InstallerShortcutTests(unittest.TestCase):
 
     def test_cached_runtime_handles_are_not_mistaken_for_legacy_handles(self):
         self.bindings.write_text(self.legacy())
-        owned=[self.live('minimizeShortcut',reference='10'),self.live('restoreLastShortcut',reference='11')]
-        legacy=[self.live('minimizeShortcut',reference='1'),self.live('restoreLastShortcut',reference='2')]
+        owned=[self.live('minimizeShortcut','SUPER + A',reference='10'),self.live('restoreLastShortcut','SUPER + Z',reference='11')]
+        legacy=[self.live('minimizeShortcut','SUPER + A',reference='1'),self.live('restoreLastShortcut','SUPER + Z',reference='2')]
         self.invoke(live=owned+legacy,owned=owned)
         self.assertIn('dofile(',self.bindings.read_text())
 
     def test_legacy_custom_submap_is_not_silently_moved_to_global(self):
         self.bindings.write_text(self.legacy())
         before=self.bindings.read_bytes(),self.shell.read_bytes()
-        binding=self.live('minimizeShortcut')
+        binding=self.live('minimizeShortcut','SUPER + A')
         binding['submap']='custom'
         with self.assertRaisesRegex(RuntimeError,'custom submap'):
-            self.invoke(live=[binding,self.live('restoreLastShortcut',reference='2')])
+            self.invoke(live=[binding,self.live('restoreLastShortcut','SUPER + Z',reference='2')])
         self.assert_unchanged(*before)
 
     def test_uninstall_disables_handles_before_deleting_and_preserves_outside_block(self):

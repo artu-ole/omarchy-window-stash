@@ -15,8 +15,10 @@ import tempfile
 
 
 PLUGIN = "community.window-stash"
-DEFAULT_SHORTCUTS = {"minimizeShortcut": "SUPER + A", "restoreLastShortcut": "SUPER + Z",
+DEFAULT_SHORTCUTS = {"minimizeShortcut": "SUPER + ALT + A", "restoreLastShortcut": "SUPER + ALT + Z",
                      "restoreOldestShortcut": ""}
+MANAGER = "_community_window_stash_shortcuts"
+MANAGER_VERSION = 2
 ACTIONS = {"minimizeShortcut": ("minimize", "Window Stash: minimize focused window"),
            "restoreLastShortcut": ("restore-last", "Window Stash: restore last minimized"),
            "restoreOldestShortcut": ("restore-oldest", "Window Stash: restore oldest minimized")}
@@ -147,7 +149,9 @@ def _run(*args):
 
 
 def _module():
-    return "local m=assert(loadfile(" + _lua(Path(__file__).with_suffix(".lua")) + "))('runtime'); "
+    return ("local m=" + MANAGER + "; if not m or m.version~=" + str(MANAGER_VERSION)
+            + " then m=assert(loadfile(" + _lua(Path(__file__).with_suffix(".lua"))
+            + "))('runtime') end; ")
 
 
 def _runtime(runner):
@@ -167,11 +171,57 @@ def runtime_state(runner=None):
     return _runtime(runner or _run)
 
 
-def _apply(values, runner, binary=None):
-    binary = Path(binary) if binary is not None else Path.home()/".local/bin/window-stash"
-    output = runner("eval", _module() + "m.apply(" + lua_source(values) + "," + _lua(str(binary)) + ")")
+def controller_command(binary=None):
+    """Invoke the bundled controller without a separately installed wrapper."""
+    if binary is None:
+        return [sys.executable, str(Path(__file__).with_name("stash.py").resolve())]
+    if isinstance(binary, (list, tuple)):
+        if not binary or any(not isinstance(value, (str, os.PathLike)) or not str(value) for value in binary):
+            raise ValueError("Controller command must contain nonempty arguments")
+        return [str(value) for value in binary]
+    if not isinstance(binary, (str, os.PathLike)) or not str(binary):
+        raise ValueError("Controller command must name an executable")
+    return [str(binary)]
+
+
+def _owner(owner):
+    if (not isinstance(owner, str) or not owner or len(owner) > 128
+            or any(ord(character) < 33 or ord(character) > 126 for character in owner)):
+        raise ValueError("Invalid shortcut owner token")
+    return _lua(owner)
+
+
+def _apply(values, runner, binary=None, owner=None):
+    command = "{" + ",".join(_lua(argument) for argument in controller_command(binary)) + "}"
+    token = "," + _owner(owner) if owner is not None else ""
+    output = runner("eval", _module() + "assert(m.apply(" + lua_source(values) + "," + command + token
+                    + "), 'Shortcut owner changed')")
     if output != "ok":
         raise RuntimeError(output or "Could not apply keyboard shortcuts")
+
+
+def claim(owner, config_path=None, runner=None):
+    """Claim exact handles for a live service generation.
+
+    The lifecycle helper additionally serializes claims against window cleanup
+    using its runtime lock. The shortcut lock orders this against settings edits.
+    """
+    token = _owner(owner)
+    path = _config_path(config_path)
+    runner = runner or _run
+    with _locked(path):
+        output = runner("eval", _module() + "m.claim(" + token + ")")
+        if output != "ok":
+            raise RuntimeError(output or "Could not claim Window Stash shortcuts")
+    return {"ok": True, "action": "shortcuts-claimed", "owner": owner}
+
+
+def is_owner(owner, runner=None):
+    """Read ownership even after the plugin's files have been removed."""
+    raw = (runner or _run)("repl", "local m=" + MANAGER + "; return m ~= nil and m.owner == " + _owner(owner))
+    if raw not in ("true", "false"):
+        raise RuntimeError("Could not read Window Stash shortcut ownership")
+    return raw == "true"
 
 
 def _config_path(path=None):
@@ -282,7 +332,7 @@ def reset_settings(config_path, defaults, runner=None, binary=None):
     return {"ok": True, "action": "settings-reset", "settings": defaults, "shortcuts": desired}
 
 
-def sync(config_path=None, runner=None, binary=None):
+def sync(config_path=None, runner=None, binary=None, owner=None):
     path = _config_path(config_path)
     runner = runner or _run
     with _locked(path):
@@ -291,25 +341,38 @@ def sync(config_path=None, runner=None, binary=None):
         if isinstance(disabled, list) and PLUGIN in disabled:
             # A service update queued before --prepare-remove may start after
             # the host unloads it. Never recreate its handles during cleanup.
-            return _disable(runner)
+            return _disable(runner, owner)
         binds, owned = _runtime(runner)
-        values = validate(settings(entry), binds, owned)
-        _apply(values, runner, binary)
-    return {"ok": True, "shortcuts": values}
+        values = settings(entry)
+        active = {key: "" for key in DEFAULT_SHORTCUTS}
+        conflicts = {}
+        for key, chord in values.items():
+            candidate = dict(active, **{key: chord})
+            try:
+                validate(candidate, binds, owned)
+            except ValueError as error:
+                conflicts[key] = str(error) + ". Choose another shortcut in Window Stash Settings."
+            else:
+                active[key] = chord
+        _apply(active, runner, binary, owner)
+    return {"ok": True, "shortcuts": values, "activeShortcuts": active, "conflicts": conflicts}
 
 
-def _disable(runner):
-    output = runner("eval", _module() + "m.disable()")
+def _disable(runner, owner=None):
+    # Do not load the Lua file here: generic `omarchy plugin remove` may have
+    # deleted it before the lifecycle helper receives EOF/SIGTERM.
+    condition = "m" + (" and m.owner==" + _owner(owner) if owner is not None else "")
+    output = runner("eval", "local m=" + MANAGER + "; if " + condition + " then m.disable() end")
     if output != "ok":
         raise RuntimeError(output or "Could not disable Window Stash shortcuts")
     return {"ok": True, "action": "shortcuts-disabled"}
 
 
-def disable(config_path=None, runner=None):
+def disable(config_path=None, runner=None, owner=None):
     path = _config_path(config_path)
     runner = runner or _run
     with _locked(path):
-        return _disable(runner)
+        return _disable(runner, owner)
 
 
 def main():

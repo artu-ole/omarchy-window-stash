@@ -42,7 +42,7 @@ class FakeIPC:
 
 
 def binding(key='A', arg='17'):
-    return dict(key=key, modmask=64, dispatcher='__lua', arg=arg,
+    return dict(key=key, modmask=72, dispatcher='__lua', arg=arg,
                 description='Window Stash: minimize focused window', submap='')
 
 
@@ -88,8 +88,8 @@ class ResetSettingsTests(unittest.TestCase):
                                      shortcuts=shortcuts.DEFAULT_SHORTCUTS))
         self.assertEqual(lock.call_count, 1)
         self.assertEqual([args[0] for args in ipc.calls], ['repl', 'binds', 'eval'])
-        self.assertIn('minimizeShortcut="SUPER + A"', ipc.applies[0])
-        self.assertIn('restoreLastShortcut="SUPER + Z"', ipc.applies[0])
+        self.assertIn('minimizeShortcut="SUPER + ALT + A"', ipc.applies[0])
+        self.assertIn('restoreLastShortcut="SUPER + ALT + Z"', ipc.applies[0])
         self.assertIn('restoreOldestShortcut=""', ipc.applies[0])
         self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
         self.assertEqual(list(self.root.glob('.window-stash-shortcuts-*')), [])

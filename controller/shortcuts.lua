@@ -3,8 +3,14 @@
 local mode = ...
 local manager = _community_window_stash_shortcuts
 if not manager then
-  manager = { version = 1, cache = {} }
+  manager = { version = 2, cache = {} }
   _community_window_stash_shortcuts = manager
+elseif manager.version ~= 2 then
+  -- Keep exact historical handles visible to conflict checking: bind JSON
+  -- omits their enabled state, so discarding the cache makes them look foreign.
+  for _, record in pairs(manager.cache or {}) do record.handle:set_enabled(false) end
+  manager.version = 2
+  manager.owner = nil
 end
 
 local actions = {
@@ -24,8 +30,15 @@ local function json_quote(value)
   end) .. '"'
 end
 
-function manager.disable()
+function manager.claim(owner)
+  assert(type(owner) == 'string' and owner ~= '', 'Missing shortcut owner')
+  manager.owner = owner
+end
+
+function manager.disable(owner)
+  if owner ~= nil and manager.owner ~= owner then return false end
   for _, record in pairs(manager.cache) do record.handle:set_enabled(false) end
+  return true
 end
 
 function manager.inspect()
@@ -43,18 +56,29 @@ function manager.inspect()
   return '[' .. table.concat(result, ',') .. ']'
 end
 
-function manager.apply(values, binary)
+function manager.apply(values, command, owner)
+  if owner ~= nil and manager.owner ~= owner then return false end
+  -- A string remains supported for old managed loaders; new callers pass the
+  -- interpreter and bundled script as separately quoted argv elements.
+  if type(command) == 'string' then command = { command } end
+  assert(type(command) == 'table' and #command > 0, 'Missing controller command')
+  local quoted = {}
+  for _, argument in ipairs(command) do
+    assert(type(argument) == 'string' and argument ~= '', 'Invalid controller argument')
+    quoted[#quoted + 1] = shell_quote(argument)
+  end
+  local executable = table.concat(quoted, ' ')
   local chosen, created = {}, {}
   local ok, message = pcall(function()
     for _, key in ipairs(order) do
       local chord = values[key]
       assert(type(chord) == 'string', 'Missing shortcut value')
       if chord ~= '' then
-        local identity = key .. '\n' .. chord .. '\n' .. binary
+        local identity = key .. '\n' .. chord .. '\n' .. executable
         local record = manager.cache[identity]
         if not record or record.handle:is_enabled() == nil then
           local action = actions[key]
-          local handle = assert(hl.bind(chord, hl.dsp.exec_cmd(shell_quote(binary) .. ' ' .. action[1]),
+          local handle = assert(hl.bind(chord, hl.dsp.exec_cmd(executable .. ' ' .. action[1]),
                                         { description = action[2] }), 'Could not create shortcut')
           handle:set_enabled(false)
           record = { handle = handle }
@@ -71,6 +95,7 @@ function manager.apply(values, binary)
   end
   manager.disable()
   for _, record in ipairs(chosen) do record.handle:set_enabled(true) end
+  return true
 end
 
 if mode ~= 'runtime' then

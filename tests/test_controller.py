@@ -577,7 +577,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
-            minimizeShortcut="SUPER + A",restoreLastShortcut="SUPER + Z",restoreOldestShortcut=""))
+            minimizeShortcut="SUPER + ALT + A",restoreLastShortcut="SUPER + ALT + Z",restoreOldestShortcut=""))
 
     def test_size_preset_default_and_legacy_settings(self):
         self.assertEqual(self.stash.settings()["sizePreset"], "100")
