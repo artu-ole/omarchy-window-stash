@@ -11,7 +11,7 @@ import time
 from desktop_test import desktop_test
 from live import command, configure, h, shell, wait
 from native_session import NativeSession
-from shortcuts import normalize
+from shortcuts import DEFAULT_SHORTCUTS, normalize
 from stash import SPECIAL
 
 
@@ -166,6 +166,12 @@ def main():
         saved(session, KEYS[1], newest)
         edit(session, KEYS[2], oldest)
         saved(session, KEYS[2], oldest)
+        for key, custom in zip(KEYS[:2], (minimize, newest)):
+            assert control(session, key)['defaultBinding'] == DEFAULT_SHORTCUTS[key], 'UI default differs from the controller'
+            session.click(reveal(session, key, 'defaultRect'))
+            saved(session, key, DEFAULT_SHORTCUTS[key])
+            edit(session, key, custom)
+            saved(session, key, custom)
         rejected(session, KEYS[2], newest)
         rejected(session, KEYS[2], foreign)
         edit(session, KEYS[2], oldest, enter=True)

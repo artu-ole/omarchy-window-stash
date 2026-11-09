@@ -116,6 +116,15 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.hypr.clients[0]["floating"])
         self.assertEqual(self.stash.state["windows"],[])
 
+    def test_snapshot_separates_canonical_shortcut_defaults_from_saved_overrides(self):
+        self.settings(minimizeShortcut="CTRL + F8", restoreLastShortcut="ALT + F9", restoreOldestShortcut="")
+        snapshot = self.stash.listing()
+        self.assertEqual(snapshot["settings"]["minimizeShortcut"], "CTRL + F8")
+        self.assertEqual(snapshot["settings"]["restoreLastShortcut"], "ALT + F9")
+        self.assertEqual(snapshot["shortcutDefaults"], shortcuts.DEFAULT_SHORTCUTS)
+        snapshot["shortcutDefaults"]["minimizeShortcut"] = ""
+        self.assertEqual(self.stash.listing()["shortcutDefaults"], shortcuts.DEFAULT_SHORTCUTS)
+
     def test_external_focus_restores_owned_parked_window_and_geometry(self):
         self.hypr.clients[0]["floating"] = True
         ident = self.stash.minimize()["id"]

@@ -1,5 +1,14 @@
 # Validation
 
+## v1.26.1 — shortcut reset defaults — 9 November 2026
+
+Per-field shortcut reset buttons read the same controller defaults as Reset all;
+legacy and custom saved bindings remain separate. Native clicks on all three
+reset buttons verify the displayed default, persisted preference and runtime
+binding, followed by restored original preferences. The complete non-graphical
+check passes **231 Python tests**, **11 Node suites**, **four offscreen Qt suites**,
+manifest validation, warning-free QML lint and Python syntax checks.
+
 ## v1.26.0 — automatic CLI lifecycle — 9 November 2026
 
 Fresh installation uses only `omarchy plugin add <GitHub URL> --enable`.

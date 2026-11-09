@@ -472,6 +472,7 @@ end''' % (lua("address:"+address), lua(destination), lua(width))
         self.reconcile(clients)
         return dict(ok=True, windows=sorted(self.state["windows"], key=lambda r:r["order"], reverse=True),
                     monitors=monitors, workspaces=workspaces, settings=self.settings(),
+                    shortcutDefaults=dict(shortcuts.DEFAULT_SHORTCUTS),
                     statePath=str(self.path), positions=read_json(self.positions, {}))
 
     def restore_last(self, to=None, monitor=None, workspace=None):

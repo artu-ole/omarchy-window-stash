@@ -1154,14 +1154,16 @@ PanelWindow {
           Ui.PanelSectionHeader { id:shortcutsHeader; text:"Keyboard shortcuts"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
             id:shortcutRows
-            model:[{key:"minimizeShortcut",label:"Minimize window",defaultValue:"SUPER + A"},
-              {key:"restoreLastShortcut",label:"Restore newest (last in, first out)",defaultValue:"SUPER + Z"},
-              {key:"restoreOldestShortcut",label:"Restore oldest (first in, first out)",defaultValue:""}]
+            model:[{key:"minimizeShortcut",label:"Minimize window"},
+              {key:"restoreLastShortcut",label:"Restore newest (last in, first out)"},
+              {key:"restoreOldestShortcut",label:"Restore oldest (first in, first out)"}]
             delegate:StashShortcutField {
               required property var modelData
+              readonly property string canonicalDefault:(surface.stash.snapshot.shortcutDefaults || {})[modelData.key] || ""
+              enabled:!!surface.stash.snapshot.shortcutDefaults
               stash:surface.stash; settingKey:modelData.key; label:modelData.label
-              binding:surface.config[modelData.key]===undefined ? modelData.defaultValue : surface.config[modelData.key]
-              defaultBinding:modelData.defaultValue
+              binding:surface.config[modelData.key]===undefined ? canonicalDefault : surface.config[modelData.key]
+              defaultBinding:canonicalDefault
               animations:surface.animations; animationSpeed:surface.animationSpeed; foreground:surface.popupColors.text
             }
           }

@@ -53,7 +53,7 @@ ColumnLayout {
     return {x:point.x,y:point.y,width:item.width,height:item.height}
   }
   function details(coordinateRoot) {
-    return {key:settingKey,text:input.text,binding:binding,dirty:dirty,pending:awaiting,
+    return {key:settingKey,text:input.text,binding:binding,defaultBinding:defaultBinding,dirty:dirty,pending:awaiting,
       field:rectOf(input,coordinateRoot),fieldRect:rectOf(input,coordinateRoot),applyRect:rectOf(applyButton,coordinateRoot),
       clearRect:rectOf(clearButton,coordinateRoot),defaultRect:rectOf(defaultButton,coordinateRoot)}
   }
