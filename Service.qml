@@ -10,7 +10,14 @@ Item {
   id: root
   property var shell: null
   readonly property string pluginId: "community.window-stash"
-  readonly property string controller: Quickshell.env("HOME") + "/.local/bin/window-stash"
+  readonly property string controller: decodeURIComponent(Qt.resolvedUrl("controller/stash.py").toString().replace(/^file:\/\//,""))
+  readonly property var controllerCommand: ["python3",controller]
+  property string lifecycleOwner: Date.now().toString(16)+"-"+Math.random().toString(16).slice(2)
+  property bool stopping:false
+  property bool lifecycleReady: false
+  property string lifecycleError: ""
+  property var lifecycleWarnings: []
+  property var activeShortcuts: ({})
   property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "hidden", dockFrame: "hidden", animations: "full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
@@ -68,7 +75,60 @@ Item {
   signal pointerMoved(real x,real y)
   signal shortcutConfigured(string key,string value)
   signal settingsReset()
-  Timer { id:shortcutSyncDelay; interval:0; onTriggered:root.enqueue(["shortcuts-sync"]) }
+  Timer { id:shortcutSyncDelay; interval:0; onTriggered:root.syncShortcuts() }
+  function syncShortcuts() {
+    if (lifecycle.running && lifecycleReady) lifecycle.write(JSON.stringify({action:"sync"})+"\n")
+  }
+  function checkpointPreferences() {
+    if (lifecycle.running && lifecycleReady) lifecycle.write(JSON.stringify({settings:root.snapshot.settings})+"\n")
+  }
+  function lifecycleStatus(value) {
+    if (value.owner && value.owner!==lifecycleOwner) return
+    if (value.state==="error") {
+      lifecycleError=value.error || "Window Stash lifecycle support is unavailable"
+      lastError=lifecycleError
+      return
+    }
+    if (value.state!=="ready") return
+    var first=!lifecycleReady
+    lifecycleReady=true; lifecycleError=""
+    if (value.warnings) lifecycleWarnings=value.warnings
+    if (value.activeShortcuts) activeShortcuts=value.activeShortcuts
+    var previous=shortcutSyncError
+    shortcutSyncError=Object.keys(value.conflicts || {}).map(function(key) { return value.conflicts[key] }).join("\n")
+    if (shortcutSyncError) lastError=shortcutSyncError
+    else if (lastError===previous) lastError=""
+    if (first) { root.refresh(); root.pump() }
+  }
+  Process {
+    id:lifecycle
+    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/lifecycle.py").toString().replace(/^file:\/\//,"")),"--owner",root.lifecycleOwner]
+    stdinEnabled:true
+    running:true
+    stdout:SplitParser {
+      onRead:function(line) {
+        try { root.lifecycleStatus(JSON.parse(line)) }
+        catch (error) { root.lifecycleError="Could not read lifecycle support status"; root.lastError=root.lifecycleError }
+      }
+    }
+    stderr:StdioCollector {}
+    onExited:function(code) {
+      root.lifecycleReady=false
+      if (code!==0) {
+        root.lifecycleError="Window Stash lifecycle support stopped unexpectedly"
+        root.lastError=root.lifecycleError
+      }
+      if (!root.stopping) lifecycleRestart.restart()
+    }
+  }
+  Timer {
+    id:lifecycleRestart
+    interval:750
+    onTriggered:if (!root.stopping) {
+      root.lifecycleOwner=Date.now().toString(16)+"-"+Math.random().toString(16).slice(2)
+      lifecycle.running=true
+    }
+  }
   StashClickObserver {
     id:clickObserver
     watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
@@ -141,7 +201,7 @@ Item {
     pump()
   }
   function pump() {
-    if (worker.running) return
+    if (worker.running || !lifecycleReady) return
     if (queue.length === 0) {
       if (pendingRefresh) { pendingRefresh = false; enqueue(["list"]) }
       return
@@ -150,7 +210,7 @@ Item {
     var args = next.shift()
     queue = next
     runningArgs=args; closeNotified=false
-    worker.command = [controller].concat(args)
+    worker.command = controllerCommand.concat(args)
     worker.running = true
   }
   function screenMonitor(name) {
@@ -329,6 +389,7 @@ Item {
     next.settings = patch
     snapshot = next
     shell.updateEntryInline(pluginId, patch)
+    checkpointPreferences()
     refresh()
   }
   function applyDeferredSettings() {
@@ -358,6 +419,14 @@ Item {
       if (worker.running || root.queue.length) root.pendingRefresh = true
       else root.enqueue(["list"])
     }
+  }
+  // A switcher can activate a parked Wayland toplevel directly. Check the
+  // compositor's current focus after the initiating transaction completes;
+  // never infer activation from a stale UI snapshot or mutate another plugin.
+  Timer {
+    id:externalActivationDelay
+    interval:100
+    onTriggered:if (root.lifecycleReady) root.enqueue(["recover-focused"])
   }
   // Reserve changes do not emit workspace events. Refresh while a visible
   // dock or edge-snapped bubble needs to stay clear of bars.
@@ -393,12 +462,14 @@ Item {
             if (root.runningArgs[0]==="shortcut" && result.key!==undefined && result.binding!==undefined) {
               var next=Object.assign({},root.snapshot), settings=Object.assign({},root.snapshot.settings)
               settings[result.key]=result.binding; next.settings=settings; root.snapshot=next
+              root.checkpointPreferences()
               root.shortcutConfigured(result.key,result.binding)
             }
             if (root.runningArgs[0]==="reset-settings" && result.action==="settings-reset" && result.settings) {
               var resetSnapshot=Object.assign({},root.snapshot)
               resetSnapshot.settings=Object.assign({},result.settings)
               root.snapshot=resetSnapshot
+              root.checkpointPreferences()
               root.resetting=false
               root.settingsReset()
             }
@@ -426,6 +497,7 @@ Item {
     target: Hyprland
     function onRawEvent(event) {
       if (!event) return
+      if (event.name==="activewindowv2" && root.snapshot.windows.length) externalActivationDelay.restart()
       if (event.name==="configreloaded") {
         shortcutSyncDelay.restart()
         root.pointerKnown=false; root.resetPointerHold()
@@ -450,6 +522,7 @@ Item {
     target: "window-stash"
     function status(): string {
       return JSON.stringify({loaded: true, windows: root.snapshot.windows.length,
+        lifecycle:{ready:root.lifecycleReady,owner:root.lifecycleOwner,error:root.lifecycleError,warnings:root.lifecycleWarnings},activeShortcuts:root.activeShortcuts,
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
@@ -464,6 +537,10 @@ Item {
     function dismiss(): void { root.closeContext(); root.closeDialog() }
     function refresh(): void { root.refresh() }
     function configure(key: string, value: string): void { root.setting(key, value) }
+    function minimize(): void { root.enqueue(["minimize"]) }
+    function restoreLast(): void { root.enqueue(["restore-last"]) }
+    function restoreOldest(): void { root.enqueue(["restore-oldest"]) }
   }
   Component.onCompleted: refresh()
+  Component.onDestruction:root.stopping=true
 }
