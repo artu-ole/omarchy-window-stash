@@ -120,6 +120,40 @@ class ShortcutTests(unittest.TestCase):
         self.assertTrue((self.config.parent/'.window-stash-shortcuts.lock').exists())
         self.assertIn('m.disable()', ipc.calls[-1][1])
 
+    def test_delayed_sync_disables_owned_handles_when_plugin_is_denied(self):
+        self.original['disabledPlugins']=['other.disabled',shortcuts.PLUGIN]
+        self.config.write_text(json.dumps(self.original))
+        before=self.config.read_bytes()
+        ipc=FakeIPC([binding()])
+        with patch.object(shortcuts,'_locked',wraps=shortcuts._locked) as lock:
+            result=shortcuts.sync(self.config,ipc)
+        lock.assert_called_once_with(self.config.resolve())
+        self.assertEqual(result,{'ok':True,'action':'shortcuts-disabled'})
+        self.assertEqual(len(ipc.calls),1)
+        self.assertEqual(ipc.calls[0][0],'eval')
+        self.assertIn('m.disable()',ipc.calls[0][1])
+        self.assertNotIn('m.apply(',ipc.calls[0][1])
+        self.assertEqual(self.config.read_bytes(),before)
+
+    def test_denied_plugin_disable_failure_is_reported_without_applying(self):
+        self.original['disabledPlugins']=[shortcuts.PLUGIN]
+        self.config.write_text(json.dumps(self.original))
+        ipc=FakeIPC()
+        ipc.apply_error='error: handle disable failed'
+        with self.assertRaisesRegex(RuntimeError,'handle disable failed'):
+            shortcuts.sync(self.config,ipc)
+        self.assertEqual(len(ipc.calls),1)
+        self.assertNotIn('m.apply(',ipc.calls[0][1])
+
+    def test_another_disabled_plugin_does_not_prevent_sync(self):
+        self.original['disabledPlugins']=['other.disabled']
+        self.config.write_text(json.dumps(self.original))
+        ipc=FakeIPC()
+        result=shortcuts.sync(self.config,ipc)
+        self.assertEqual(result['shortcuts'],shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual([arguments[0] for arguments in ipc.calls],['repl','binds','eval'])
+        self.assertIn('m.apply(',ipc.calls[-1][1])
+
     def test_apply_failure_never_persists_new_value(self):
         before = self.config.read_bytes()
         ipc = FakeIPC()

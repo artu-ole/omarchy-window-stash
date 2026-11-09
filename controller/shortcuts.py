@@ -286,21 +286,30 @@ def sync(config_path=None, runner=None, binary=None):
     path = _config_path(config_path)
     runner = runner or _run
     with _locked(path):
-        _, entry = _read(path)
+        data, entry = _read(path)
+        disabled = data.get("disabledPlugins")
+        if isinstance(disabled, list) and PLUGIN in disabled:
+            # A service update queued before --prepare-remove may start after
+            # the host unloads it. Never recreate its handles during cleanup.
+            return _disable(runner)
         binds, owned = _runtime(runner)
         values = validate(settings(entry), binds, owned)
         _apply(values, runner, binary)
     return {"ok": True, "shortcuts": values}
 
 
+def _disable(runner):
+    output = runner("eval", _module() + "m.disable()")
+    if output != "ok":
+        raise RuntimeError(output or "Could not disable Window Stash shortcuts")
+    return {"ok": True, "action": "shortcuts-disabled"}
+
+
 def disable(config_path=None, runner=None):
     path = _config_path(config_path)
     runner = runner or _run
     with _locked(path):
-        output = runner("eval", _module() + "m.disable()")
-        if output != "ok":
-            raise RuntimeError(output or "Could not disable Window Stash shortcuts")
-    return {"ok": True, "action": "shortcuts-disabled"}
+        return _disable(runner)
 
 
 def main():
