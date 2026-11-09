@@ -18,6 +18,7 @@ import sys
 import time
 import uuid
 
+sys.dont_write_bytecode = True
 from stash import CHOICES, DEFAULTS, PLUGIN, PREFIX, Stash, atomic_json, lua
 import shortcuts
 

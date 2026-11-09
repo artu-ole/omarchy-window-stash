@@ -13,6 +13,9 @@ import tempfile
 import time
 import uuid
 
+# The shell watches the checkout for code changes. Runtime imports must not
+# create cache files there and trigger a service reload.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import shortcuts
 

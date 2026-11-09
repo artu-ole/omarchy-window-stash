@@ -11,6 +11,7 @@ import sys
 import time
 import uuid
 
+sys.dont_write_bytecode = True
 from stash import Hyprland, PREFIX, SPECIAL, Stash, lua
 
 ROOT = Path(__file__).resolve().parents[1]
