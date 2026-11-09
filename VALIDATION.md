@@ -1,5 +1,21 @@
 # Validation
 
+## v1.27.1 — retire manual installation — 9 November 2026
+
+The retired manual installer and its unused configuration-writing helpers are
+removed. Installation/removal use the Omarchy CLI; conservative automatic legacy
+migration and its private backups remain available. Obsolete installer tests are
+retired, with seven focused legacy-recognition regressions retained alongside
+migration, runtime-shortcut and lifecycle coverage.
+
+The complete non-graphical suite passes **210 Python tests**, **11 Node suites**,
+**four offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **68 Python files**. Native checks in a disposable desktop pass the
+complete CLI add/update/disable/source-deleted-remove/reinstall lifecycle, default
+FIFO/LIFO actions and floating geometry. The modernized UI routing suite also
+passes bubble click-through, grouped chooser search/Enter and icon-specific
+original-workspace restoration, with preserving fixture cleanup.
+
 ## v1.27.0 — one-handed defaults and FIFO shortcut — 9 November 2026
 
 Defaults are Super+D to stash, Super+Z to restore newest, and Super+Alt+Z to

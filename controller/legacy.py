@@ -3,8 +3,6 @@ import re
 
 import shortcuts
 
-lua = shortcuts._lua
-
 BEGIN = "-- Window Stash: begin"
 END = "-- Window Stash: end"
 LITERAL = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')'''
@@ -107,25 +105,6 @@ def binding_block(text, binary, target):
     return dict(start=begin[0], end=end[1], beginLine=begin[2], endLine=end[2], legacy=imported, calls=calls,overrides=overrides)
 
 
-def replace_binding_block(text, block, target, uninstall=False):
-    if uninstall:
-        return text[:block['start']]+text[block['end']:] if block else text
-    newline = '\r\n' if block and block['beginLine'].endswith('\r\n') else '\n'
-    ending = newline if not block or block['endLine'].endswith('\n') else ''
-    lines=[BEGIN]
-    # Keep only overrides the user already wrote explicitly. A legacy override
-    # must be paired with an owned bind; after migration it persists even when
-    # that action is rebound in Settings, until this whole block is removed.
-    for override in block.get('overrides',[]) if block else []:
-        lines.extend(override['comments'])
-        lines.append(override['line'])
-    lines.extend(['dofile('+lua(str(target/'controller/shortcuts.lua'))+')',END])
-    managed = newline.join(lines)+ending
-    if block:
-        return text[:block['start']]+managed+text[block['end']:]
-    return text+('' if not text or text.endswith('\n') else newline)+managed
-
-
 def integration_patches():
     return {
         "Switcher.qml": [
@@ -152,15 +131,5 @@ def integration_patches():
             ('  "minimized"', '  "minimized",\n  "stashManaged"')
         ]
     }
-
-
-def upgrade_integration(text):
-    return text.replace('window-stash", "restore", address]', 'window-stash", "activate", address]').replace(
-        '''      stashManaged: workspaceName === "special:minimized" && Array.isArray(ipc.tags)
-        && ipc.tags.some(function(tag) { return String(tag).indexOf("window-stash-") === 0 }),''',
-        '''      // The controller decides ownership; IPC tag snapshots may lag.
-      stashManaged: workspaceName === "special:window-stash",''').replace(
-        'stashManaged: workspaceName === "special:minimized",',
-        'stashManaged: workspaceName === "special:window-stash",')
 
 

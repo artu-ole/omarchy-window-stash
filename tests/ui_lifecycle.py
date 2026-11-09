@@ -1,116 +1,87 @@
 #!/usr/bin/env python3
-"""Live input routing, chooser, context restoration, and install/removal checks."""
-import json
-from pathlib import Path
-import subprocess
-import time
-import live
-from live import h, shell, command, configure, spawn, stash, wait, Pointer,fixture_settings,require_empty_stash
+"""Preserving native checks for bubble input and keyboard chooser restoration.
+
+Plugin installation and removal belong to the disposable-profile CLI suite in
+plugin_cli.py; this suite leaves the installed plugin and real stash intact.
+"""
 from desktop_test import desktop_test
-
-monitor_name=None
-
-def surface():
-    return next(s for s in shell('status')['surfaces'] if s['screen']==monitor_name)
+from live import command, configure, h, shell, wait
+from native_session import NativeSession
+from stash import SPECIAL
 
 
-def point(x,y):
-    monitors=h.read('monitors');monitor=next(m for m in monitors if m['name']==monitor_name)
-    left=min(m['x'] for m in monitors);top=min(m['y'] for m in monitors)
-    right=max(m['x']+round(m['width']/m['scale']) for m in monitors)
-    bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
-    return monitor['x']+x-left,monitor['y']+y-top,right-left,bottom-top
+def window_key(record):
+    return 'window:'+str(record.get('stableId') or record['id'])
 
 
-def click(pointer,rect,button=272):
-    pointer.click(*point(rect['x']+rect['width']/2,rect['y']+rect['height']/2),button=button)
-
-
-@desktop_test('Window Stash UI lifecycle tests')
+@desktop_test('Window Stash UI routing and restoration tests')
 def main():
-    global monitor_name
-    original=h.read('activewindow');original_ws=h.read('activeworkspace')['id']
-    monitor_name=next(m['name'] for m in h.read('monitors') if m['focused'])
-    snapshot=command('list');settings=snapshot['settings'];pointer=None
-    require_empty_stash(snapshot)
-    try:
-        fixture_settings()
-        configure("floatingPlacement","free")
-        assert not command('list')['windows']
-        first=spawn('Stash UI alpha');second=spawn('Stash UI beta')
-        for address in (first,second):
-            h.dispatch('window.float',window='address:'+address,action='on')
-            h.dispatch('window.resize',window='address:'+address,x=640,y=420,relative=False)
-            m=next(m for m in h.read('monitors') if m['name']==monitor_name)
-            h.dispatch('window.move',window='address:'+address,x=m['x']+120,y=m['y']+160,relative=False)
-        first_id=stash(first)
-        configure('presentation','bubbles')
-        configure('scope','global')
-        configure('grouping','window')
-        wait(lambda:len(surface()['bubbles'])==1,'Bubble missing')
-        h.dispatch('focus',window='address:'+second)
-        pointer=Pointer()
-        # The full-screen transparent bubble surface must pass this input to GTK.
-        pointer.click(*point(420,350))
-        wait(lambda:h.client(second)['title'].endswith('clicked'),'Bubble surface swallowed an outside click')
-        click(pointer,surface()['bubbles'][0])
-        wait(lambda:not command('list')['windows'],'Bubble click did not restore')
-        print('PASS bubble click and outside input passthrough',flush=True)
+    with NativeSession() as t:
+        for key, value in dict(presentation='bubbles', scope='workspace', grouping='window',
+                               floatingPlacement='free', dragMotion='direct', hoverPreview='off',
+                               animations='off', animationSpeed='normal', sizePreset='100',
+                               iconShape='square', iconOpacity=100, restoreDestination='current',
+                               dockSide='bottom', staticDockLock='locked').items():
+            configure(key, value)
+        first, first_title = t.spawn(app='org.windowstash.UiLifecycle')
+        second, second_title = t.spawn(app='org.windowstash.UiLifecycle')
+        area = t.surface()['usableArea']
+        width, height = min(640, int(area['width'])-40), min(420, int(area['height'])-100)
+        x, y = t.monitor['x']+round(area['x'])+20, t.monitor['y']+round(area['y'])+50
+        for address in (first, second):
+            h.dispatch('window.float', window='address:'+address, action='on')
+            h.dispatch('window.resize', window='address:'+address, x=width, y=height, relative=False)
+            h.dispatch('window.move', window='address:'+address, x=x, y=y, relative=False)
+            wait(lambda: (c := h.client(address)) and c['floating']
+                 and c['at'] == [x, y] and c['size'] == [width, height], 'Fixture geometry did not settle')
 
-        first_id=stash(first);second_id=stash(second)
-        configure('presentation','dock');configure('grouping','app')
-        wait(lambda:surface()['groups']==1,'App group missing')
-        shelf=surface()['shelf']
-        pointer.click(*point(shelf['x']+32,shelf['y']+32))
-        wait(lambda:shell('status')['dialog']=='picker' and surface()['pickerCount']==2,'Grouped icon did not open chooser')
-        # The dialog must own keyboard focus, and Enter must restore its filtered row.
-        subprocess.run(['wtype','Stash UI alpha'],check=True)
-        wait(lambda:surface()['pickerCount']==1,'Chooser keyboard search failed')
-        subprocess.run(['wtype','-k','Return'],check=True)
-        wait(lambda:h.client(first)['workspace']['id']==9,'Chooser Enter did not restore selected window')
-        assert h.client(second)['workspace']['name']=='special:window-stash'
-        print('PASS grouped icon, keyboard search and chooser restoration',flush=True)
+        record = t.park(first)
+        key = window_key(record)
+        t.position(key, round(area['x']+area['width']-64), round(area['y']+area['height']-64))
+        h.dispatch('focus', window='address:'+second)
+        # Empty regions of the bubble surface must preserve native GTK input.
+        t.pointer.click(*t.point(x-t.monitor['x']+width/2, y-t.monitor['y']+height/2))
+        wait(lambda: h.client(second)['title'] == second_title+' clicked', 'Bubble surface swallowed an outside click')
+        t.click(t.icon(key))
+        wait(lambda: h.client(first)['workspace']['id'] == t.workspace, 'Bubble click did not restore its window')
+        wait(lambda: all(w['id'] != record['id'] for w in command('list')['windows']), 'Restored bubble kept its stash record')
+        assert h.client(first)['floating'] and h.client(first)['at'] == [x, y] and h.client(first)['size'] == [width, height]
+        print('PASS bubble input passthrough, direct restoration and floating geometry', flush=True)
 
-        first_id=stash(first)
-        h.dispatch('focus',workspace='10')
-        configure('presentation','bubbles');configure('grouping','window')
-        wait(lambda:len(surface()['bubbles'])==2,'Per-window bubbles missing')
-        record=next(w for w in command('list')['windows'] if w['id']==first_id)
-        key='window:'+record['stableId']
-        bubble=next(b for b in surface()['bubbles'] if b['key']==key)
-        click(pointer,bubble,273)
-        wait(lambda:shell('status')['dialog']=='menu','Bubble context menu missing')
-        click(pointer,surface()['actions']['original'])
-        wait(lambda:h.client(first)['workspace']['id']==9,'Context restore-original ignored its destination')
-        print('PASS explicit original-workspace context action',flush=True)
+        t.park(first)
+        second_record = t.park(second)
+        configure('presentation', 'dock')
+        configure('grouping', 'app')
+        group_key = 'app:'+second_record['app'].lower()
+        wait(lambda: t.surface()['groups'] == 1 and t.icon(group_key), 'App group did not appear')
+        t.click(t.icon(group_key))
+        wait(lambda: shell('status')['dialog'] == 'picker' and t.surface()['dialog']['visible']
+             and t.surface()['pickerCount'] == 2, 'Grouped icon did not open its chooser')
+        t.keys(first_title)
+        wait(lambda: t.surface()['pickerCount'] == 1, 'Chooser keyboard search failed')
+        t.keys('-k', 'Return')
+        wait(lambda: h.client(first)['workspace']['id'] == t.workspace, 'Chooser Enter did not restore the filtered window')
+        assert h.client(second)['workspace']['name'] == SPECIAL, 'Chooser restored an unselected app window'
+        wait(lambda: not t.surface()['dialog']['visible'], 'Chooser remained over the restored window')
+        print('PASS grouped chooser keyboard focus, search and specific Enter restoration', flush=True)
 
-        # The removal helper must restore parked windows before deleting the UI.
-        pointer.close();pointer=None
-        subprocess.run(['python3',str(live.ROOT/'tools/install.py'),'--uninstall','--yes'],check=True)
-        assert h.client(second)['workspace']['id']>0,'Removal stranded a minimized window'
-        config=Path.home()/'.config/omarchy/shell.json'
-        assert not any(p.get('id')=='community.window-stash' for p in json.loads(config.read_text())['plugins'])
-        assert '-- Window Stash: begin' not in (Path.home()/'.config/hypr/bindings.lua').read_text()
-        switcher=Path.home()/'.config/omarchy/plugins/community.window-switcher'
-        assert 'pendingStashAddress' not in (switcher/'Switcher.qml').read_text()
-        assert 'stashManaged' not in (switcher/'components/WindowRecords.qml').read_text()
-        subprocess.run(['python3',str(live.ROOT/'tools/install.py'),'--yes'],check=True)
-        subprocess.run(['omarchy','restart','shell'],check=True)
-        wait(lambda:shell('status')['loaded'],'Service did not return after reinstall')
-        assert not command('list')['windows']
-        print('PASS uninstall recovery, integration removal and reinstall',flush=True)
-    finally:
-        if pointer:pointer.close()
-        if not Path(live.binary).exists():subprocess.run(['python3',str(live.ROOT/'tools/install.py'),'--yes'],check=True)
-        subprocess.run([live.binary,'restore-all'],capture_output=True)
-        for address in live.addresses:
-            if h.client(address):h.dispatch('window.close',window='address:'+address)
-        for p in live.processes:
-            if p.poll() is None:p.terminate()
-        for key,value in settings.items():configure(key,value)
-        shell('dismiss')
-        h.dispatch('focus',workspace=str(original_ws))
-        if original and h.client(original['address']):h.dispatch('focus',window='address:'+original['address'])
+        record = t.park(first)
+        configure('presentation', 'bubbles')
+        configure('grouping', 'window')
+        configure('scope', 'global')
+        h.dispatch('focus', workspace=str(t.workspace+1))
+        wait(lambda: t.surface()['workspaceId'] == t.workspace+1 and t.icon(window_key(record)),
+             'Original-destination fixture did not reach the invoking workspace')
+        t.click(t.icon(window_key(record)), 273)
+        wait(lambda: t.menu()['visible'], 'Bubble context menu did not open')
+        assert t.menu()['targetIds'] == [record['id']]
+        assert t.menu()['workspace'] == t.workspace+1
+        t.click(t.action('original')['rect'])
+        wait(lambda: h.client(first)['workspace']['id'] == t.workspace, 'Context action ignored the original workspace')
+        assert h.client(second)['workspace']['name'] == SPECIAL, 'Original restore touched another stashed window'
+        assert not shell('status')['error'], shell('status')['error']
+        print('PASS icon-specific original-workspace restore from another workspace', flush=True)
 
 
-if __name__=='__main__':main()
+if __name__ == '__main__':
+    main()

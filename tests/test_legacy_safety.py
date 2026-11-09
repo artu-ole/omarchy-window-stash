@@ -12,8 +12,7 @@ class LegacySafetyTests(unittest.TestCase):
         snapshot={'windows':[{'id':'existing-user-window'}],'settings':{}}
         reads={'activewindow':{'address':'0xexisting'},'activeworkspace':{'id':1},
                'monitors':[{'name':'HEADLESS-1','focused':True}]}
-        for name,entrypoint in (('live','run'),('layouts_monitors','main'),
-                                ('ui_lifecycle','main'),('overflow','main')):
+        for name,entrypoint in (('live','run'),('layouts_monitors','main'),('overflow','main')):
             with self.subTest(suite=name), ExitStack() as stack:
                 module=importlib.import_module(name)
                 compositor=Mock()
