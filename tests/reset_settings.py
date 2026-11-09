@@ -63,13 +63,23 @@ def open_settings(session):
 
 
 def ask(session):
-    from settings_fit import reveal
+    from settings_fit import contained, reveal
 
     reset = session.surface()['reset']
     assert reset['requestEnabled'] and not reset['busy'], 'Reset action was unavailable while idle'
     session.click(reveal(session, lambda: session.surface()['reset']['requestRect']))
-    return wait(lambda: (r if (r := session.surface()['reset'])['confirming'] else None),
-                'Reset action did not open its confirmation')
+
+    def ready():
+        surface = session.surface()
+        reset, scroll = surface['reset'], surface['settingsScroll']
+        # Confirmation visibility changes before its deferred Cancel focus and
+        # compact layout settle. Send input only to the finished native panel.
+        if (reset['confirming'] and scroll['focusedKey'] == 'reset-settings'
+                and scroll['focusedPart'] == 'cancel'
+                and contained(reset['cancelRect'], scroll['rect'])):
+            return reset
+
+    return wait(ready, 'Reset confirmation did not focus its visible Cancel button')
 
 
 def defaults_active():

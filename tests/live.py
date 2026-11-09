@@ -14,7 +14,7 @@ from pointer import Pointer
 from desktop_test import desktop_test
 
 h=Hyprland()
-binary=str(Path.home()/'.local/bin/window-stash')
+binary=str(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home()/'.config')/'omarchy/plugins/community.window-stash/window-stash')
 processes=[]
 addresses=[]
 original=None
@@ -44,7 +44,7 @@ def wait(predicate, message, timeout=8):
 
 
 def command(*args):
-    result=subprocess.run([binary,*map(str,args)],capture_output=True,text=True)
+    result=subprocess.run([sys.executable,binary,*map(str,args)],capture_output=True,text=True)
     data=json.loads(result.stdout)
     assert result.returncode==0,data
     return data

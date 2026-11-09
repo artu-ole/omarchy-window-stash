@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--installed', action='store_true')
     args = parser.parse_args()
-    controller = [str(Path.home()/'.local/bin/window-stash')] if args.installed else [sys.executable, str(ROOT/'controller/stash.py')]
+    controller = [str(Path.home()/'.config/omarchy/plugins/community.window-stash/window-stash')] if args.installed else [sys.executable, str(ROOT/'controller/stash.py')]
     original = h.read('activewindow')
     original_workspace = h.read('activeworkspace')['id']
     monitors = h.read('monitors')
