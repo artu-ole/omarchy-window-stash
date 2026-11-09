@@ -6,7 +6,7 @@ material and remain in force.
 
 ## Window Switcher integration excerpts
 
-The patch anchors and integration context in `tools/install.py` include small
+The legacy patch anchors in `controller/legacy.py` include small
 excerpts from Omarchy Window Switcher. Its source is available at
 https://github.com/devmobasa/omarchy-window-switcher. The installed switcher
 retains its own license; this plugin does not bundle the complete switcher.
