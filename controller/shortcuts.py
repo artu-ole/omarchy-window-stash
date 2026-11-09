@@ -15,8 +15,8 @@ import tempfile
 
 
 PLUGIN = "community.window-stash"
-DEFAULT_SHORTCUTS = {"minimizeShortcut": "SUPER + ALT + A", "restoreLastShortcut": "SUPER + ALT + Z",
-                     "restoreOldestShortcut": ""}
+DEFAULT_SHORTCUTS = {"minimizeShortcut": "SUPER + D", "restoreLastShortcut": "SUPER + Z",
+                     "restoreOldestShortcut": "SUPER + ALT + Z"}
 MANAGER = "_community_window_stash_shortcuts"
 MANAGER_VERSION = 2
 ACTIONS = {"minimizeShortcut": ("minimize", "Window Stash: minimize focused window"),

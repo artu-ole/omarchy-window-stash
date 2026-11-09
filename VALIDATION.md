@@ -1,5 +1,15 @@
 # Validation
 
+## v1.27.0 — one-handed defaults and FIFO shortcut — 9 November 2026
+
+Defaults are Super+D to stash, Super+Z to restore newest, and Super+Alt+Z to
+restore oldest. Saved custom shortcuts and explicitly disabled actions survive
+updates. The native fresh-install CLI suite verifies all three active bindings,
+actual minimize/newest/oldest key presses, FIFO selection with two parked windows,
+exact floating geometry, and the complete update/disable/remove/reinstall lifecycle.
+The complete non-graphical check passes **231 Python tests**, **11 Node suites**,
+**four offscreen Qt suites**, manifest validation, QML lint and Python syntax checks.
+
 ## v1.26.1 — shortcut reset defaults — 9 November 2026
 
 Per-field shortcut reset buttons read the same controller defaults as Reset all;

@@ -66,9 +66,9 @@ backs up affected files under
 
 | Action | Input |
 |---|---|
-| Stash focused window | Super+Alt+A |
-| Restore newest eligible window | Super+Alt+Z; last in, first out |
-| Restore oldest eligible window | Assign Restore oldest in Settings; first in, first out |
+| Stash focused window | Super+D |
+| Restore newest eligible window | Super+Z; last in, first out |
+| Restore oldest eligible window | Super+Alt+Z; first in, first out |
 | Restore / choose an app-group window | Click an icon; groups open a searchable chooser |
 | Window actions and global actions | Right-click an icon or stack; pointer-positioned context menu |
 | Close represented stashed window(s) | Middle-click an icon; collapsed stacks target the front icon |
@@ -97,7 +97,8 @@ Narrow layouts stack controls; keyboard focus scrolls fields into view.
 Reset all settings requires confirmation and restores every preference and default
 shortcut atomically. Conflicts leave
 settings and bindings intact; parked windows and positions are retained.
-Existing configured shortcuts, including earlier Super+A/Z choices, are retained.
+Updates preserve saved shortcuts, including disabled actions. Use a shortcut
+field's reset button to adopt its current default.
 
 To move a static dock, unlock **Placement → Static dock position**, then drag
 any icon or its background along the selected edge. Lock it again to keep that
@@ -145,9 +146,9 @@ omarchy-shell window-stash configure hoverPreview live
 | `previewTitles` | `shown` | `shown`, `hidden`; title strips include a per-window × close button |
 | `previewDelay` | `400` | Integer 0–1500 ms before opening |
 | `previewHideDelay` | `200` | Integer 0–1000 ms grace between source and preview |
-| `minimizeShortcut` | `SUPER + ALT + A` | Minimize focused window; empty disables |
-| `restoreLastShortcut` | `SUPER + ALT + Z` | Restore newest eligible window; empty disables |
-| `restoreOldestShortcut` | empty | Restore oldest eligible window; empty disables |
+| `minimizeShortcut` | `SUPER + D` | Minimize focused window; empty disables |
+| `restoreLastShortcut` | `SUPER + Z` | Restore newest eligible window; empty disables |
+| `restoreOldestShortcut` | `SUPER + ALT + Z` | Restore oldest eligible window; empty disables |
 
 At 100%, static icons are 44 logical px and floating icons 48 px. Larger presets
 cap to the usable output area. Frames can be hidden independently; large corner

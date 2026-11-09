@@ -23,7 +23,8 @@ PLUGIN = "community.window-stash"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home()/".config")
 TARGET = CONFIG/"omarchy/plugins"/PLUGIN
 FIXTURE = os.environ.get("STASH_CLI_FIXTURE", "file:///mnt/fixture")
-KEYS = {"minimizeShortcut":"SUPER + ALT + A", "restoreLastShortcut":"SUPER + ALT + Z"}
+KEYS = {"minimizeShortcut":"SUPER + D", "restoreLastShortcut":"SUPER + Z",
+        "restoreOldestShortcut":"SUPER + ALT + Z"}
 
 
 def require_isolated():
@@ -69,7 +70,7 @@ def active():
 
 def native_select_all():
     # The stock shortcut must survive registration/release of the plugin's
-    # independent Super+Alt chords. Opaque Lua callback IDs may change on reload.
+    # independent chords. Opaque Lua callback IDs may change on reload.
     return sorted((binding.get("description", ""), binding.get("submap", ""))
                   for binding in h.read("binds") if binding.get("modmask") == 64
                   and str(binding.get("key", "")).lower() == "a"
@@ -78,8 +79,8 @@ def native_select_all():
 
 def assert_runtime_shortcuts():
     handles = active()
-    assert {(b["modmask"], b["key"].lower()) for b in handles} == {(72, "a"), (72, "z")}, handles
-    assert ready()["activeShortcuts"] == dict(KEYS, restoreOldestShortcut="")
+    assert {(b["modmask"], b["key"].lower()) for b in handles} == {(64, "d"), (64, "z"), (72, "z")}, handles
+    assert ready()["activeShortcuts"] == KEYS
 
 
 def ensure_installed():
@@ -104,9 +105,9 @@ def restored(address, before):
     assert client["floating"] and client["at"] == before["at"] and client["size"] == before["size"]
 
 
-def trigger(session, letter):
-    session.keys("-M", "logo", "-M", "alt", "-s", "60", "-k", letter.lower(),
-                 "-s", "60", "-m", "alt", "-m", "logo")
+def trigger(session, letter, alt=False):
+    session.keys("-M", "logo", *(["-M", "alt"] if alt else []), "-s", "60", "-k", letter.lower(),
+                 "-s", "60", *(["-m", "alt"] if alt else []), "-m", "logo")
 
 
 def source_free():
@@ -153,15 +154,21 @@ def acceptance():
                 h.eval("hl.config({input={resolve_binds_by_sym=true,follow_mouse=0}})")
                 h.dispatch("focus", window="address:"+first)
                 wait(lambda:h.read("activewindow").get("address")==first,"Keyboard fixture did not focus")
-                trigger(session, "A")
+                trigger(session, "D")
                 record = wait(lambda: record_for(first), "Default keyboard minimize did not stash")
                 session.touch("window:"+str(record["stableId"]))
                 wait(lambda: h.client(first)["workspace"]["name"] == SPECIAL, "Keyboard minimize did not complete")
                 trigger(session, "Z")
                 restored(first, before_first)
+                first_record, second_record = session.park(first), session.park(second)
+                trigger(session, "Z", alt=True)
+                restored(first, before_first)
+                assert record_for(first) is None and record_for(second)["id"] == second_record["id"], "Default FIFO did not restore only the oldest window"
+                trigger(session, "Z")
+                restored(second, before_second)
             finally:
                 h.eval("hl.config({input={resolve_binds_by_sym="+matching+",follow_mouse="+following+"}})")
-            print("PASS icon and real Super+Alt+A/Z restoration with exact geometry", flush=True)
+            print("PASS icon and default Super+D/Z, Super+Alt+Z FIFO actions with exact geometry", flush=True)
             configure("presentation", "floating")
             configure("dockOpacity", 73)
             first_record, second_record = session.park(first), session.park(second)
@@ -175,7 +182,7 @@ def acceptance():
             ids = {first_record["id"], second_record["id"]}
             print("PASS external activation restores only its target and hides the private overlay", flush=True)
             h.call("reload")
-            wait(lambda: len(active()) == 2, "Config reload did not recreate runtime shortcuts", timeout=12)
+            wait(lambda: len(active()) == 3, "Config reload did not recreate runtime shortcuts", timeout=12)
             assert {w["id"] for w in command("list")["windows"]} == ids
             assert_runtime_shortcuts()
             with tempfile.TemporaryDirectory(prefix="stash-cli-upstream-") as directory:

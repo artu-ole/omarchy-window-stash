@@ -35,7 +35,7 @@ class FakeIPC:
         return self.apply_error or 'ok'
 
 
-def binding(key='A', mods=72, description='Other action', arg='17', **extra):
+def binding(key='D', mods=64, description='Other action', arg='17', **extra):
     result = dict(key=key, modmask=mods, dispatcher='__lua', arg=arg, description=description, submap='')
     result.update(extra)
     return result
@@ -65,10 +65,19 @@ class ShortcutTests(unittest.TestCase):
                 shortcuts.normalize(text)
 
     def test_legacy_defaults_and_explicit_disabled_are_preserved(self):
+        self.assertEqual(shortcuts.DEFAULT_SHORTCUTS,
+                         {'minimizeShortcut': 'SUPER + D', 'restoreLastShortcut': 'SUPER + Z',
+                          'restoreOldestShortcut': 'SUPER + ALT + Z'})
         self.assertEqual(shortcuts.settings({}), shortcuts.DEFAULT_SHORTCUTS)
         self.assertEqual(shortcuts.settings({'minimizeShortcut': '', 'restoreLastShortcut': 'ctrl+z',
                                              'restoreOldestShortcut': False}),
-                         {'minimizeShortcut': '', 'restoreLastShortcut': 'CTRL + Z', 'restoreOldestShortcut': ''})
+                         {'minimizeShortcut': '', 'restoreLastShortcut': 'CTRL + Z',
+                          'restoreOldestShortcut': shortcuts.DEFAULT_SHORTCUTS['restoreOldestShortcut']})
+        disabled = dict.fromkeys(shortcuts.DEFAULT_SHORTCUTS, '')
+        self.assertEqual(shortcuts.settings(disabled), disabled)
+        previous = {'minimizeShortcut': 'SUPER + ALT + A', 'restoreLastShortcut': 'SUPER + ALT + Z',
+                    'restoreOldestShortcut': ''}
+        self.assertEqual(shortcuts.settings(previous), previous)
         self.assertEqual(shortcuts.settings({'minimizeShortcut': None})['minimizeShortcut'], shortcuts.DEFAULT_SHORTCUTS['minimizeShortcut'])
         self.assertEqual(shortcuts.settings({'minimizeShortcut': 'SUPER + A', 'restoreLastShortcut': 'SUPER + Z'}),
                          dict(shortcuts.DEFAULT_SHORTCUTS,minimizeShortcut='SUPER + A',restoreLastShortcut='SUPER + Z'))
@@ -77,7 +86,7 @@ class ShortcutTests(unittest.TestCase):
         before = self.config.read_bytes()
         cases = [('restoreOldestShortcut', shortcuts.DEFAULT_SHORTCUTS['restoreLastShortcut'], FakeIPC()),
                  ('restoreOldestShortcut', 'ALT+F2', FakeIPC([binding('F2', 8)])),
-                 ('minimizeShortcut', 'SUPER+A', FakeIPC([binding(mods=64,description='Window Stash: pretend')]))]
+                 ('minimizeShortcut', 'SUPER+A', FakeIPC([binding('A',mods=64,description='Window Stash: pretend')]))]
         for key, value, ipc in cases:
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'already'):
                 shortcuts.configure(self.config, key, value, ipc)
@@ -181,7 +190,8 @@ class ShortcutTests(unittest.TestCase):
         self.assertIn('Existing desktop action',result['conflicts']['minimizeShortcut'])
         self.assertIn('Settings',result['conflicts']['minimizeShortcut'])
         self.assertIn('minimizeShortcut=""',ipc.calls[-1][1])
-        self.assertIn('restoreLastShortcut="SUPER + ALT + Z"',ipc.calls[-1][1])
+        self.assertIn('restoreLastShortcut="SUPER + Z"',ipc.calls[-1][1])
+        self.assertIn('restoreOldestShortcut="SUPER + ALT + Z"',ipc.calls[-1][1])
         self.assertEqual(self.config.read_bytes(),before)
 
     def test_startup_duplicate_only_disables_the_later_action_without_changing_preferences(self):
@@ -240,7 +250,7 @@ class ShortcutTests(unittest.TestCase):
         applies = [args[1] for args in ipc.calls if args[0] == 'eval']
         self.assertEqual(len(applies), 2)
         self.assertIn('restoreOldestShortcut="ALT + F2"', applies[0])
-        self.assertIn('restoreOldestShortcut=""', applies[1])
+        self.assertIn('restoreOldestShortcut="SUPER + ALT + Z"', applies[1])
 
     def test_unrelated_setting_edit_during_ipc_is_merged(self):
         ipc = FakeIPC()
@@ -262,7 +272,7 @@ class ShortcutTests(unittest.TestCase):
                                 text=True, capture_output=True, env=dict(os.environ, PATH='', PYTHONDONTWRITEBYTECODE='1'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.startswith('return {'))
-        self.assertIn('restoreOldestShortcut=""', result.stdout)
+        self.assertIn('restoreOldestShortcut="SUPER + ALT + Z"', result.stdout)
         self.assertEqual(self.config.read_bytes(), before)
         self.assertEqual([p.name for p in self.config.parent.iterdir()], ['shell.json'])
 
