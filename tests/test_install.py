@@ -77,9 +77,9 @@ class InstallerShortcutTests(unittest.TestCase):
         self.write_config()
         self.source=self.home/'source'
         self.source.mkdir()
-        for name in ('manifest.json','Service.qml','window-stash','README.md','LICENSE','THIRD_PARTY_NOTICES.md','VALIDATION.md'):
+        for name in ('manifest.json','Service.qml','window-stash','README.md','preview.png','LICENSE','THIRD_PARTY_NOTICES.md','VALIDATION.md'):
             (self.source/name).write_text('fixture')
-        for name in ('ui','controller','assets','native','tools'):
+        for name in ('ui','controller','native','tools'):
             (self.source/name).mkdir()
             (self.source/name/'fixture').write_text('fixture')
         (self.source/'tools/build-preview-bridge.py').write_text('fixture builder')

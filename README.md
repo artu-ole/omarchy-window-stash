@@ -1,6 +1,6 @@
 # Window Stash
 
-![Illustrated overview of tiling-window minimization: floating dock, static dock, floating bubbles, window previews, size and appearance presets, and motion controls.](assets/title.png)
+![Illustrated overview of tiling-window minimization: floating dock, static dock, floating bubbles, window previews, size and appearance presets, and motion controls.](preview.png)
 
 Window minimization for tiling layouts in Omarchy/Hyprland. Stash live windows and
 restore them to their original or current workspace. Floating windows retain size
