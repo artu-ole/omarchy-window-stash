@@ -24,62 +24,50 @@ and per-window or per-app grouping. An empty stash takes no screen space or inpu
 
 Works on Omarchy 4 and 4.5. The shell must provide `qs.Commons`, `qs.Ui`,
 `Quickshell.Widgets`, `QtQuick.Effects` and `Quickshell.Wayland`.
-Have `omarchy`, `omarchy-shell`, `hyprctl`, `~/.config/hypr/bindings.lua` and
-`~/.config/omarchy/shell.json` available. Install as your normal desktop user:
+Hyprland must expose Lua IPC (`hyprctl eval` / `hyprctl repl`) and runtime
+`hl.bind` handles.
+Python 3 and Git are required; the controller uses only Python's standard library.
+Install as your normal desktop user:
 
 ```sh
-omarchy plugin add https://github.com/artu-ole/omarchy-window-stash
-python3 ~/.config/omarchy/plugins/community.window-stash/tools/install.py &&
-    omarchy plugin enable community.window-stash &&
-    omarchy restart shell
+omarchy plugin add https://github.com/artu-ole/omarchy-window-stash --enable
 ```
 
-When `add` asks whether to enable the plugin, choose **No**; enable it after setup.
-`omarchy plugin add` manages the Git checkout. The bundled setup creates
-`~/.local/bin/window-stash` and adds a marked shortcut loader
-to `bindings.lua`. The helper previews changes and asks for confirmation (`--yes`
-for automation). It checks shortcut conflicts, backs up config,
-reloads Hyprland while preserving runtime monitor geometry, and rescans plugins.
-It uses no root privileges or packaged-file edits. `community.window-switcher`, if
-present, is patched for restoration; incompatible anchors abort installation.
-Tested with switcher 1.0.0.
+The plugin runs its bundled controller directly and owns its keyboard shortcuts
+at runtime. No setup script, command wrapper, Hyprland configuration edits or
+window-switcher patches are needed. Conflicting shortcuts remain inactive and
+report the conflict in Settings; other actions keep working.
 
 Window Stash uses its own hidden workspace. Updating migrates only verified
 plugin-owned legacy entries; other minimized windows stay untouched.
 
-Update the CLI-managed checkout and rerun setup; existing preferences persist:
+Update or remove through the same CLI:
 
 ```sh
 omarchy plugin update community.window-stash
-python3 ~/.config/omarchy/plugins/community.window-stash/tools/install.py
-omarchy restart shell
+omarchy plugin remove community.window-stash
 ```
 
-Before removal, run cleanup to restore parked windows, disable the plugin and
-remove its wrapper, managed binding block and known switcher edits. Then let the
-CLI remove the checkout:
+Disabling or removing restores owned stashed windows to their original workspaces
+and releases the plugin's runtime bindings. A guardian loads the cleanup code
+before removal, so deleting the checkout cannot prevent recovery. Shell restarts
+and plugin updates retain the stash. Preferences and saved positions persist.
 
-```sh
-python3 ~/.config/omarchy/plugins/community.window-stash/tools/install.py --prepare-remove &&
-    omarchy plugin remove community.window-stash
-```
-
-**Run cleanup first:** `omarchy plugin remove` does not run cleanup hooks.
-Preferences and saved positions remain. Backups are under
+Existing Git-managed installations that used the helper migrate automatically
+when the new service loads. After updating, run `omarchy restart shell` once if
+the old service is still loaded.
+Verified generated wrappers, shortcut loaders and switcher patches are retired;
+explicit personal shortcut overrides and customized code are preserved. Migration
+backs up affected files under
 `$XDG_STATE_HOME/omarchy/window-stash/backups` (default
 `~/.local/state/omarchy/window-stash/backups`).
-
-For an older helper-only installation, run `python3 tools/install.py --prepare-remove`
-from an up-to-date source checkout, then `omarchy plugin remove community.window-stash`
-and follow the install commands above. This converts it
-to a CLI-managed checkout while keeping preferences and positions.
 
 ## Use
 
 | Action | Input |
 |---|---|
-| Stash focused window | Super+A |
-| Restore newest eligible window | Super+Z; last in, first out |
+| Stash focused window | Super+Alt+A |
+| Restore newest eligible window | Super+Alt+Z; last in, first out |
 | Restore oldest eligible window | Assign Restore oldest in Settings; first in, first out |
 | Restore / choose an app-group window | Click an icon; groups open a searchable chooser |
 | Window actions and global actions | Right-click an icon or stack; pointer-positioned context menu |
@@ -109,7 +97,7 @@ Narrow layouts stack controls; keyboard focus scrolls fields into view.
 Reset all settings requires confirmation and restores every preference and default
 shortcut atomically. Conflicts leave
 settings and bindings intact; parked windows and positions are retained.
-CLI equivalent: `window-stash reset-settings --confirm`.
+Existing configured shortcuts, including earlier Super+A/Z choices, are retained.
 
 To move a static dock, unlock **Placement → Static dock position**, then drag
 any icon or its background along the selected edge. Lock it again to keep that
@@ -157,8 +145,8 @@ omarchy-shell window-stash configure hoverPreview live
 | `previewTitles` | `shown` | `shown`, `hidden`; title strips include a per-window × close button |
 | `previewDelay` | `400` | Integer 0–1500 ms before opening |
 | `previewHideDelay` | `200` | Integer 0–1000 ms grace between source and preview |
-| `minimizeShortcut` | `SUPER + A` | Minimize focused window; empty disables |
-| `restoreLastShortcut` | `SUPER + Z` | Restore newest eligible window; empty disables |
+| `minimizeShortcut` | `SUPER + ALT + A` | Minimize focused window; empty disables |
+| `restoreLastShortcut` | `SUPER + ALT + Z` | Restore newest eligible window; empty disables |
 | `restoreOldestShortcut` | empty | Restore oldest eligible window; empty disables |
 
 At 100%, static icons are 44 logical px and floating icons 48 px. Larger presets
@@ -234,23 +222,26 @@ dismiss previews; hidden/offscreen captures are released.
   compositor restart does not restore application sessions. Other tools' scratchpads
   and minimized windows are outside plugin ownership.
 
-The controller works without QML. Commands return JSON (`ok` and result/error);
-failures exit nonzero:
+The shell exposes `minimize`, `restoreLast` and `restoreOldest` actions, for example
+`omarchy-shell window-stash minimize`. The bundled controller also works without
+QML. Invoke it directly; commands return JSON (`ok` and result/error), and failures
+exit nonzero. In the examples below, `controller` names the bundled script:
 
 ```sh
-window-stash minimize                         # optional --address ADDRESS
-window-stash restore-last                     # newest; optional --to current|original
-window-stash restore-oldest                   # oldest; same scope/destination options
-window-stash restore ID --to original         # ID or live address
-window-stash restore-all --to current         # recovery; ignores visibility scope
-window-stash close ID [ID ...]                # owned stashed windows only
-window-stash close-all                        # follows visibility scope
-window-stash shortcut restoreOldestShortcut 'SUPER + ALT + Z'
-window-stash shortcut restoreOldestShortcut '' # disable
-window-stash shortcuts-sync
-window-stash reset-settings --confirm
-window-stash list                             # reconciled windows/settings/positions
-window-stash status                           # alias of list
+controller="$HOME/.config/omarchy/plugins/community.window-stash/controller/stash.py"
+python3 "$controller" minimize                         # optional --address ADDRESS
+python3 "$controller" restore-last                     # newest; optional --to current|original
+python3 "$controller" restore-oldest                   # oldest; same scope/destination options
+python3 "$controller" restore ID --to original         # ID or live address
+python3 "$controller" restore-all --to current         # recovery; ignores visibility scope
+python3 "$controller" close ID [ID ...]                # owned stashed windows only
+python3 "$controller" close-all                        # follows visibility scope
+python3 "$controller" shortcut restoreOldestShortcut 'SUPER + SHIFT + Z'
+python3 "$controller" shortcut restoreOldestShortcut '' # disable
+python3 "$controller" shortcuts-sync
+python3 "$controller" reset-settings --confirm
+python3 "$controller" list                             # reconciled windows/settings/positions
+python3 "$controller" status                           # alias of list
 ```
 
 Restore/close accept `--monitor OUTPUT --workspace ID` to preserve context.
@@ -266,12 +257,17 @@ helpers: `position MONITOR KEY X Y`, `rebase OLD_ID NEW_ID`. Frontend IPC expose
 [ui/](ui/) owns surfaces, keyed actors, input regions and frame-driven physics.
 [controller/stash.py](controller/stash.py) parks windows on `special:window-stash` with
 ownership tags and address-reuse guards. Its locked, atomic ledger retains interrupted
-restores for retry. [controller/shortcuts.py](controller/shortcuts.py) owns runtime bindings.
+restores for retry. [controller/shortcuts.py](controller/shortcuts.py) owns runtime bindings;
+[controller/lifecycle.py](controller/lifecycle.py) checkpoints preferences, manages
+service generations and restores windows on disable/removal. Switcher activation
+is detected through compositor focus events without modifying other plugins.
 
 | Data | Location |
 |---|---|
 | Session ledger | `$XDG_RUNTIME_DIR/omarchy-window-stash/<sanitized compositor signature>/state.json` |
 | Icon and dock positions | `$XDG_STATE_HOME/omarchy/window-stash/bubbles.json` |
+| Preference checkpoint | `$XDG_STATE_HOME/omarchy/window-stash/preferences.json` |
+| Cleanup error, if recovery fails | `$XDG_STATE_HOME/omarchy/window-stash/lifecycle-error.json` |
 | Optional bridge build cache | `$XDG_CACHE_HOME/omarchy/window-stash/preview-bridge/<Hyprland commit>/` |
 | Settings / empty shortcut lock | `$XDG_CONFIG_HOME/omarchy/shell.json` / `.window-stash-shortcuts.lock` |
 
