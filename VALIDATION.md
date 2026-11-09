@@ -1,6 +1,42 @@
 # Validation
 
-## CLI-managed installation — 9 November 2026
+## v1.26.0 — automatic CLI lifecycle — 9 November 2026
+
+Fresh installation uses only `omarchy plugin add <GitHub URL> --enable`.
+A clean public GitHub clone initialized the service and runtime shortcuts without
+running the legacy setup helper, creating a command wrapper, or editing Hyprland
+or switcher source. Native icon restoration preserved floating position and size.
+
+The complete non-graphical check passes **230 Python tests**, **11 Node suites**,
+**four offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **69 Python files**.
+
+A disposable Hyprland/Omarchy desktop, with a private home, runtime, D-Bus and
+virtual input devices, passes the full new CLI acceptance suite:
+
+- Add and enable, native icon interaction and actual default keyboard actions;
+  stock Super+A remains available.
+- External switcher activation restores only the selected owned window, with
+  exact floating geometry, and closes the private workspace overlay. Stale focus
+  without a visible stash workspace does not undo minimization.
+- Compositor reload reclaims shortcuts; a real fast-forward CLI update hands
+  service ownership to the new generation without restoring the stash.
+- Disable restores owned windows to original workspaces and releases exact
+  shortcut handles. Reenable preserves preferences.
+- Removal deletes the source checkout while windows are stashed; the preloaded
+  guardian still restores them. Reinstall restores preferences and remains free
+  of legacy wrappers and config patches.
+
+Small-screen settings reachability also passes at 640×480 and 400×300, both at
+1.25 scale, including all sections, keyboard navigation, scrolling, popup bounds
+and reset cancellation. The full reset suite verifies cancellation paths,
+unapplied shortcut drafts, one atomic confirmed reset and preserved stash,
+positions and client geometry. The full middle-click suite covers all three
+presentations, both fan directions, grouped windows and save-prompt cancellation.
+Native preview checks verify actual still/live pixels, unchanged client geometry
+and focus, pointer transfer and capture release.
+
+## Legacy helper-backed CLI installation — 9 November 2026
 
 The README uses the installed `omarchy plugin add`, `enable`, `update` and
 `remove` commands. Installer regressions use temporary files and mocked desktop
