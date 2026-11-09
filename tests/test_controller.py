@@ -15,7 +15,8 @@ import shortcuts
 def monitor(name="eDP-2", ident=0, x=0, width=1920):
     return dict(name=name,id=ident,x=x,y=0,width=width,height=1080,scale=1,transform=0,
                 make=name,model="test",serial=str(ident),description=name,reserved=[0,26,0,0],
-                focused=ident==0,activeWorkspace=dict(id=1 if ident==0 else 11,name="1"))
+                focused=ident==0,activeWorkspace=dict(id=1 if ident==0 else 11,name="1"),
+                specialWorkspace=dict(id=0,name=""))
 
 
 def client(address="0x1", workspace=1, floating=False, pid=100):
@@ -120,6 +121,7 @@ class ControllerTests(unittest.TestCase):
         ident = self.stash.minimize()["id"]
         self.hypr.clients[0].update(at=[800, 600], size=[320, 200])
         self.hypr.active = "0x1"
+        self.hypr.monitors[0]["specialWorkspace"] = dict(id=-99, name=SPECIAL)
         result = self.stash.recover_focused()
         self.assertEqual(result["id"], ident)
         self.assertEqual(result["action"], "restored")
@@ -129,6 +131,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_external_focus_preserves_unrelated_focus_and_rejects_reused_identity(self):
         self.stash.minimize()
+        self.hypr.monitors[0]["specialWorkspace"] = dict(id=-99, name=SPECIAL)
         self.hypr.clients.append(client("0x2", pid=200))
         self.hypr.active = "0x2"
         self.hypr.commands.clear()
@@ -141,6 +144,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_external_focus_requires_ownership_tag_and_private_workspace(self):
         self.stash.minimize()
+        self.hypr.monitors[0]["specialWorkspace"] = dict(id=-99, name=SPECIAL)
         original = copy.deepcopy(self.hypr.clients[0])
         self.hypr.commands.clear()
         self.hypr.clients[0]["tags"] = []
@@ -150,10 +154,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.stash.recover_focused()["action"], "noop")
         self.assertEqual(self.hypr.commands, [])
 
+    def test_external_focus_ignores_hidden_stale_focus_without_matching_visible_special_workspace(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients[0]["visible"] = False
+        base = copy.deepcopy(self.hypr.monitors[0])
+        missing = copy.deepcopy(base)
+        missing.pop("specialWorkspace")
+        unrelated = copy.deepcopy(base)
+        unrelated["specialWorkspace"] = dict(id=-98, name="special:another-app")
+        other = monitor("HDMI-A-1", 1, 1920)
+        other["specialWorkspace"] = dict(id=-99, name=SPECIAL)
+        for name, monitors in (("missing", [missing]), ("closed", [base]),
+                               ("unrelated", [unrelated]), ("other monitor", [base, other])):
+            with self.subTest(name=name):
+                self.hypr.monitors = copy.deepcopy(monitors)
+                self.hypr.commands.clear()
+                self.assertEqual(self.stash.recover_focused()["action"], "noop")
+                self.assertEqual(self.hypr.commands, [])
+                self.assertEqual(self.stash.state["windows"][0]["id"], ident)
+                self.assertEqual(self.hypr.clients[0]["workspace"]["name"], SPECIAL)
+
     def test_external_focus_honors_original_destination(self):
         self.settings(restoreDestination="original")
         self.stash.minimize()
         self.hypr.monitors[0]["activeWorkspace"] = dict(id=3, name="3")
+        self.hypr.monitors[0]["specialWorkspace"] = dict(id=-99, name=SPECIAL)
         self.assertEqual(self.stash.recover_focused()["workspace"]["id"], 1)
 
     def legacy_record(self):

@@ -486,14 +486,19 @@ end''' % (lua("address:"+address), lua(destination), lua(width))
     def recover_focused(self):
         """Restore an owned parked window activated by an external switcher.
 
-        Call under the ledger lock, after the activating transaction. A normal
-        minimize releases this lock only after it has moved focus away, so its
-        transient focus events cannot immediately undo the minimize.
+        Call under the ledger lock, after the activating transaction. Hyprland
+        can still report a hidden parked client as active after minimizing the
+        last visible window. A switcher activation also opens its special
+        workspace on that client's monitor; stale focus alone is insufficient.
         """
         active = self.hypr.read("activewindow") or {}
         record = next((r for r in self.state["windows"] if self.matches(r, active)), None)
         if (not record or active.get("workspace", {}).get("name") != SPECIAL
                 or record["tag"] not in active.get("tags", [])):
+            return {"ok": True, "action": "noop"}
+        if not any(m.get("id") == active.get("monitor")
+                   and (m.get("specialWorkspace") or {}).get("name") == SPECIAL
+                   for m in self.hypr.read("monitors")):
             return {"ok": True, "action": "noop"}
         return self.restore(record["id"])
 
