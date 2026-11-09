@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/uninstall Window Stash in user configuration, preserving other edits."""
+"""Set up Window Stash or prepare a git-managed plugin for removal."""
 import argparse
 from collections import Counter
 from datetime import datetime
@@ -198,6 +198,32 @@ def run(*args):
     return p.stdout.strip()
 
 
+def wait_for_disabled():
+    """Wait for the host to observe our deny-list entry before CLI removal.
+
+    A rescan alone does not wait for shell.json's asynchronous file watcher.
+    Removing an apparently enabled plugin makes the host erase its settings.
+    """
+    if run("omarchy-shell", "shell", "reloadConfig") != "ok":
+        raise RuntimeError("Could not reload the shell configuration; plugin files were retained")
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            discovered = json.loads(run("omarchy-shell", "shell", "listPlugins"))
+        except ValueError as error:
+            raise RuntimeError("Could not read shell plugin state; plugin files were retained") from error
+        if not isinstance(discovered, list) or any(not isinstance(entry, dict) for entry in discovered):
+            raise RuntimeError("Could not read shell plugin state; plugin files were retained")
+        matches = [entry for entry in discovered if entry.get("id") == PLUGIN]
+        if len(matches) == 1 and matches[0].get("enabled") is False:
+            return
+        if time.monotonic() >= deadline:
+            reason = "not known to the shell" if not matches else "still enabled in the shell"
+            raise RuntimeError("Window Stash is " + reason + "; plugin files were retained. "
+                               "Run omarchy-shell shell rescanPlugins and retry --prepare-remove")
+        time.sleep(0.05)
+
+
 def integration_patches():
     return {
         "Switcher.qml": [
@@ -236,8 +262,8 @@ def upgrade_integration(text):
         'stashManaged: workspaceName === "special:window-stash",')
 
 
-def confirm_changes(target, bindings, shell, binary, switcher, uninstall, assume_yes):
-    action = "Remove" if uninstall else "Install/update"
+def confirm_changes(target, bindings, shell, binary, switcher, uninstall, assume_yes, prepare_remove=False):
+    action = "Prepare removal of" if prepare_remove else "Remove" if uninstall else "Install/update"
     print(f"{action} Window Stash for the current user:", file=sys.stderr)
     print(f"  Plugin files: {target}", file=sys.stderr)
     print(f"  Controller command: {binary}", file=sys.stderr)
@@ -245,8 +271,13 @@ def confirm_changes(target, bindings, shell, binary, switcher, uninstall, assume
     print(f"  Plugin entry: {shell}", file=sys.stderr)
     if switcher.is_dir():
         print(f"  Window-switcher integration: {switcher}", file=sys.stderr)
-    if uninstall:
+    if uninstall or prepare_remove:
         print("  Restore all stashed windows before removing files.", file=sys.stderr)
+    if prepare_remove:
+        print("  Disable the plugin and retain its checkout and saved preferences.", file=sys.stderr)
+        print("  Finish with: omarchy plugin remove " + PLUGIN, file=sys.stderr)
+    elif not uninstall and SOURCE.resolve() == target.resolve():
+        print("  Keep the installed checkout unchanged; set up desktop integration only.", file=sys.stderr)
     print("  Back up affected configuration; reload Hyprland and rescan shell plugins.", file=sys.stderr)
     print("  No root privileges, downloads, or packaged Omarchy-file changes.", file=sys.stderr)
     if assume_yes:
@@ -259,7 +290,10 @@ def confirm_changes(target, bindings, shell, binary, switcher, uninstall, assume
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--uninstall", action="store_true")
+    removal = parser.add_mutually_exclusive_group()
+    removal.add_argument("--uninstall", action="store_true", help="Clean up and delete the plugin files")
+    removal.add_argument("--prepare-remove", action="store_true",
+                         help="Clean up but retain the checkout for omarchy plugin remove")
     parser.add_argument("--yes", action="store_true", help="Confirm the displayed file changes without prompting")
     args = parser.parse_args()
     home = Path.home()
@@ -269,7 +303,7 @@ def main():
     shell = config / "omarchy/shell.json"
     binary = home / ".local/bin/window-stash"
     switcher = config / "omarchy/plugins/community.window-switcher"
-    confirm_changes(target, bindings, shell, binary, switcher, args.uninstall, args.yes)
+    confirm_changes(target, bindings, shell, binary, switcher, args.uninstall, args.yes, args.prepare_remove)
     backup = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state")) / "omarchy/window-stash/backups" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup.mkdir(parents=True)
     for p in (bindings, shell):
@@ -281,12 +315,25 @@ def main():
     block, desired_shortcuts = shortcut_plan(config_data, binding_text, binary, target)
     monitor_state = json.loads(run("hyprctl", "monitors", "-j"))
     patches = integration_patches()
-    if args.uninstall:
+    if args.uninstall or args.prepare_remove:
         if binary.exists(): run(str(binary), "restore-all", "--to", "current")
         shortcuts.disable(shell, runner=lambda *arguments: run('hyprctl', *arguments))
         bindings.write_bytes(replace_binding_block(binding_text, block, target, uninstall=True).encode('utf-8'))
-        config_data["plugins"] = [p for p in config_data.get("plugins", []) if p.get("id") != PLUGIN]
+        if args.prepare_remove:
+            # Omarchy ignores an entry's `enabled` field. Keep its preferences
+            # but disable it through the host's explicit deny list; `plugin
+            # enable` removes this marker if removal is cancelled.
+            disabled = config_data.setdefault("disabledPlugins", [])
+            if PLUGIN not in disabled:
+                disabled.append(PLUGIN)
+        else:
+            config_data["plugins"] = [p for p in config_data.get("plugins", []) if p.get("id") != PLUGIN]
         atomic_json(shell, config_data)
+        if args.prepare_remove:
+            wait_for_disabled()
+            # A queued service update might have synchronized handles while
+            # the shell was still loading its new configuration.
+            shortcuts.disable(shell, runner=lambda *arguments: run('hyprctl', *arguments))
         for name, changes in patches.items():
             p = switcher / name
             if not p.exists(): continue
@@ -294,7 +341,7 @@ def main():
             for original, modified in reversed(changes): data = data.replace(modified, original)
             p.write_text(data)
         if binary.exists(): binary.unlink()
-        if target.exists(): shutil.rmtree(target)
+        if args.uninstall and target.exists(): shutil.rmtree(target)
     else:
         run("omarchy", "plugin", "validate", str(SOURCE))
         live, owned = shortcuts.runtime_state(runner=lambda *arguments: run('hyprctl', *arguments))
@@ -310,14 +357,15 @@ def main():
             for original, modified in changes:
                 if original not in data and modified not in data:
                     raise RuntimeError("Window switcher changed; missing integration anchor in " + name)
-        target.mkdir(parents=True, exist_ok=True)
-        for name in ("manifest.json", "Service.qml", "ui", "controller", "native", "tools/build-preview-bridge.py", "window-stash", "README.md", "assets", "LICENSE", "THIRD_PARTY_NOTICES.md", "VALIDATION.md"):
-            source = SOURCE / name
-            dest = target / name
-            if source.is_dir(): shutil.copytree(source, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
-            else:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, dest)
+        if SOURCE.resolve() != target.resolve():
+            target.mkdir(parents=True, exist_ok=True)
+            for name in ("manifest.json", "Service.qml", "ui", "controller", "native", "tools/build-preview-bridge.py", "tools/install.py", "window-stash", "README.md", "assets", "LICENSE", "THIRD_PARTY_NOTICES.md", "VALIDATION.md"):
+                source = SOURCE / name
+                dest = target / name
+                if source.is_dir(): shutil.copytree(source, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+                else:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, dest)
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text('#!/usr/bin/env python3\nimport runpy\nrunpy.run_path(' + repr(str(target / "controller/stash.py")) + ', run_name="__main__")\n')
         binary.chmod(0o755)
@@ -369,7 +417,10 @@ def main():
     errors = run("hyprctl", "configerrors")
     if errors: raise RuntimeError(errors)
     run("omarchy-shell", "shell", "rescanPlugins")
-    print(json.dumps(dict(ok=True, installed=not args.uninstall, backup=str(backup))))
+    result = dict(ok=True, installed=not args.uninstall, backup=str(backup))
+    if args.prepare_remove:
+        result.update(preparedRemoval=True, enabled=False)
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
