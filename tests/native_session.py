@@ -37,7 +37,10 @@ class NativeSession:
     def click(self,r,button=272):
         x=r['x']+r['width']/2;y=r['y']+r['height']/2
         self.move(x-1,y);self.pointer.click(*self.point(x,y),button=button)
-    def keys(self,*args):subprocess.run(['wtype',*args],check=True)
+    def keys(self,*args):
+        # A virtual keyboard brings its own keymap. Allow the seat and Qt to
+        # consume it before input, and consume the keys before its removal.
+        subprocess.run(['wtype','-s','100','-d','30',*args,'-s','100'],check=True)
     def spawn(self,mode=None,app='org.windowstash.NativeTest',delay=500,workspace=None):
         wanted=h.read('activeworkspace')['id'] if workspace is None else workspace
         if wanted<=0:wanted=self.workspace

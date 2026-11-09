@@ -94,7 +94,9 @@ def reveal(session, rect_for):
                 current_y = surface['settingsScroll']['contentY']
                 if abs(current_y-previous_y) > .1:
                     stable_since = time.monotonic()
-                elif time.monotonic()-stable_since >= .15:
+                # Flickable can still consume a click to end wheel scrolling
+                # after the content has reached its bounds and stopped moving.
+                elif time.monotonic()-stable_since >= .5:
                     return rect
                 previous_y = current_y
             if contained(rect, viewport):
