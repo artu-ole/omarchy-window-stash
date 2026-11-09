@@ -483,6 +483,20 @@ end''' % (lua("address:"+address), lua(destination), lua(width))
         choices = eligible(self.state["windows"], current, self.settings()["scope"])
         return self.restore(choices[-1]["id"], to, monitor, workspace) if choices else {"ok":True,"action":"noop"}
 
+    def recover_focused(self):
+        """Restore an owned parked window activated by an external switcher.
+
+        Call under the ledger lock, after the activating transaction. A normal
+        minimize releases this lock only after it has moved focus away, so its
+        transient focus events cannot immediately undo the minimize.
+        """
+        active = self.hypr.read("activewindow") or {}
+        record = next((r for r in self.state["windows"] if self.matches(r, active)), None)
+        if (not record or active.get("workspace", {}).get("name") != SPECIAL
+                or record["tag"] not in active.get("tags", [])):
+            return {"ok": True, "action": "noop"}
+        return self.restore(record["id"])
+
     def close(self, identifiers, monitor=None, workspace=None):
         """Request normal closure, confirming disappearance before ledger removal.
 
@@ -625,6 +639,7 @@ def main(argv=None):
         p.add_argument("--workspace", type=int)
     for action in ("list", "status"):
         sub.add_parser(action)
+    sub.add_parser("recover-focused", help=argparse.SUPPRESS)
     shortcut=sub.add_parser("shortcut",help="Set or disable one managed keyboard shortcut")
     shortcut.add_argument("key",choices=tuple(shortcuts.DEFAULT_SHORTCUTS))
     shortcut.add_argument("binding")
@@ -664,6 +679,7 @@ def main(argv=None):
                         result=dict(ok=True,action="activated")
             elif args.command == "restore-last": result=stash.restore_last(args.to,args.monitor,args.workspace)
             elif args.command == "restore-oldest": result=stash.restore_oldest(args.to,args.monitor,args.workspace)
+            elif args.command == "recover-focused": result=stash.recover_focused()
             elif args.command == "restore-all":
                 context, workspace=stash.invoke_context(args.monitor,args.workspace)
                 stash.reconcile(stash.hypr.read("clients"))

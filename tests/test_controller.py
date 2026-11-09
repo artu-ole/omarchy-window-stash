@@ -115,6 +115,47 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.hypr.clients[0]["floating"])
         self.assertEqual(self.stash.state["windows"],[])
 
+    def test_external_focus_restores_owned_parked_window_and_geometry(self):
+        self.hypr.clients[0]["floating"] = True
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients[0].update(at=[800, 600], size=[320, 200])
+        self.hypr.active = "0x1"
+        result = self.stash.recover_focused()
+        self.assertEqual(result["id"], ident)
+        self.assertEqual(result["action"], "restored")
+        self.assertEqual(self.hypr.clients[0]["workspace"]["id"], 1)
+        self.assertEqual(self.hypr.clients[0]["at"], [100, 150])
+        self.assertEqual(self.hypr.clients[0]["size"], [640, 400])
+
+    def test_external_focus_preserves_unrelated_focus_and_rejects_reused_identity(self):
+        self.stash.minimize()
+        self.hypr.clients.append(client("0x2", pid=200))
+        self.hypr.active = "0x2"
+        self.hypr.commands.clear()
+        self.assertEqual(self.stash.recover_focused()["action"], "noop")
+        self.assertEqual(self.hypr.commands, [])
+        self.hypr.active = "0x1"
+        self.hypr.clients[0]["stableId"] = "0xf"
+        self.assertEqual(self.stash.recover_focused()["action"], "noop")
+        self.assertEqual(self.hypr.commands, [])
+
+    def test_external_focus_requires_ownership_tag_and_private_workspace(self):
+        self.stash.minimize()
+        original = copy.deepcopy(self.hypr.clients[0])
+        self.hypr.commands.clear()
+        self.hypr.clients[0]["tags"] = []
+        self.assertEqual(self.stash.recover_focused()["action"], "noop")
+        self.hypr.clients[0].update(original)
+        self.hypr.clients[0]["workspace"] = dict(id=1, name="1")
+        self.assertEqual(self.stash.recover_focused()["action"], "noop")
+        self.assertEqual(self.hypr.commands, [])
+
+    def test_external_focus_honors_original_destination(self):
+        self.settings(restoreDestination="original")
+        self.stash.minimize()
+        self.hypr.monitors[0]["activeWorkspace"] = dict(id=3, name="3")
+        self.assertEqual(self.stash.recover_focused()["workspace"]["id"], 1)
+
     def legacy_record(self):
         ident = self.stash.minimize()["id"]
         self.hypr.clients[0]["workspace"] = dict(id=-98, name=LEGACY_SPECIAL)
