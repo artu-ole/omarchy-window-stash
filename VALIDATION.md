@@ -1,5 +1,38 @@
 # Validation
 
+## v1.28.0 — floating previews — 11 November 2026
+
+Adds persistent, borderless window miniatures with direct aspect-preserving resize,
+independent size presets, saved placement, locks, physics and application groups.
+Snapshot, live-on-hover and always-live policies are independent of hover previews.
+Verified captured proportions drive presentation without changing restoration
+geometry. Cover and expanded Still snapshots retain their own pixels and shape.
+Workspace filtering uses compositor snapshots to avoid stale native monitor state
+after hotplugging; capture ownership survives display sleep and resumes cleanly.
+
+The complete non-graphical suite passes **217 Python tests**, **13 Node suites**,
+**seven offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **77 Python files**. The README covers all **36 settings**.
+
+Native acceptance in a disposable Hyprland/Omarchy desktop passes:
+
+- All nine presets, direct resizing, original-window geometry, independent saved
+  free size, placement locking, workspace filtering and exact restore/close actions.
+- Tiled source reflow, independent grouped snapshots, and narrow/wide scrolling
+  restoration with the original column width and final-column placement.
+- Three virtual outputs, separate positions and widths, direct dragging, flick
+  momentum, monitor removal and preservation of every stashed window.
+- Actual Ghostty/btop rendering: one distinct Standard frame versus nine Enhanced
+  frames, scoped leases, hover resume and complete rendering cleanup.
+- Oversized previews and grouped overflow on a 320×240 output, targeted display
+  sleep/wake, and all 36 settings on scaled displays with reserved screen edges.
+- Existing hover previews, UI routing, default shortcuts and the complete CLI
+  install/update/disable/source-deleted-removal/reinstall lifecycle.
+
+The native profile uses a private home, runtime, D-Bus, compositor and synthetic
+input. Test clients, settings, positions, focus and outputs are cleaned up; the
+real desktop is not used for input automation.
+
 ## v1.27.1 — retire manual installation — 9 November 2026
 
 The retired manual installer and its unused configuration-writing helpers are

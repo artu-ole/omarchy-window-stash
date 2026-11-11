@@ -11,9 +11,10 @@ windows retain size and position; scrolling layouts retain window width.
 | Static dock | Four edges, bar clearance and overflow scrolling. Unlock to drag along the edge; lock to retain placement. |
 | Floating icons | Individual draggable icons, initially at the middle right. Edge gravity or free placement. |
 | Floating dock | Draggable stack. One window restores directly; multiple windows unfold into a row or column. |
+| Floating previews | Persistent window miniatures. Resize directly or use presets; app groups expand into individual thumbnails. |
 
 All modes follow Omarchy's theme. Visibility is global across monitors or filtered
-by original workspace; icons represent individual windows or application groups.
+by original workspace; icons and previews represent individual windows or application groups.
 Positions persist per monitor; static dock placement also persists per edge.
 An empty stash occupies no screen space.
 
@@ -58,12 +59,13 @@ overrides are preserved.
 | Super+Z | Restore newest eligible window: last in, first out. |
 | Super+Alt+Z | Restore oldest eligible window: first in, first out. |
 | Click icon | Restore; multi-window app groups open a searchable chooser. Floating stacks unfold first. |
+| Click preview | Restore; app covers expand into individual window thumbnails. |
 | Right-click icon/stack | Pointer-positioned window/app menu, Settings, recovery and Close all. |
 | Middle-click icon/thumbnail | Close represented stashed window(s). Unstashed instances are unaffected. |
-| Thumbnail title × | Close that window; available when preview titles are shown. |
-| Drag | Move floating items or an unlocked static dock. Scroll/drag overflowing lists. |
-| Arrow keys / Enter | Navigate and select in the chooser or unfolded dock. |
-| Escape / outside click | Dismiss the open menu, chooser, preview or unfolded dock. |
+| Thumbnail title × | Close the represented stashed window(s); requires a title strip. |
+| Drag | Move floating items or an unlocked static dock. Resize a floating preview from a corner. Scroll overflowing lists. |
+| Arrow keys / Enter | Navigate and select in choosers, unfolded docks or preview groups. |
+| Escape / outside click | Dismiss menus, choosers, hover previews and expanded groups/stacks. |
 
 Close requests wait for the client; surviving windows restore for application-owned
 save prompts. Restoration preserves floating geometry, fullscreen/pinned state and
@@ -93,24 +95,24 @@ omarchy-shell window-stash configure sizePreset 150
 
 | Key | Default | Values / meaning |
 |---|---|---|
-| `presentation` | `floating` | `dock`, `bubbles`, `floating` |
+| `presentation` | `floating` | `dock`, `bubbles`, `floating`, `previews` |
 | `scope` | `global` | `global`: shared stash on all monitors; `workspace`: filter icons, newest/oldest restore and Close all by original workspace |
 | `restoreDestination` | `current` | `current`, `original` |
 | `grouping` | `window` | `window`, `app`; groups show a count badge |
 | `dockSide` | `bottom` | `bottom`, `top`, `left`, `right` |
 | `staticDockLock` | `locked` | `locked`, `unlocked`; static dock edge dragging |
 | `floatingDirection` | `vertical` | `vertical`, `horizontal`; floating dock |
-| `floatingPlacement` | `edges` | `edges`, `free`; floating icons and dock |
+| `floatingPlacement` | `edges` | `edges`, `free`; floating icons, dock and previews |
 
 ### Appearance
 
 | Key | Default | Values / meaning |
 |---|---|---|
 | `iconShape` | `auto` | `auto`, `circle`, `square`, `rounded`, `squircle` |
-| `sizePreset` | `"100"` | String percent: 50, 75, 100, 125, 150, 175, 200, 250, 300; all modes, bounded by usable screen area |
+| `sizePreset` | `"100"` | String percent: 50, 75, 100, 125, 150, 175, 200, 250, 300; icon/dock modes, bounded by usable screen area |
 | `iconFrame` | `hidden` | `shown`, `hidden`; hiding removes background/border and enlarges artwork |
 | `dockFrame` | `hidden` | `shown`, `hidden`; static and floating docks |
-| `iconOpacity` | `100` | 0–100%; artwork, frames and badges at rest |
+| `iconOpacity` | `100` | 0–100%; icons or floating previews at rest |
 | `dockOpacity` | `100` | 0–100%; dock background/border at rest |
 | `dockCorners` | `theme` | `theme`, `custom`; independent of icon shape |
 | `dockCornerRadius` | `12` | 0–64 px in custom mode; clamped without cutting icons |
@@ -135,6 +137,26 @@ hover delays or coasting momentum.
 
 ### Previews
 
+Floating previews are borderless and untitled by default. Corner dragging preserves
+the captured window's proportions and changes only the miniature; saved restoration
+geometry stays unchanged. Position and width persist separately from floating icons.
+Lock placement to prevent movement and resizing. Free sizing hides the scale dropdown.
+
+| Key | Default | Values / meaning |
+|---|---|---|
+| `floatingPreviewSizing` | `free` | `free`: resize directly; `preset`: use the scale dropdown |
+| `floatingPreviewScale` | `"100"` | Same nine percentage presets; 100% is 280 logical px wide, bounded by screen area |
+| `floatingPreviewUpdate` | `hover` | `still`: snapshot; `hover`: live on hover; `live`: always live |
+| `floatingPreviewTitles` | `hidden` | `hidden`, `shown`; optional title strip and close button |
+| `floatingPreviewFrame` | `hidden` | `hidden`, `shown`; optional background and border |
+| `floatingPreviewLock` | `unlocked` | `unlocked`, `locked`; retain placement and dimensions |
+
+Click restores; dragging moves; middle-click closes; right-click opens the window
+menu. Grouped cards expand into a bounded grid for exact-window selection. These
+are visual previews, without input forwarding into the application.
+
+Hover previews for the other three display modes:
+
 | Key | Default | Values / meaning |
 |---|---|---|
 | `hoverPreview` | `off` | `off`, `still`, `live` |
@@ -155,6 +177,10 @@ hidden client stops drawing. Enhanced builds and loads a local Hyprland bridge o
 first use; it requires x86-64, a C++26 compiler, `pkg-config` and development headers
 matching the running compositor. Build/load failures appear in Settings; standard
 previews remain available.
+
+Floating previews use the same Standard/Enhanced support independently of the hover
+preview setting. Hidden cards release capture resources. Capture pauses while the
+session is locked or its display sleeps; live cards resume when available.
 
 Enhanced keeps only verified windows with visible live thumbnails drawing at up to
 15 FPS. Hiding previews releases rendering leases; no global rendering rules or app
@@ -190,7 +216,8 @@ Commands: `minimize [--address ADDRESS]`, `restore ID`, `restore-last`,
 `shortcut KEY BINDING`, `shortcuts-sync`, `reset-settings --confirm`, `list`, `status`.
 Restore/activate accept `--to current|original`; restore/activate/close accept
 `--monitor OUTPUT --workspace ID`. `restore-all` ignores visibility scope.
-Internal helpers: `position MONITOR KEY X Y`, `rebase OLD_ID NEW_ID`.
+Internal helpers: `position MONITOR KEY X Y`, `preview-position MONITOR KEY X Y WIDTH`,
+`rebase OLD_ID NEW_ID`.
 
 [Service.qml](Service.qml) and [ui/](ui/) provide the QML frontend.
 [controller/](controller/) manages the locked ledger, runtime shortcuts and cleanup
