@@ -12,6 +12,19 @@ function aspect(record) {
   var size=record && record.size
   return size && finite(size[0],0)>0 && finite(size[1],0)>0 ? clamp(Number(size[0])/Number(size[1]),.02,50) : 1.6
 }
+function validSourceSize(size) {return !!size && finite(size[0],0)>0 && finite(size[1],0)>0}
+function sameAspect(first, second) {
+  if(!validSourceSize(first) || !validSourceSize(second)) return false
+  var a=Number(first[0])/Number(first[1]),b=Number(second[0])/Number(second[1])
+  return Math.abs(a-b)<=Math.max(a,b)*.0001
+}
+function geometryRecord(record, sizes) {
+  var size=record && sizes && sizes[record.id]
+  return validSourceSize(size) ? Object.assign({},record,{size:[size[0],size[1]]}) : record
+}
+function geometryGroups(groups, sizes) {
+  return groups.map(function(group) {return Object.assign({},group,{windows:group.windows.map(function(record) {return geometryRecord(record,sizes)})})})
+}
 function chrome(titles, frame) { return {header:titles ? 32 : 0,inset:frame ? 2 : 0} }
 function dimensions(requested, record, area, titles, frame) {
   area=rectangle(area)

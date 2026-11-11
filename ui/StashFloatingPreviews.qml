@@ -19,6 +19,8 @@ Item {
   property bool blocked:false
   property bool captureAllowed:true
   property var drafts:({})
+  property var observedSizes:({})
+  property var pendingSizes:({})
   property int page:0
   property string expandedKey:""
   property int selectedIndex:0
@@ -31,14 +33,16 @@ Item {
   readonly property var fonts:Style.font
   readonly property var layoutOptions:({titles:config.floatingPreviewTitles==="shown",frame:config.floatingPreviewFrame==="shown",
     sizing:config.floatingPreviewSizing || "free",scale:Number(config.floatingPreviewScale || "100"),edges:config.floatingPlacement!=="free",page:page})
-  readonly property var preliminary:Geometry.layout(collection.entries,savedPositions,drafts,area,layoutOptions)
+  readonly property var geometryGroups:Geometry.geometryGroups(collection.entries,observedSizes)
+  readonly property var preliminary:Geometry.layout(geometryGroups,savedPositions,drafts,area,layoutOptions)
   readonly property bool overflow:preliminary.pages>1
   readonly property var layoutArea:({x:area.x,y:area.y,width:area.width,height:Math.max(1,area.height-(overflow ? 34 : 0))})
-  readonly property var layout:Geometry.layout(collection.entries,savedPositions,drafts,layoutArea,layoutOptions)
+  readonly property var layout:Geometry.layout(geometryGroups,savedPositions,drafts,layoutArea,layoutOptions)
   readonly property var expandedGroup:expandedKey ? groups.find(function(group) {return group.key===expandedKey}) || null : null
   readonly property var expandedRecords:expandedGroup ? expandedGroup.windows : []
+  readonly property var expandedGeometryRecords:expandedRecords.map(function(record) {return Geometry.geometryRecord(record,previews.observedSizes)})
   readonly property var expandedAnchor:expandedKey ? cardForKey("preview:"+expandedKey) : null
-  readonly property var expandedLayout:Geometry.groupGrid(expandedRecords,expandedAnchor ? {x:expandedAnchor.x,y:expandedAnchor.y,width:expandedAnchor.width,height:expandedAnchor.height} : area,
+  readonly property var expandedLayout:Geometry.groupGrid(expandedGeometryRecords,expandedAnchor ? {x:expandedAnchor.x,y:expandedAnchor.y,width:expandedAnchor.width,height:expandedAnchor.height} : area,
     area,config.floatingPreviewTitles==="shown",config.floatingPreviewFrame==="shown",config.floatingPreviewSizing==="preset" ? 280*Number(config.floatingPreviewScale || "100")/100 : expandedAnchor ? expandedAnchor.width : 280)
   readonly property bool present:collection.count>0
   readonly property bool held:cardList().some(function(card) {return card.held || card.resizing})
@@ -67,6 +71,26 @@ Item {
   }
   function scheduleRegions() {regionDelay.restart()}
   function scheduleLayout() {placementDelay.restart()}
+  function observeSource(recordId,width,height) {
+    var size=[width,height],previous=pendingSizes[recordId] || observedSizes[recordId]
+    if(!Geometry.validSourceSize(size) || Geometry.sameAspect(previous,size)) return
+    var next=Object.assign({},pendingSizes);next[recordId]=size;pendingSizes=next
+    sourceGeometryDelay.restart()
+  }
+  function applySourceGeometry() {
+    var next=Object.assign({},observedSizes),pending=Object.assign({},pendingSizes),changed=false
+    var owned={}
+    collection.entries.forEach(function(group) {group.windows.forEach(function(record) {owned[record.id]=true})})
+    Object.keys(pending).forEach(function(id) {
+      if(!owned[id]) {delete pending[id];return}
+      if(cardList().some(function(card) {return card.record && card.record.id===id && (card.held || card.resizing || card.moving)})) return
+      if(!Geometry.sameAspect(next[id],pending[id])) {next[id]=pending[id];changed=true}
+      delete pending[id]
+    })
+    Object.keys(next).forEach(function(id) {if(!owned[id]) {delete next[id];changed=true}})
+    if(changed) observedSizes=next
+    if(JSON.stringify(pending)!==JSON.stringify(pendingSizes)) pendingSizes=pending
+  }
   function save(card) {
     if(!card || card.retiring || !active || !captureAllowed || !monitor) return
     var prior=drafts[card.key] || savedPositions[card.key],savedWidth=config.floatingPreviewSizing==="preset" ? prior && prior.length>=3 ? prior[2] : 280 : card.width
@@ -167,6 +191,7 @@ Item {
   }
   Timer {id:regionDelay;interval:0;onTriggered:previews.updateRegions()}
   Timer {id:placementDelay;interval:0;onTriggered:previews.arrange()}
+  Timer {id:sourceGeometryDelay;interval:0;onTriggered:previews.applySourceGeometry()}
   Timer {
     id:expansionValidation;interval:0
     onTriggered: {
@@ -178,7 +203,7 @@ Item {
     id:collection
     sourceGroups:previews.active ? previews.groups : []
     animations:previews.animations;animationSpeed:previews.animationSpeed
-    onReconciled:previews.scheduleLayout()
+    onReconciled: {previews.scheduleLayout();sourceGeometryDelay.restart()}
   }
   StashDragWorld {
     id:world
@@ -209,6 +234,7 @@ Item {
       property bool registered:false
       property var resizeOrigin:null
       stash:previews.stash;config:previews.config;group:collection.dataByKey[groupKey] || ({key:groupKey,windows:[]})
+      sourceSizes:previews.observedSizes
       coordinateRoot:previews.coordinateRoot;screenName:previews.screenName
       captureAllowed:previews.captureAllowed && previews.active && !!target && target.visible
       interactive:previews.active && previews.captureAllowed && !previews.blocked && !previews.stash.groupClosing(group)
@@ -216,6 +242,8 @@ Item {
       maximumHeight:previews.layoutArea.height
       width:280
       onInputChanged:previews.scheduleRegions()
+      onSourceAspectObserved:function(recordId,width,height) {previews.observeSource(recordId,width,height)}
+      onGeometryReleased:sourceGeometryDelay.restart()
       onMovePressed: {previews.closeExpansion();world.press(key)}
       onMoveRequested:function(x,y) {world.drag(key,x,y)}
       onMoveReleased:world.release(key)
@@ -226,7 +254,7 @@ Item {
       }
       onResizeRequested:function(dx,dy,corner) {
         if(!resizeOrigin) return
-        var rect=Geometry.resize(resizeOrigin,record,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible)
+        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible)
         width=rect.width;x=rect.x;y=rect.y
       }
       onResizeReleased: {
@@ -271,6 +299,7 @@ Item {
           onChanged:previews.scheduleRegions()
         }
         stash:previews.stash;config:previews.config;group:({key:"window:"+modelData.id,windows:[modelData]})
+        sourceSizes:previews.observedSizes
         coordinateRoot:previews.coordinateRoot;screenName:previews.screenName
         x:cell.x;y:cell.y;width:cell.width
         captureAllowed:previews.captureAllowed && inViewport
@@ -279,6 +308,8 @@ Item {
         maximumHeight:previews.area.height
         keyboardSelected:!!(previews.keyboardSelection && previews.expandedRecords[previews.selectedIndex] && previews.expandedRecords[previews.selectedIndex].id===modelData.id)
         onInputChanged:previews.scheduleRegions()
+        onSourceAspectObserved:function(recordId,width,height) {previews.observeSource(recordId,width,height)}
+        onGeometryReleased:sourceGeometryDelay.restart()
         onActivated: {var id=modelData.id;previews.closeExpansion();previews.stash.restorePreviewWindow(id,previews.screenName)}
         onContextRequested:function(x,y) {previews.closeExpansion();previews.stash.openContext(group,previews.screenName,Qt.point(x,y))}
         onCloseRequested:previews.stash.closeWindows([modelData],previews.screenName)

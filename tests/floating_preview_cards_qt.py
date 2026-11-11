@@ -27,7 +27,10 @@ Item {
   property bool active:false
   property string animations:"off"
   property string animationSpeed:"normal"
-  function details() {return {captureActive:active,live:active && mode==="live",recordId:record ? record.id : ""}}
+  property size sourceSize:Qt.size(0,0)
+  readonly property bool eligible:active
+  readonly property bool hasContent:active && sourceSize.width>0 && sourceSize.height>0
+  function details() {return {captureActive:active,live:active && mode==="live",recordId:record ? record.id : "",hasContent:hasContent,sourceSize:sourceSize}}
 }
 ''')
     (folder/'shell.qml').write_text('''import QtQuick
@@ -40,6 +43,7 @@ ShellRoot {
   property int phase:0
   property int ticks:0
   property real freeWidth:0
+  property var aspectCache:null
   property var first:({id:"first",size:[640,420],title:"<img src='https://invalid.test/title'>",app:"test"})
   property var second:({id:"second",size:[640,420],title:"Second",app:"test"})
   property var third:({id:"third",size:[640,420],title:"Third",app:"test"})
@@ -80,6 +84,10 @@ ShellRoot {
   function near(actual,expected,message) {check(Math.abs(actual-expected)<.01,message+": "+actual+" != "+expected)}
   function setting(key,value) {var next=Object.assign({},previews.config);next[key]=value;previews.config=next}
   function one() {return previews.cardForKey("preview:window:first")}
+  function image(card) {
+    for(var i=0;i<card.children.length;i++) if(card.children[i].objectName==="floating-preview-source") return card.children[i]
+    throw new Error("Card capture item missing")
+  }
   Timer {
     interval:30;repeat:true;running:true
     onTriggered: {
@@ -114,6 +122,40 @@ ShellRoot {
         }
         if(root.phase===3) {
           near(one().width,Math.round(root.freeWidth),"Free sizing did not recover its saved width")
+          image(one()).sourceSize=Qt.size(1200,600);root.phase=30;return
+        }
+        if(root.phase===30) {
+          near(one().width/one().height,2,"Verified source aspect did not replace original tiled geometry")
+          var body=previews.details().world.bodies[0]
+          near(body.height,one().height,"Physics bounds retained original tiled aspect")
+          root.aspectCache=previews.observedSizes
+          image(one()).sourceSize=Qt.size(2400,1200);root.phase=31;return
+        }
+        if(root.phase===31) {
+          check(previews.observedSizes===root.aspectCache,"Same-aspect pixel size change caused a geometry reflow")
+          near(one().width/one().height,2,"Same-aspect source resolution changed card shape")
+          one().held=true;image(one()).sourceSize=Qt.size(600,600);root.phase=32;return
+        }
+        if(root.phase===32) {
+          near(one().width/one().height,2,"New source aspect changed a held card beneath the pointer")
+          check(!!previews.pendingSizes.first,"Held source aspect was not retained for release")
+          one().held=false;root.phase=33;return
+        }
+        if(root.phase===33) {
+          near(one().width/one().height,1,"Released card did not apply its pending source aspect")
+          one().resizing=true;one().resizePressed("bottom-right")
+          image(one()).sourceSize=Qt.size(900,600);root.phase=34;return
+        }
+        if(root.phase===34) {
+          near(one().width/one().height,1,"Source aspect changed an active corner resize")
+          one().resizeRequested(10,10,"bottom-right")
+          near(one().width/one().height,1,"Resize used pending rather than current source aspect")
+          one().resizing=false;one().resizeReleased();root.phase=35;return
+        }
+        if(root.phase===35) {
+          near(one().width/one().height,1.5,"Finished resize did not apply pending source aspect")
+          near(previews.details().world.bodies[0].height,one().height,"Finished resize retained stale physics bounds")
+          check(root.first.size[0]===640 && root.first.size[1]===420,"Preview aspect mutation changed original restore geometry")
           setting("floatingPreviewLock","locked");root.phase=4;return
         }
         if(root.phase===4) {
@@ -167,4 +209,4 @@ ShellRoot {
     output = result.stdout+result.stderr
     assert result.returncode == 0 and 'FLOATING_PREVIEW_CARDS_QT_PASS' in output, output
     assert not any(message in output for message in ('Binding loop', 'ReferenceError', 'TypeError', 'Cannot assign', 'Cannot read')), output
-    print('Qt floating previews: card construction, borderless aspect, resize acknowledgement, independent sizing, lock, grouped exact selection and capture/mode cleanup passed')
+    print('Qt floating previews: construction, resizing, verified source aspect, unchanged restore geometry, deferred gesture updates, sizing, lock, grouped selection and capture/mode cleanup passed')

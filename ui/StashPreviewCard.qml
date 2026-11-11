@@ -28,7 +28,9 @@ Item {
   property bool keyboardSelected:false
   property real maximumHeight:100000
   property real presence:0
+  property var sourceSizes:({})
   readonly property var record:group && group.windows.length ? group.windows[0] : null
+  readonly property var geometryRecord:Geometry.geometryRecord(record,sourceSizes)
   readonly property string key:"preview:"+(group ? group.key : "")
   readonly property string animations:config.animations || "full"
   readonly property string animationSpeed:config.animationSpeed || "normal"
@@ -37,7 +39,7 @@ Item {
   readonly property var popupColors:Commons.Color.popups
   readonly property var fonts:Style.font
   readonly property var desktop:DesktopEntries.heuristicLookup(record ? String(record.app || "") : "")
-  readonly property var dimensions:Geometry.dimensions(width,record,{x:0,y:0,width:Math.max(1,width),height:Math.max(1,maximumHeight)},titleVisible,frameVisible)
+  readonly property var dimensions:Geometry.dimensions(width,geometryRecord,{x:0,y:0,width:Math.max(1,width),height:Math.max(1,maximumHeight)},titleVisible,frameVisible)
   readonly property bool hovered:hover.hovered || pointer.containsMouse
   readonly property bool live:(config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
   readonly property bool canMove:interactive && movable && config.floatingPreviewLock!=="locked" && !retiring
@@ -55,6 +57,8 @@ Item {
   signal contextRequested(real x,real y)
   signal closeRequested()
   signal scrolled(real delta)
+  signal sourceAspectObserved(string recordId,real width,real height)
+  signal geometryReleased()
   height:dimensions.height
   enabled:interactive && !retiring
   opacity:presence*feedback.visualOpacity
@@ -65,6 +69,9 @@ Item {
   onWidthChanged:inputChanged()
   onHeightChanged:inputChanged()
   onPresenceChanged:inputChanged()
+  onHeldChanged:if(!held) geometryReleased()
+  onResizingChanged:if(!resizing) geometryReleased()
+  onMovingChanged:if(!moving) geometryReleased()
   onRetiringChanged:presence=retiring ? 0 : 1
   onInteractiveChanged:if (!interactive) cancelInteraction()
   onCanMoveChanged:if (!canMove) cancelInteraction()
@@ -77,6 +84,11 @@ Item {
     resizing=false
   }
   function rectOf(item) {var p=item.mapToItem(coordinateRoot,0,0);return {x:p.x,y:p.y,width:item.width,height:item.height}}
+  function observeSourceAspect() {
+    if(!record || !thumbnail.active || !thumbnail.hasContent || !thumbnail.eligible) return
+    var size=thumbnail.sourceSize
+    if(Geometry.validSourceSize([size.width,size.height])) sourceAspectObserved(record.id,size.width,size.height)
+  }
   function details() {
     var rect=rectOf(card),handles=[]
     var corners=["top-left","top-right","bottom-left","bottom-right"]
@@ -104,6 +116,7 @@ Item {
   }
   StashPreviewImage {
     id:thumbnail
+    objectName:"floating-preview-source"
     x:card.dimensions.inset;y:card.dimensions.inset+card.dimensions.header
     width:Math.max(1,card.width-card.dimensions.inset*2)
     height:Math.max(1,card.height-card.dimensions.header-card.dimensions.inset*2)
@@ -111,7 +124,10 @@ Item {
     mode:card.live ? "live" : "still"
     active:card.captureAllowed && card.visible && !card.retiring
     animations:card.animations;animationSpeed:card.animationSpeed
+    onSourceSizeChanged:sourceObservation.restart()
+    onHasContentChanged:sourceObservation.restart()
   }
+  Timer {id:sourceObservation;interval:0;onTriggered:card.observeSourceAspect()}
   Rectangle {
     x:card.dimensions.inset;y:card.dimensions.inset
     width:Math.max(0,card.width-card.dimensions.inset*2);height:card.dimensions.header
