@@ -652,7 +652,80 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
+            floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
+
+    def test_floating_previews_default_without_changing_existing_presentation_or_hover_settings(self):
+        self.settings(presentation="bubbles", scope="workspace", grouping="app", hoverPreview="off", iconOpacity=63)
+        result = self.stash.settings()
+        expected = dict(floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
+                        floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked")
+        self.assertEqual({key: result[key] for key in expected}, expected)
+        self.assertEqual((result["presentation"], result["scope"], result["grouping"], result["hoverPreview"], result["iconOpacity"]),
+                         ("bubbles", "workspace", "app", "off", 63))
+
+    def test_floating_previews_choices_and_invalid_values_are_independent(self):
+        choices = dict(floatingPreviewSizing=("free", "preset"),
+                       floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
+                       floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
+                       floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"))
+        for key, values in choices.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    self.settings(**{key:value}, presentation="previews", hoverPreview="off", scope="workspace", iconOpacity=63)
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], value)
+                    self.assertEqual((result["presentation"], result["hoverPreview"], result["scope"], result["iconOpacity"]),
+                                     ("previews", "off", "workspace", 63))
+            for invalid in ("invalid", "", True, False, None, 1, 100, [], {}):
+                with self.subTest(key=key, invalid=invalid):
+                    self.settings(**{key:invalid}, presentation="previews", hoverPreview="still")
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], DEFAULTS[key])
+                    self.assertEqual((result["presentation"], result["hoverPreview"]), ("previews", "still"))
+
+    def test_preview_card_geometry_persists_separately_without_changing_window_restore_geometry(self):
+        self.hypr.clients[0]["floating"] = True
+        ident = self.stash.minimize()["id"]
+        self.hypr.commands.clear()
+        before_state = self.stash.path.read_bytes()
+        expected = {"output-a":{"window:0x1":[321,234], "dock:floating":[450,600]}}
+        atomic_json(self.stash.positions, expected)
+        for output, key, geometry in (("output-a", "preview:window:0x1", [120, 200, 380]),
+                                       ("output-b", "preview:app:test-app", [-20, 90, 640]),
+                                       ("output-a", "preview:window:0x1", [145, 240, 500])):
+            with patch("stash.Stash", return_value=self.stash), patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                code = main(["preview-position", output, key, *map(str, geometry)])
+            self.assertEqual(code, 0, stdout.getvalue())
+            self.assertEqual(json.loads(stdout.getvalue()), dict(ok=True))
+            expected.setdefault(output, {})[key] = geometry
+        restarted = Stash(self.hypr,self.root/"run",self.root/"shell.json",self.root/"state")
+        with restarted.locked():
+            self.assertEqual(restarted.listing()["positions"], expected)
+        self.assertEqual(self.stash.path.read_bytes(), before_state)
+        self.assertEqual(self.hypr.commands, [], "Preview placement and sizing must not mutate the stashed window")
+        self.hypr.clients[0].update(at=[900,800],size=[300,200])
+        self.stash.restore(ident,"current")
+        self.assertEqual(self.hypr.clients[0]["at"], [100,150])
+        self.assertEqual(self.hypr.clients[0]["size"], [640,400])
+
+    def test_invalid_preview_geometry_never_overwrites_any_saved_position(self):
+        atomic_json(self.stash.positions, {"output-a":{"preview:window:0x1":[120,200,380],"window:0x1":[321,234]}})
+        before = self.stash.positions.read_bytes()
+        for key, geometry in (("window:0x1", [1,2,100]), ("preview:", [1,2,100]),
+                               ("preview:window:0x1", [1,2,0]), ("preview:window:0x1", [1,2,-1]),
+                               ("preview:window:0x1", [1,2,1_000_001]),
+                               ("preview:window:0x1", [1_000_001,2,100]),
+                               ("preview:window:0x1", [1,-1_000_001,100])):
+            with self.subTest(key=key, geometry=geometry), patch("stash.Stash", return_value=self.stash), \
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(main(["preview-position", "output-a", key, *map(str,geometry)]), 1)
+                self.assertFalse(json.loads(stdout.getvalue())["ok"])
+                self.assertEqual(self.stash.positions.read_bytes(), before)
+        for invalid in ("nan", "inf", "-inf", "2.5", "100.0", "true"):
+            with self.subTest(invalid=invalid), patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                main(["preview-position", "output-a", "preview:window:0x1", "1", "2", invalid])
+            self.assertEqual(self.stash.positions.read_bytes(), before)
 
     def test_size_preset_default_and_legacy_settings(self):
         self.assertEqual(self.stash.settings()["sizePreset"], "100")

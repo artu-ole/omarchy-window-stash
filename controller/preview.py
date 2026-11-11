@@ -155,7 +155,10 @@ class PreviewKeeper:
         wanted = request_ids(wanted)
         with self.stash.locked():
             settings = self.stash.settings()
-            enabled = settings['hoverPreview'] == 'live' and settings['livePreviewCompatibility'] == 'enhanced'
+            live_source = (settings['hoverPreview'] == 'live'
+                           or (settings['presentation'] == 'previews'
+                               and settings['floatingPreviewUpdate'] in ('hover', 'live')))
+            enabled = live_source and settings['livePreviewCompatibility'] == 'enhanced'
             records = list(self.stash.state['windows']) if enabled else []
         matches = preview_records(records, self.stash.hypr.read('clients'), wanted) if records and wanted else []
         if matches:

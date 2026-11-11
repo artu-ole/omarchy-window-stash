@@ -24,9 +24,11 @@ SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
-                hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200)
+                hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
+                floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
+                floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked")
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
-CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "workspace"),
+CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
                sizePreset=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
@@ -36,7 +38,11 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating"), scope=("global", "w
                animations=("full", "reduced", "off"), animationSpeed=("slow", "relaxed", "normal", "fast", "ultrafast"), dockOpacity=range(101), iconOpacity=range(101),
                hoverPreview=("off", "still", "live"), livePreviewCompatibility=("standard", "enhanced"), previewSize=("small", "medium", "large"),
                previewPlacement=("auto", "above", "below", "left", "right"), previewTitles=("shown", "hidden"),
-               previewDelay=range(1501), previewHideDelay=range(1001))
+               previewDelay=range(1501), previewHideDelay=range(1001),
+               floatingPreviewSizing=("free", "preset"),
+               floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
+               floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
+               floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"))
 
 
 def lua(value):
@@ -660,6 +666,12 @@ def main(argv=None):
     pos.add_argument("key")
     pos.add_argument("x", type=float)
     pos.add_argument("y", type=float)
+    preview_pos = sub.add_parser("preview-position", help="Save a floating preview card's position and width")
+    preview_pos.add_argument("monitor")
+    preview_pos.add_argument("key")
+    preview_pos.add_argument("x", type=int)
+    preview_pos.add_argument("y", type=int)
+    preview_pos.add_argument("width", type=int)
     rebase = sub.add_parser("rebase")
     rebase.add_argument("old", type=int)
     rebase.add_argument("new", type=int)
@@ -702,6 +714,16 @@ def main(argv=None):
             elif args.command == "position":
                 positions=read_json(stash.positions,{})
                 positions.setdefault(args.monitor,{})[args.key]=[args.x,args.y]
+                atomic_json(stash.positions,positions)
+                result=dict(ok=True)
+            elif args.command == "preview-position":
+                if not args.key.startswith("preview:") or not args.key.removeprefix("preview:"):
+                    raise ValueError("Floating preview positions require a preview: key")
+                if not (-1_000_000 <= args.x <= 1_000_000 and -1_000_000 <= args.y <= 1_000_000
+                        and 1 <= args.width <= 1_000_000):
+                    raise ValueError("Preview coordinates must be within ±1000000 and width within 1–1000000 pixels")
+                positions=read_json(stash.positions,{})
+                positions.setdefault(args.monitor,{})[args.key]=[args.x,args.y,args.width]
                 atomic_json(stash.positions,positions)
                 result=dict(ok=True)
             else: result=stash.listing()

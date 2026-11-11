@@ -63,7 +63,8 @@ class ResetSettingsTests(unittest.TestCase):
         self.state = self.root/'state.json'
         self.state.write_text(json.dumps({'version': 1, 'windows': [{'id': 'parked-window'}]}))
         self.positions = self.root/'positions.json'
-        self.positions.write_text(json.dumps({'output': {'window:parked-window': [321, 234]}}))
+        self.positions.write_text(json.dumps({'output': {'window:parked-window': [321, 234],
+                                                        'preview:window:parked-window': [120,200,380]}}))
         self.before_state = self.state.read_bytes()
         self.before_positions = self.positions.read_bytes()
 
