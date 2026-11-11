@@ -21,7 +21,9 @@ PanelWindow {
   required property var stash
   readonly property var monitor: stash.screenMonitor(screen.name)
   readonly property var liveMonitor:Hyprland.monitorFor(screen)
-  readonly property int activeWorkspaceId:liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : monitor ? monitor.activeWorkspace.id : -1
+  // The native monitor object can retain an old workspace after hotplugging.
+  // Prefer the controller's compositor snapshot once that output is known.
+  readonly property int activeWorkspaceId:monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : -1
   onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (floatingPreviews) floatingPreviews.closeExpansion(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
@@ -510,6 +512,8 @@ PanelWindow {
         visible:number.visible,rect:itemRect(number.numberField.field)})
     }
     return {screen:screen.name,workspaceId:activeWorkspaceId, width:width, height:height, eligible:windows.length,
+      workspaceState:{snapshot:monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : null,
+        live:liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : null},
       input:{regions:inputMask.regions.map(function(r) { return {x:r.x,y:r.y,width:r.width,height:r.height,radius:r.radius} }),
         bubbles:surface.bubbleRegions.map(function(r) { return {x:r.x,y:r.y,width:r.width,height:r.height,radius:r.radius} })},
       groups:groups.length, visible:visible, keyboardOpen:keyboardOpen,retainingPointerFocus:retainingPointerFocus,

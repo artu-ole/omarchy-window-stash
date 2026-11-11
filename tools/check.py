@@ -47,6 +47,7 @@ run('python3','tests/stack_follow_qt.py')
 run('python3','tests/static_dock_position.py')
 run('python3','tests/floating_preview_cards_qt.py')
 run('python3','tests/preview_keeper_qt.py')
+run('python3','tests/workspace_state_qt.py')
 run('omarchy','plugin','validate',str(ROOT))
 with tempfile.TemporaryDirectory(prefix='window-stash-qml-') as directory:
     qs=Path(directory)/'qs';qs.mkdir()
