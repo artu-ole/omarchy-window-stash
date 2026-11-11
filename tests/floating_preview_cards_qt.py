@@ -156,6 +156,33 @@ ShellRoot {
           near(one().width/one().height,1.5,"Finished resize did not apply pending source aspect")
           near(previews.details().world.bodies[0].height,one().height,"Finished resize retained stale physics bounds")
           check(root.first.size[0]===640 && root.first.size[1]===420,"Preview aspect mutation changed original restore geometry")
+          previews.groups=[{key:"window:first",windows:[root.first,root.second]}]
+          image(one()).sourceSize=Qt.size(1200,600);root.phase=36;return
+        }
+        if(root.phase===36) {
+          near(one().width/one().height,2,"Still cover did not retain its own wide frame")
+          previews.activate(one());root.phase=37;return
+        }
+        if(root.phase===37) {
+          check(previews.expanded && previews.tileList().length===2,"Independent aspect group did not expand")
+          var tile=previews.tileList().find(function(tile) {return tile.record.id==="first"})
+          image(tile).sourceSize=Qt.size(600,600);root.phase=38;return
+        }
+        if(root.phase===38) {
+          var tile=previews.tileList().find(function(tile) {return tile.record.id==="first"})
+          near(tile.width/tile.height,1,"New Still tile did not adapt to its own square frame")
+          near(one().width/one().height,2,"New Still tile overwrote the older cover frame aspect")
+          near(previews.expandedLayout.cells.first.width/previews.expandedLayout.cells.first.height,1,"Grid retained the older cover aspect")
+          check(previews.observedSizes.first[0]===1200 && previews.expandedObservedSizes.first[0]===600,"Cover and expanded frame contexts shared one aspect cache")
+          previews.closeExpansion()
+          check(!Object.keys(previews.expandedObservedSizes).length && !Object.keys(previews.expandedPendingSizes).length,"Closing a group retained its temporary capture geometry")
+          previews.activate(one());root.phase=39;return
+        }
+        if(root.phase===39) {
+          var tile=previews.tileList().find(function(tile) {return tile.record.id==="first"})
+          near(tile.width/tile.height,2,"Reopened group inherited a previous tile frame instead of the cover fallback")
+          check(!Object.keys(previews.expandedObservedSizes).length,"Reopened group retained an obsolete tile observation")
+          previews.closeExpansion();previews.groups=[{key:"window:first",windows:[root.first]}]
           setting("floatingPreviewLock","locked");root.phase=4;return
         }
         if(root.phase===4) {
@@ -209,4 +236,4 @@ ShellRoot {
     output = result.stdout+result.stderr
     assert result.returncode == 0 and 'FLOATING_PREVIEW_CARDS_QT_PASS' in output, output
     assert not any(message in output for message in ('Binding loop', 'ReferenceError', 'TypeError', 'Cannot assign', 'Cannot read')), output
-    print('Qt floating previews: construction, resizing, verified source aspect, unchanged restore geometry, deferred gesture updates, sizing, lock, grouped selection and capture/mode cleanup passed')
+    print('Qt floating previews: construction, resizing, verified source aspect, independent Still captures, unchanged restore geometry, deferred gesture updates, sizing, lock, grouped selection and capture/mode cleanup passed')

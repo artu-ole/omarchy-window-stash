@@ -21,6 +21,8 @@ Item {
   property var drafts:({})
   property var observedSizes:({})
   property var pendingSizes:({})
+  property var expandedObservedSizes:({})
+  property var expandedPendingSizes:({})
   property int page:0
   property string expandedKey:""
   property int selectedIndex:0
@@ -40,7 +42,8 @@ Item {
   readonly property var layout:Geometry.layout(geometryGroups,savedPositions,drafts,layoutArea,layoutOptions)
   readonly property var expandedGroup:expandedKey ? groups.find(function(group) {return group.key===expandedKey}) || null : null
   readonly property var expandedRecords:expandedGroup ? expandedGroup.windows : []
-  readonly property var expandedGeometryRecords:expandedRecords.map(function(record) {return Geometry.geometryRecord(record,previews.observedSizes)})
+  readonly property var expandedSourceSizes:Object.assign({},observedSizes,expandedObservedSizes)
+  readonly property var expandedGeometryRecords:expandedRecords.map(function(record) {return Geometry.geometryRecord(record,previews.expandedSourceSizes)})
   readonly property var expandedAnchor:expandedKey ? cardForKey("preview:"+expandedKey) : null
   readonly property var expandedLayout:Geometry.groupGrid(expandedGeometryRecords,expandedAnchor ? {x:expandedAnchor.x,y:expandedAnchor.y,width:expandedAnchor.width,height:expandedAnchor.height} : area,
     area,config.floatingPreviewTitles==="shown",config.floatingPreviewFrame==="shown",config.floatingPreviewSizing==="preset" ? 280*Number(config.floatingPreviewScale || "100")/100 : expandedAnchor ? expandedAnchor.width : 280)
@@ -77,6 +80,12 @@ Item {
     var next=Object.assign({},pendingSizes);next[recordId]=size;pendingSizes=next
     sourceGeometryDelay.restart()
   }
+  function observeExpandedSource(recordId,width,height) {
+    var size=[width,height],previous=expandedPendingSizes[recordId] || expandedObservedSizes[recordId]
+    if(!expanded || !Geometry.validSourceSize(size) || Geometry.sameAspect(previous,size)) return
+    var next=Object.assign({},expandedPendingSizes);next[recordId]=size;expandedPendingSizes=next
+    sourceGeometryDelay.restart()
+  }
   function applySourceGeometry() {
     var next=Object.assign({},observedSizes),pending=Object.assign({},pendingSizes),changed=false
     var owned={}
@@ -90,6 +99,17 @@ Item {
     Object.keys(next).forEach(function(id) {if(!owned[id]) {delete next[id];changed=true}})
     if(changed) observedSizes=next
     if(JSON.stringify(pending)!==JSON.stringify(pendingSizes)) pendingSizes=pending
+    // A Still cover and its newly opened group tile can represent different
+    // captures of the same client. Their frame aspects must remain independent.
+    var expandedOwned={},expandedNext=Object.assign({},expandedObservedSizes),expandedPending=Object.assign({},expandedPendingSizes),expandedChanged=false
+    if(expanded) expandedRecords.forEach(function(record) {expandedOwned[record.id]=true})
+    Object.keys(expandedPending).forEach(function(id) {
+      if(expandedOwned[id] && !Geometry.sameAspect(expandedNext[id],expandedPending[id])) {expandedNext[id]=expandedPending[id];expandedChanged=true}
+      delete expandedPending[id]
+    })
+    Object.keys(expandedNext).forEach(function(id) {if(!expandedOwned[id]) {delete expandedNext[id];expandedChanged=true}})
+    if(expandedChanged) expandedObservedSizes=expandedNext
+    if(JSON.stringify(expandedPending)!==JSON.stringify(expandedPendingSizes)) expandedPendingSizes=expandedPending
   }
   function save(card) {
     if(!card || card.retiring || !active || !captureAllowed || !monitor) return
@@ -101,7 +121,8 @@ Item {
     drafts=next
     stash.recordPreviewPosition(monitor,card.key,point[0],point[1],point[2])
   }
-  function closeExpansion() {expandedKey="";selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
+  function clearExpandedGeometry() {expandedObservedSizes={};expandedPendingSizes={}}
+  function closeExpansion() {expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
   function selectTile(delta) {
     if(!expandedRecords.length) return
     selectedIndex=Geometry.clamp(selectedIndex+delta,0,expandedRecords.length-1);keyboardSelection=true
@@ -116,7 +137,8 @@ Item {
   function activate(card) {
     if(stash.groupClosing(card.group)) return
     if(card.group.windows.length>1) {
-      expandedKey=expandedKey===card.group.key ? "" : card.group.key
+      if(expandedKey===card.group.key) {closeExpansion();return}
+      clearExpandedGeometry();expandedKey=card.group.key
       selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()
     } else {closeExpansion();stash.restorePreviewWindow(card.record.id,screenName)}
   }
@@ -171,7 +193,7 @@ Item {
   onCaptureAllowedChanged: {if(!captureAllowed) closeExpansion();scheduleLayout()}
   onBlockedChanged: {if(blocked) {closeExpansion();cardList().forEach(function(card) {card.cancelInteraction()})};scheduleLayout()}
   onExpandedChanged: {expansionValidation.restart();scheduleRegions();scheduleLayout()}
-  onExpandedRecordsChanged: {expansionValidation.restart();scheduleRegions()}
+  onExpandedRecordsChanged: {expansionValidation.restart();sourceGeometryDelay.restart();scheduleRegions()}
   onSavedPositionsChanged: {
     var next=Object.assign({},drafts)
     Object.keys(next).forEach(function(key) {if(JSON.stringify(next[key])===JSON.stringify(savedPositions[key])) delete next[key]})
@@ -299,7 +321,7 @@ Item {
           onChanged:previews.scheduleRegions()
         }
         stash:previews.stash;config:previews.config;group:({key:"window:"+modelData.id,windows:[modelData]})
-        sourceSizes:previews.observedSizes
+        sourceSizes:previews.expandedSourceSizes
         coordinateRoot:previews.coordinateRoot;screenName:previews.screenName
         x:cell.x;y:cell.y;width:cell.width
         captureAllowed:previews.captureAllowed && inViewport
@@ -308,7 +330,7 @@ Item {
         maximumHeight:previews.area.height
         keyboardSelected:!!(previews.keyboardSelection && previews.expandedRecords[previews.selectedIndex] && previews.expandedRecords[previews.selectedIndex].id===modelData.id)
         onInputChanged:previews.scheduleRegions()
-        onSourceAspectObserved:function(recordId,width,height) {previews.observeSource(recordId,width,height)}
+        onSourceAspectObserved:function(recordId,width,height) {previews.observeExpandedSource(recordId,width,height)}
         onGeometryReleased:sourceGeometryDelay.restart()
         onActivated: {var id=modelData.id;previews.closeExpansion();previews.stash.restorePreviewWindow(id,previews.screenName)}
         onContextRequested:function(x,y) {previews.closeExpansion();previews.stash.openContext(group,previews.screenName,Qt.point(x,y))}
