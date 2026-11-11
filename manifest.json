@@ -2,11 +2,15 @@
   "schemaVersion": 1,
   "id": "community.window-stash",
   "name": "Window Stash",
-  "version": "1.27.1",
+  "version": "1.28.0",
   "author": "artu-ole",
   "license": "AGPL-3.0-only",
-  "description": "Stash windows in an edge dock, floating bubbles, or expandable floating dock, preserving geometry.",
-  "kinds": ["service"],
+  "description": "Minimize tiling windows into a dock, floating icons, or resizable floating previews, preserving geometry.",
+  "kinds": [
+    "service"
+  ],
   "keepLoaded": false,
-  "entryPoints": {"service": "Service.qml"}
+  "entryPoints": {
+    "service": "Service.qml"
+  }
 }

@@ -22,7 +22,7 @@ PanelWindow {
   readonly property var monitor: stash.screenMonitor(screen.name)
   readonly property var liveMonitor:Hyprland.monitorFor(screen)
   readonly property int activeWorkspaceId:liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : monitor ? monitor.activeWorkspace.id : -1
-  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
+  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (floatingPreviews) floatingPreviews.closeExpansion(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
   readonly property string animationSpeed:config.animationSpeed || "normal"
@@ -77,15 +77,20 @@ PanelWindow {
   onRequestedFloatingIconSizeChanged:if(sizingReady) updateSizes()
   readonly property bool bubbleMode: config.presentation === "bubbles"
   readonly property bool floatingMode: (config.presentation || "floating") === "floating"
+  readonly property bool previewMode: config.presentation === "previews"
   readonly property bool floatingDockOpen:floatingDock.open
+  readonly property bool floatingPreviewsExpanded:floatingPreviews.expanded
   readonly property bool previewOpen:windowPreview.opened
   readonly property bool previewPending:windowPreview.pending
-  readonly property bool previewsEnabled:(config.hoverPreview || "off")!=="off"
+  readonly property bool previewsEnabled:!previewMode && (config.hoverPreview || "off")!=="off"
+  readonly property bool livePreviewsEnabled:previewMode
+    ? config.floatingPreviewUpdate!=="still" : config.hoverPreview==="live"
   readonly property string previewLayoutKey:JSON.stringify([config.presentation,config.scope,config.grouping,config.dockSide,config.floatingDirection,config.sizePreset])
   onPreviewLayoutKeyChanged:if (windowPreview) windowPreview.dismiss(true)
   function dismissPreview() { windowPreview.dismiss(true) }
+  function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
-  readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen
+  readonly property bool keyboardOpen: dialogOpen || floatingDock.open || floatingPreviewsExpanded || contextMenuOpen
   property bool pointerFocusHeld:false
   readonly property bool retainingPointerFocus:pointerFocusHeld && stash.pointerButtonHeld
   function beginPointerFocusHold() { if (keyboardOpen) pointerFocusHeld=true }
@@ -392,7 +397,7 @@ PanelWindow {
     }
   }
   function settingItems() {
-    var rows=[],repeaters=[generalRows,placementRows,iconRows,dockRows,motionRows,previewRows]
+    var rows=[],repeaters=[generalRows,placementRows,iconRows,dockRows,motionRows,previewRows,floatingPreviewRows]
     for (var i=0;i<repeaters.length;i++) {
       if (!repeaters[i]) continue
       for (var j=0;j<repeaters[i].count;j++) {
@@ -407,14 +412,18 @@ PanelWindow {
     required property var modelData
     readonly property alias selector:settingDropdown
     visible:(["previewSize","previewPlacement","previewTitles"].indexOf(modelData.key)<0 || surface.previewsEnabled)
-      && (modelData.key!=="livePreviewCompatibility" || surface.config.hoverPreview==="live")
+      && (modelData.key!=="livePreviewCompatibility" || surface.livePreviewsEnabled)
+      && (modelData.key!=="hoverPreview" || !surface.previewMode)
       && ((modelData.key!=="floatingDirection" && modelData.key!=="floatingAnimation") || surface.floatingMode)
       && (["dockSide","staticDockLock"].indexOf(modelData.key)<0 || surface.config.presentation==="dock")
-      && (modelData.key!=="floatingPlacement" || surface.bubbleMode || surface.floatingMode)
-      && (modelData.key!=="dragMotion" || surface.bubbleMode || surface.floatingMode)
-      && (modelData.key!=="dockCorners" || (!surface.bubbleMode && surface.dockFrameVisible))
-      && (modelData.key!=="dockFrame" || !surface.bubbleMode)
+      && (modelData.key!=="floatingPlacement" || surface.bubbleMode || surface.floatingMode || surface.previewMode)
+      && (modelData.key!=="dragMotion" || surface.bubbleMode || surface.floatingMode || surface.previewMode)
+      && (modelData.key!=="dockCorners" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible))
+      && (modelData.key!=="dockFrame" || (!surface.bubbleMode && !surface.previewMode))
       && (modelData.key!=="iconShape" || surface.config.iconFrame==="shown")
+      && (["iconShape","iconFrame","sizePreset"].indexOf(modelData.key)<0 || !surface.previewMode)
+      && (modelData.key.indexOf("floatingPreview")!==0 || surface.previewMode)
+      && (modelData.key!=="floatingPreviewScale" || surface.config.floatingPreviewSizing==="preset")
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
     columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
@@ -442,8 +451,8 @@ PanelWindow {
     id:settingRow
     required property var modelData
     readonly property alias numberField:settingNumber
-    visible:(modelData.key!=="dockCornerRadius" || (!surface.bubbleMode && surface.dockFrameVisible && surface.config.dockCorners==="custom"))
-      && (modelData.key!=="dockOpacity" || (!surface.bubbleMode && surface.dockFrameVisible))
+    visible:(modelData.key!=="dockCornerRadius" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible && surface.config.dockCorners==="custom"))
+      && (modelData.key!=="dockOpacity" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible))
       && (["previewDelay","previewHideDelay"].indexOf(modelData.key)<0 || surface.previewsEnabled)
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
@@ -535,6 +544,7 @@ PanelWindow {
       opacityControls:opacityControls,numberControls:numericControls,
       cornerControl:{visible:radiusRow.visible,value:radiusRow.numberField.value,rect:itemRect(radiusRow.numberField.field)},
       floatingDock:floatingDock.details(),
+      floatingPreviews:floatingPreviews.details(),
       preview:windowPreview.details(),
       actions:{here:contextMenu.actionRect("here"),original:contextMenu.actionRect("original"),settings:contextMenu.actionRect("settings")},
       theme:{background:String(surface.popupColors.background),foreground:String(surface.popupColors.text),
@@ -576,13 +586,14 @@ PanelWindow {
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
     : retainingPointerFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-  visible: retainingPointerFocus || shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || contextMenu.visible || windowPreview.visible
+  visible: retainingPointerFocus || shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || floatingPreviews.present || contextMenu.visible || windowPreview.visible
   mask: Region {
     id: inputMask
     // Keep motion on this surface during a drag, including the gaps between
     // small animated regions. Restore click-through immediately on release.
-    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held || staticPlacement.held ? [dialogRegion]
+    regions: surface.dialogOpen || surface.bubbleHeld || floatingDock.held || floatingPreviews.held || staticPlacement.held ? [dialogRegion]
       : (surface.floatingMode ? floatingDock.inputRegions : surface.bubbleMode ? surface.bubbleRegions
+          : surface.previewMode ? floatingPreviews.inputRegions
           : surface.config.presentation==="dock" && surface.groups.length>0 ? [shelfRegion] : [])
         .concat(surface.contextMenuOpen ? [contextRegion] : [])
         .concat(windowPreview.opened ? [previewRegion] : [])
@@ -909,6 +920,23 @@ PanelWindow {
     active:surface.floatingMode && surface.groups.length > 0
   }
 
+  StashFloatingPreviews {
+    id:floatingPreviews
+    width:surface.canvasWidth; height:surface.canvasHeight
+    stash:surface.stash
+    config:surface.config
+    area:surface.usableArea
+    coordinateRoot:surface.contentItem
+    screenName:surface.screen.name
+    monitor:surface.monitor
+    savedPositions:surface.stash.snapshot.positions[Model.staticDockMonitorKey(surface.monitor || ({name:surface.screen.name}))] || ({})
+    groups:surface.groups
+    active:surface.previewMode && surface.groups.length>0
+    blocked:surface.stash.contextOpen || surface.stash.dialogKind!==""
+    captureAllowed:surface.stash.captureAllowedFor(surface.screen.name)
+    onInputChanged:surface.refreshInputMask()
+  }
+
   MouseArea {
     anchors.fill: parent
     visible: surface.dialogOpen
@@ -1065,9 +1093,9 @@ PanelWindow {
           Repeater {
             id:generalRows
             model:[
-              {key: "presentation", label: "Display mode", values: ["dock", "bubbles", "floating"], labels: ["Static dock", "Floating bubbles", "Floating dock"], section: "general"},
+              {key: "presentation", label: "Display mode", values: ["dock", "bubbles", "floating", "previews"], labels: ["Static dock", "Floating bubbles", "Floating dock", "Floating previews"], section: "general"},
               {key: "scope", label: "Stash visibility", values: ["global", "workspace"], labels: ["Global", "Current workspace"], section: "general"},
-              {key: "grouping", label: "Icon grouping", values: ["window", "app"], labels: ["One per window", "One per app"], section: "general"},
+              {key: "grouping", label: "Grouping", values: ["window", "app"], labels: ["One per window", "One per app"], section: "general"},
               {key: "restoreDestination", label: "Restore destination", values: ["current", "original"], labels: ["Current workspace", "Original workspace"], section: "general"}
             ]
             delegate:SettingChoice {}
@@ -1082,6 +1110,7 @@ PanelWindow {
             model:[
               {key: "dockSide", label: "Dock side", values: ["bottom", "top", "left", "right"], labels: ["Bottom", "Top", "Left", "Right"], section: "placement"},
               {key: "staticDockLock", label: "Static dock position", values: ["locked", "unlocked"], labels: ["Locked", "Unlocked"], section: "placement"},
+              {key: "floatingPreviewLock", label: "Preview placement", values: ["unlocked", "locked"], labels: ["Unlocked", "Locked"], section: "placement"},
               {key: "floatingDirection", label: "Floating dock direction", values: ["vertical", "horizontal"], labels: ["Vertical", "Horizontal"], section: "placement"},
               {key: "floatingPlacement", label: "Floating placement", values: ["edges", "free"], labels: ["Snap to edges", "Free placement"], section: "placement"}
             ]
@@ -1098,7 +1127,7 @@ PanelWindow {
             ]
             delegate:SettingChoice {}
           }
-          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview opacity (%)" : "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
           Repeater {
             id:dockRows
             model:[
@@ -1124,6 +1153,27 @@ PanelWindow {
           Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
           Ui.PanelSectionHeader { id:previewsHeader; text:"Previews"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
+            id:floatingPreviewRows
+            model:[
+              {key:"floatingPreviewSizing", label:"Preview sizing", values:["free","preset"], labels:["Resize directly","Size presets"], section:"previews"},
+              {key:"floatingPreviewScale", label:"Preview scale", values:["50","75","100","125","150","175","200","250","300"], labels:["50%","75%","100%","125%","150%","175%","200%","250%","300%"], section:"previews"},
+              {key:"floatingPreviewUpdate", label:"Preview updates", values:["still","hover","live"], labels:["Snapshot","Live on hover","Always live"], section:"previews"},
+              {key:"floatingPreviewTitles", label:"Preview title strip", values:["hidden","shown"], labels:["Hidden","Shown"], section:"previews"},
+              {key:"floatingPreviewFrame", label:"Preview border/background", values:["hidden","shown"], labels:["Hidden","Shown"], section:"previews"}
+            ]
+            delegate:SettingChoice {}
+          }
+          Text {
+            visible:surface.previewMode
+            text:surface.config.floatingPreviewSizing==="free"
+              ? "Drag a preview to move it; use a corner to resize. Click to restore. Resizing keeps the window's proportions and does not resize the original window."
+              : "Click a preview to restore. App groups expand into individual window previews."
+            textFormat:Text.PlainText
+            color:surface.popupColors.text
+            font.family:surface.fonts.family; font.pixelSize:surface.fonts.caption
+            wrapMode:Text.Wrap; Layout.fillWidth:true; Layout.minimumWidth:0
+          }
+          Repeater {
             id:previewRows
             model:[
               {key: "hoverPreview", label: "Hover preview", values: ["off", "still", "live"], labels: ["Off", "Still image", "Live"], section: "previews"},
@@ -1135,7 +1185,7 @@ PanelWindow {
             delegate:SettingChoice {}
           }
           Text {
-            visible:surface.config.hoverPreview==="live" && surface.config.livePreviewCompatibility==="enhanced"
+            visible:surface.livePreviewsEnabled && surface.config.livePreviewCompatibility==="enhanced"
             text:surface.stash.previewCompatibilityError || "Keeps previewed apps rendering while hidden using an optional Hyprland extension. Other windows are unaffected."
             textFormat:Text.PlainText
             color:surface.stash.previewCompatibilityError ? Commons.Color.urgent : surface.popupColors.text
@@ -1242,8 +1292,9 @@ PanelWindow {
     area:surface.usableArea
     coordinateRoot:surface.contentItem
     screenName:surface.screen.name
-    blocked:surface.stash.contextOpen || (surface.stash.dialogKind!=="" && surface.stash.dialogKind!=="picker")
-      || surface.bubbleHeld || floatingDock.held
+    blocked:surface.previewMode || !surface.stash.captureAllowedFor(surface.screen.name)
+      || surface.stash.contextOpen || (surface.stash.dialogKind!=="" && surface.stash.dialogKind!=="picker")
+      || surface.bubbleHeld || floatingDock.held || floatingPreviews.held
     onInputChanged:surface.refreshInputMask()
     onRestoring:floatingDock.close("restore")
   }

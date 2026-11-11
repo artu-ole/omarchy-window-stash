@@ -36,7 +36,7 @@ Item {
   property bool pointerKnown:false
   property point pointerPosition:Qt.point(0,0)
   readonly property bool pointerTracking:root.surfaces.some(function(surface) {
-    return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.contextMenuOpen
+    return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.floatingPreviewsExpanded || surface.contextMenuOpen
   })
   property var previewCompatibilityRequests: ({})
   property var previewCompatibilityStatus: ({state:"idle",ids:[]})
@@ -57,7 +57,7 @@ Item {
       || (snapshot.settings.presentation==="previews" && ["hover","live"].indexOf(snapshot.settings.floatingPreviewUpdate)>=0)
     if (!captureAllowed || !liveSource || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
     var ids=Object.keys(previewCompatibilityRequests).map(function(key) { return root.previewCompatibilityRequests[key] })
-    return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort()
+    return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort().slice(0,128)
   }
   readonly property string previewCompatibilityStamp:JSON.stringify(previewCompatibilityIds)
   readonly property PreviewKeeperHost previewCompatibilityWorker:previewKeeper.item as PreviewKeeperHost
@@ -145,7 +145,7 @@ Item {
   }
   StashClickObserver {
     id:clickObserver
-    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
+    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.floatingPreviewsExpanded || s.contextMenuOpen || s.previewOpen })
     tracking:root.pointerTracking
     onMoved:function(x,y) { root.pointerPosition=Qt.point(x,y); root.pointerKnown=true; root.pointerMoved(x,y) }
     onClicked:function(x,y,button) {
@@ -473,7 +473,7 @@ Item {
     enqueue(["position", owner, key, String(Math.round(x)), String(Math.round(y))])
   }
   function recordPreviewPosition(monitor,key,x,y,width) {
-    enqueue(["preview-position",Model.monitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))])
+    enqueue(["preview-position",Model.staticDockMonitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))])
   }
   function allWindows(name) { openDialog("picker", name, snapshot.windows, null) }
   function focusedScreen() {
@@ -607,7 +607,7 @@ Item {
     }
     function settings(): void { root.openDialog("settings", root.focusedScreen(), [], null) }
     function all(): void { root.allWindows(root.focusedScreen()) }
-    function dismiss(): void { root.closeContext(); root.closeDialog() }
+    function dismiss(): void { root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
     function refresh(): void { root.refresh() }
     function configure(key: string, value: string): void { root.setting(key, value) }
     function minimize(): void { root.enqueue(["minimize"]) }
