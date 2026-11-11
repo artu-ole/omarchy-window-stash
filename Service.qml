@@ -255,7 +255,9 @@ Item {
       }
       Component.onDestruction: {
         root.previewCompatibilityStatus={state:"idle",ids:[]}
-        if (!root.previewCompatibilityIds.length) root.previewCompatibilityRequests={}
+        // Image delegates own their request keys. The worker can unload
+        // while those delegates still exist (for example during DPMS/lock
+        // suspension), and must not mutate the Loader's request dependency.
       }
   }
   function enqueue(args) {
