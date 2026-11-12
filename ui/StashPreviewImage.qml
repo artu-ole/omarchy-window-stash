@@ -48,6 +48,7 @@ Item {
   onIdentityKeyChanged: { begin(); syncCompatibility() }
   readonly property CaptureItem captureView:captureLoader.item as CaptureItem
   readonly property bool hasContent:!!captureView && captureView.hasContent
+  readonly property size sourceSize:hasContent && eligible ? captureView.sourceSize : Qt.size(0,0)
   readonly property string status:!active || failed ? "unavailable" : hasContent ? "ready" : "loading"
   readonly property var desktop:DesktopEntries.heuristicLookup(record ? String(record.app || "") : "")
   readonly property string appIcon:desktop && desktop.icon ? String(desktop.icon) : "application-x-executable"
@@ -83,7 +84,7 @@ Item {
   }
   function details() {
     return {animationSpeed:animationSpeed,fadeDuration:captureFade.duration,hasContent:hasContent,status:status,
-      sourceSize:{width:captureView ? captureView.sourceSize.width : 0,height:captureView ? captureView.sourceSize.height : 0},
+      sourceSize:{width:sourceSize.width,height:sourceSize.height},
       live:eligible && mode==="live",captureActive:captureLoader.active && !!captureView,recordId:record ? record.id : "",
       failure:failureReason,validRecord:Capture.validRecord(record),candidate:!!candidate,handle:!!sourceHandle,
       nativeIdentity:Capture.matches(record,candidateIpc),verified:!!verifiedClient,eligible:eligible,

@@ -1,5 +1,72 @@
 # Validation
 
+## v1.28.1 — stable stashed dimensions — 12 November 2026
+
+Owned windows park floating at their saved source dimensions inside the private
+stash. The ledger retains their original floating/tiled state and scrolling width
+for restoration. Successive stashes no longer let the private tiling layout resize
+earlier sources or change their miniature proportions when live updates begin.
+
+The complete non-graphical suite passes **236 Python tests**, **13 Node suites**,
+**seven offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **78 Python files**. Controller regressions execute the guarded Lua
+transactions, including old-record normalization, rejected parking and recovery,
+external moves, identity replacement and saved scrolling-column fractions.
+
+Native checks in the disposable Hyprland/Omarchy profile pass:
+
+- Two full-width scrolling windows stashed sequentially: Standard and Enhanced
+  previews retain source/card proportions and placement through repeated
+  three-second hovers, re-entry, always-live updates, restoration and re-stashing.
+- Dwindle sources and app groups retain independent captured proportions; resizing
+  miniatures preserves source dimensions and tiled restoration metadata.
+- Narrow/wide scrolling columns in both directions retain their widths and append
+  last. Restoring a full-width singleton retains its logical column width when a
+  second window returns; fullscreen/maximized restoration also passes.
+- Existing floating-preview controls, capture policies, grouping, exact restore,
+  context menus and closure; side-by-side hover previews and capture cleanup.
+- Native floating-workspace/dock coexistence, legacy migration, and the complete
+  CLI add/update/disable/source-deleted-remove/reinstall lifecycle with preserved
+  preferences, shortcuts and floating geometry.
+
+Enhanced support loads before temporary layout rules because native plugin loading
+refreshes compositor configuration. The tests measure scrolling widths in the same
+column topology, accounting for Hyprland's singleton gap change without weakening
+the pixel, captured-aspect or logical-column-width checks.
+
+## v1.28.0 — floating previews — 11 November 2026
+
+Adds persistent, borderless window miniatures with direct aspect-preserving resize,
+independent size presets, saved placement, locks, physics and application groups.
+Snapshot, live-on-hover and always-live policies are independent of hover previews.
+Verified captured proportions drive presentation without changing restoration
+geometry. Cover and expanded Still snapshots retain their own pixels and shape.
+Workspace filtering uses compositor snapshots to avoid stale native monitor state
+after hotplugging; capture ownership survives display sleep and resumes cleanly.
+
+The complete non-graphical suite passes **217 Python tests**, **13 Node suites**,
+**seven offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **77 Python files**. The README covers all **36 settings**.
+
+Native acceptance in a disposable Hyprland/Omarchy desktop passes:
+
+- All nine presets, direct resizing, original-window geometry, independent saved
+  free size, placement locking, workspace filtering and exact restore/close actions.
+- Tiled source frame fitting, independent grouped snapshots, and narrow/wide scrolling
+  restoration with the original column width and final-column placement.
+- Three virtual outputs, separate positions and widths, direct dragging, flick
+  momentum, monitor removal and preservation of every stashed window.
+- Actual Ghostty/btop rendering: one distinct Standard frame versus nine Enhanced
+  frames, scoped leases, hover resume and complete rendering cleanup.
+- Oversized previews and grouped overflow on a 320×240 output, targeted display
+  sleep/wake, and all 36 settings on scaled displays with reserved screen edges.
+- Existing hover previews, UI routing, default shortcuts and the complete CLI
+  install/update/disable/source-deleted-removal/reinstall lifecycle.
+
+The native profile uses a private home, runtime, D-Bus, compositor and synthetic
+input. Test clients, settings, positions, focus and outputs are cleaned up; the
+real desktop is not used for input automation.
+
 ## v1.27.1 — retire manual installation — 9 November 2026
 
 The retired manual installer and its unused configuration-writing helpers are

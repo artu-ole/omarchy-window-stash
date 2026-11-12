@@ -2,6 +2,8 @@ import copy
 import json
 import io
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -65,6 +67,53 @@ class FakeHypr:
     def close_stashed(self, record):
         self.dispatch_owned("window.close", record, parked=True)
 
+    def park_owned(self, record, parked=False):
+        # The production adapter sends one guarded Lua transaction. This fake
+        # models its actions against client state so controller failure and
+        # restoration behavior remain observable without a compositor.
+        current = self.client(record["address"])
+        if not current or not current["floating"]:
+            self.dispatch_owned("window.float", record, parked=parked, action="on")
+        else:
+            if (current["pid"] != record["pid"]
+                    or (record.get("stableId") and current.get("stableId") != record["stableId"])
+                    or record["tag"] not in current.get("tags", [])
+                    or (parked and current["workspace"]["name"] != (SPECIAL if parked is True else parked))):
+                raise RuntimeError("Stashed window identity changed")
+        if not self.client(record["address"])["floating"]:
+            raise RuntimeError("The window could not be parked as floating")
+        self.dispatch_owned("window.resize", record, parked=parked,
+                            x=record["size"][0], y=record["size"][1], relative=False)
+        self.dispatch_owned("window.move", record, parked=parked, workspace=SPECIAL, follow=False)
+        self.dispatch_owned("window.resize", record, parked=True,
+                            x=record["size"][0], y=record["size"][1], relative=False)
+
+    def scrolling_width(self, record):
+        c=self.client(record["address"])
+        if (not c or c["pid"] != record["pid"]
+                or (record.get("stableId") and c.get("stableId") != record["stableId"])
+                or record["tag"] not in c.get("tags", [])):
+            raise RuntimeError("Stashed window identity changed")
+        return c.get("scrollingFraction")
+
+    def release_external(self, record, workspace, native_floating=False):
+        # Model the production transaction's destination/identity checks.
+        c = self.client(record["address"])
+        if (not c or c["pid"] != record["pid"]
+                or (record.get("stableId") and c.get("stableId") != record["stableId"])
+                or record["tag"] not in c.get("tags", [])
+                or c["workspace"]["name"] != workspace["name"]):
+            raise RuntimeError("Stashed window identity changed")
+        if not record["floating"]:
+            if native_floating:
+                self.dispatch_owned("window.tag", record, parked=workspace["name"], tag="+omarchy-mode-floated")
+            if c["floating"] != native_floating:
+                self.dispatch_owned("window.float", record, parked=workspace["name"],
+                                    action="on" if native_floating else "off")
+            if self.client(record["address"])["floating"] != native_floating:
+                raise RuntimeError("A window rule prevented release of parking state")
+        self.dispatch_owned("window.tag", record, parked=workspace["name"], tag="-"+record["tag"])
+
     def dispatch(self, dispatcher, **kw):
         action = dispatcher
         self.commands.append((action,kw))
@@ -115,6 +164,329 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.hypr.clients[0]["size"],[640,400])
         self.assertTrue(self.hypr.clients[0]["floating"])
         self.assertEqual(self.stash.state["windows"],[])
+
+    def test_full_width_tiled_sources_keep_original_sizes_when_parked_sequentially(self):
+        self.hypr.clients[0].update(size=[1251,750], at=[-1251,30])
+        self.hypr.clients.append(dict(client("0x2"),size=[1256,750],at=[12,30]))
+        original_dispatch = self.hypr.dispatch
+        tiled_arrivals = []
+        def private_layout(name, **args):
+            result = original_dispatch(name, **args)
+            if name == "window.move" and args.get("workspace") == SPECIAL:
+                arrived = self.hypr.client(args["window"].removeprefix("address:"))
+                if not arrived["floating"]:
+                    tiled_arrivals.append(arrived["address"])
+                    for target in self.hypr.clients:
+                        if target["workspace"]["name"] == SPECIAL and not target["floating"]:
+                            target["size"] = [621,750]
+                # Moving to a different monitor can adjust floating geometry.
+                # The final resize must restore only the incoming source.
+                arrived["size"] = [900,600]
+            return result
+        self.hypr.dispatch = private_layout
+        first = self.stash.minimize("0x1")["id"]
+        first_record = copy.deepcopy(self.stash.state["windows"][0])
+        self.stash.minimize("0x2")
+        self.assertEqual(tiled_arrivals, [], "A tiled arrival let the private layout resize a parked client")
+        self.assertEqual([target["size"] for target in self.hypr.clients], [[1251,750],[1256,750]])
+        self.assertTrue(all(target["floating"] and target["workspace"]["name"] == SPECIAL for target in self.hypr.clients))
+        self.assertTrue(all(record["floating"] is False for record in self.stash.state["windows"]))
+        self.assertEqual(next(record for record in self.stash.state["windows"] if record["id"] == first), first_record)
+        self.assertEqual(first_record["relativePosition"], [-1251,30])
+        self.assertFalse(any(isinstance(action,tuple) and action[0] == "window.move" and "x" in action[1]
+                             for action in self.hypr.commands), "Parking applied an origin screen position to the private workspace")
+        self.stash.restore(first, "original")
+        self.assertFalse(self.hypr.client("0x1")["floating"], "An originally tiled window restored as floating")
+        self.assertEqual(self.hypr.client("0x2")["size"], [1256,750])
+
+    def test_scrolling_fraction_is_saved_before_detaching_or_parking_and_remains_immutable(self):
+        self.hypr.clients[0].update(scrollingFraction=.31,grouped=["0x1","0x2"])
+        original=self.hypr.dispatch
+        def mutate_layout(name,**args):
+            result=original(name,**args)
+            if name=="window.move" and (args.get("out_of_group") or args.get("workspace")==SPECIAL):
+                self.hypr.clients[0]["scrollingFraction"]=.5
+            return result
+        self.hypr.dispatch=mutate_layout
+        ident=self.stash.minimize()["id"]
+        record=copy.deepcopy(self.stash.state["windows"][0])
+        self.assertEqual(record["scrollingWidth"],.31)
+        self.assertEqual(self.stash.listing()["windows"],[record])
+        self.hypr.clients[0].update(floating=False,size=[320,200])
+        self.assertEqual(self.stash.listing()["windows"],[record],"Parking upgrade rewrote saved column fraction")
+        self.stash.restore(ident)
+        self.assertTrue(any(isinstance(code,str) and 'local savedColumnWidth = 0.31' in code for code in self.hypr.commands))
+
+    def test_scrolling_fraction_snapshot_validates_finite_bounds_and_uses_owned_repl_guard(self):
+        hypr=Hyprland();calls=[]
+        record=dict(address="0x1",pid=100,stableId="0x1",tag="window-stash-test")
+        for output,wanted in (("0.31",.31),("1",1),("0.001",.001),("0",None),("-1",None),
+                              ("1.01",None),("nan",None),("inf",None),("nil",None)):
+            def call(*args):calls.append(args);return output
+            hypr.call=call
+            self.assertEqual(hypr.scrolling_width(record),wanted)
+        self.assertTrue(all(args[0]=="repl" and "w.pid == 100" in args[1]
+                            and "w.stable_id == 1" in args[1] and '"window-stash-test"' in args[1]
+                            for args in calls))
+
+    @unittest.skipUnless(shutil.which("lua"), "Standalone Lua interpreter unavailable")
+    def test_scrolling_reinsertion_preserves_singleton_and_vertical_fractions_without_losing_pixel_widths(self):
+        prelude='''local calls={}
+local ws={name="1",tiled_layout="scrolling"}
+local w={address="0x1",pid=100,stable_id=1,tags={"window-stash-test"},workspace=ws,floating=false,
+ size={x=initialX,y=750},layout={column={width=.5,index=0}}}
+local other={address="0x2",workspace=ws,floating=false,layout={column={width=.5,index=1}}}
+hl={get_window=function() return w end,get_workspace=function() return ws end,
+ get_workspace_windows=function() return multi and {w,other} or {w} end,
+ get_config=function(key) assert(key=="scrolling.fullscreen_on_one_column");return forced end,
+ dsp={window={}},dispatch=function(action) action() end}
+hl.dsp.focus=function(args) return function() table.insert(calls,"focus") end end
+hl.dsp.window.float=function(args) return function()
+ args.window.floating=args.action=="on"
+ if args.action=="off" then args.window.layout.column={width=.5,index=multi and 2 or 0} end
+end end
+hl.dsp.layout=function(message) return function()
+ local fraction=tonumber(message:match("colresize (.+)"));assert(fraction)
+ table.insert(calls,"column:"..fraction);w.layout.column.width=fraction
+ if vertical then w.size.y=750*fraction elseif not forced then w.size.x=1260*fraction end
+end end
+hl.dsp.window.resize=function(args) return function()
+ table.insert(calls,"resize");assert(args.relative==false)
+ if not vertical then w.layout.column.width=w.layout.column.width+(args.x-w.size.x)/1260 end
+ if not forced then w.size.x=args.x end
+end end
+'''
+        cases=(
+            ("full-singleton",1,True,False,False,1256,1251,1,False),
+            ("narrow-hidden-singleton",.31,True,False,False,1256,1256,.31,False),
+            ("vertical",.78,False,True,True,1260,1260,.78,False),
+            ("ordinary-narrow",.31,False,True,False,630,390,390/1260,True),
+            ("ordinary-wide",.78,False,True,False,630,980,980/1260,True),
+            ("legacy-full-singleton",None,True,False,False,1256,1251,1,False),
+            ("legacy-vertical",None,False,True,True,1260,1260,.5,True),
+        )
+        for name,fraction,forced,multi,vertical,initial_x,saved_x,wanted_fraction,resized in cases:
+            with self.subTest(case=name):
+                expected=dict(address="0x1",pid=100,stableId="0x1",tag="window-stash-test")
+                if fraction is not None:expected["scrollingWidth"]=fraction
+                self.hypr.commands.clear()
+                self.stash.append_scrolling("0x1","1",saved_x,expected)
+                code=self.hypr.commands[-1]
+                variables='initialX=%s;forced=%s;multi=%s;vertical=%s\n' % tuple(map(lua,(initial_x,forced,multi,vertical)))
+                assertions='''assert(math.abs(w.layout.column.width-%s)<.000001,"Incorrect restored column fraction: "..w.layout.column.width)
+local resized=false;for _,action in ipairs(calls) do if action=="resize" then resized=true end end
+assert(resized==%s,"Unexpected absolute client resize")
+assert(not w.floating)
+''' % (lua(wanted_fraction),lua(resized))
+                if resized and not vertical:assertions+='assert(w.size.x=='+lua(saved_x)+')\n'
+                result=subprocess.run(["lua","-"],input=variables+prelude+'local function restore_column()\n'+code+'\nend\nrestore_column()\n'+assertions,text=True,capture_output=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_invalid_saved_scrolling_fraction_is_never_inserted_into_lua(self):
+        for invalid in (True,False,-1,0,2,float("nan"),float("inf"),"os.execute('false')"):
+            with self.subTest(value=invalid):
+                self.hypr.commands.clear()
+                self.stash.append_scrolling("0x1","1",640,
+                    dict(address="0x1",pid=100,tag="window-stash-test",scrollingWidth=invalid))
+                self.assertIn("local savedColumnWidth = nil",self.hypr.commands[-1])
+
+    def test_existing_owned_tiled_stash_records_upgrade_once_without_rewriting_restore_metadata(self):
+        ident = self.stash.minimize()["id"]
+        saved = copy.deepcopy(self.stash.state["windows"][0])
+        self.hypr.clients[0].update(floating=False,size=[300,750])
+        self.hypr.commands.clear()
+        result = self.stash.listing()
+        self.assertEqual(result["windows"], [saved])
+        self.assertTrue(self.hypr.clients[0]["floating"])
+        self.assertEqual(self.hypr.clients[0]["size"], saved["size"])
+        self.assertEqual(self.hypr.clients[0]["workspace"]["name"], SPECIAL)
+        actions = list(self.hypr.commands)
+        self.stash.listing()
+        self.assertEqual(self.hypr.commands, actions, "A settled source was configured on every listing")
+        self.assertEqual(self.stash.restore(ident)["action"], "restored")
+        self.assertFalse(self.hypr.clients[0]["floating"])
+
+    def test_tiled_parking_upgrade_never_adopts_unowned_or_replaced_clients(self):
+        for index, change in enumerate((dict(pid=101),dict(stableId="0x222"),dict(tags=[]))):
+            with self.subTest(change=change):
+                hypr, stash = self.race_fixture("park-upgrade-unowned-"+str(index))
+                stash.minimize()
+                hypr.clients[0].update(floating=False,size=[300,750],**change)
+                untouched = copy.deepcopy(hypr.clients)
+                hypr.commands.clear()
+                self.assertEqual(stash.listing()["windows"], [])
+                self.assertEqual(hypr.clients, untouched)
+                self.assertEqual(hypr.commands, [])
+
+    def test_tiled_parking_upgrade_rechecks_private_membership_and_identity_inside_transaction(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients[0].update(floating=False,size=[300,750])
+        original = self.hypr.park_owned
+        for replacement in (dict(client(),workspace=dict(id=7,name="7"),floating=False),
+                            dict(copy.deepcopy(self.hypr.clients[0]),stableId="0x222")):
+            replacement["tags"] = [self.stash.state["windows"][0]["tag"]]
+            before = copy.deepcopy(replacement)
+            def replace_then_park(record, parked=False):
+                self.hypr.clients = [replacement]
+                return original(record, parked=parked)
+            self.hypr.park_owned = replace_then_park
+            self.stash.state["windows"][0]["phase"] = "stashed"
+            self.stash.state["windows"][0].pop("lastError",None)
+            self.hypr.clients = [dict(copy.deepcopy(before),stableId="0x1",workspace=dict(id=-99,name=SPECIAL))]
+            self.hypr.commands.clear()
+            retained = self.stash.listing()["windows"][0]
+            self.assertIn("identity changed",retained["lastError"])
+            self.assertEqual(self.hypr.clients, [before])
+            self.assertEqual(self.hypr.commands, [])
+            self.assertEqual(self.stash.state["windows"][0]["id"], ident)
+            self.assertEqual(self.stash.state["windows"][0]["phase"], "restoring")
+        self.hypr.park_owned = original
+
+    def test_failed_private_parking_repair_does_not_block_listing_neighbors_or_explicit_restore(self):
+        ident = self.stash.minimize()["id"]
+        self.hypr.clients.append(client("0x2"))
+        neighbor = self.stash.minimize("0x2")["id"]
+        self.hypr.clients[0].update(floating=False,size=[300,750])
+        saved = copy.deepcopy(self.stash.state["windows"][0])
+        original = self.hypr.park_owned
+        attempts = []
+        def refuse_private_repair(record, parked=False):
+            attempts.append(record["id"])
+            if record["id"] == ident:
+                raise RuntimeError("Private workspace rule refuses floating")
+            return original(record,parked=parked)
+        self.hypr.park_owned = refuse_private_repair
+        result = self.stash.listing()
+        self.assertEqual({record["id"] for record in result["windows"]},{ident,neighbor})
+        retained = next(record for record in result["windows"] if record["id"] == ident)
+        self.assertEqual(retained["phase"],"restoring")
+        self.assertIn("refuses floating",retained["lastError"])
+        for key in ("size","relativePosition","floating","origin","monitor","order"):
+            self.assertEqual(retained[key],saved[key])
+        self.stash.listing()
+        self.assertEqual(attempts,[ident],"A failed private repair was retried on every listing")
+        self.assertEqual(self.stash.restore(ident)["action"],"restored")
+        self.assertEqual(attempts,[ident],"Explicit recovery retried the same rejected private parking")
+        self.assertFalse(self.hypr.client("0x1")["floating"])
+        self.assertEqual(self.hypr.client("0x1")["workspace"]["id"],1)
+        self.assertEqual(self.hypr.client("0x2")["workspace"]["name"],SPECIAL)
+
+    def test_failed_minimize_can_restore_without_retrying_failed_private_parking(self):
+        original = self.hypr.park_owned
+        attempts = []
+        def failed_after_move(record, parked=False):
+            attempts.append(record["id"])
+            original(record,parked=parked)
+            self.hypr.client(record["address"]).update(floating=False,size=[300,750])
+            raise RuntimeError("Private geometry rule rejected the final parking")
+        self.hypr.park_owned = failed_after_move
+        with self.assertRaisesRegex(RuntimeError,"rejected the final parking"):
+            self.stash.minimize()
+        retained = self.stash.state["windows"][0]
+        self.assertEqual(retained["phase"],"restoring")
+        self.assertEqual(retained["size"],[640,400])
+        self.assertEqual(self.stash.restore(retained["id"])["action"],"restored")
+        self.assertEqual(len(attempts),1,"Restore was trapped by the same private geometry failure")
+        self.assertFalse(self.hypr.clients[0]["floating"])
+        self.assertEqual(self.hypr.clients[0]["workspace"]["id"],1)
+
+    def test_partial_parking_failures_remain_recoverable_with_original_tiling_metadata(self):
+        for index, failed in enumerate(("window.float", "window.resize", "window.move")):
+            with self.subTest(failed=failed):
+                hypr, stash = self.race_fixture("parking-failure-"+str(index))
+                hypr.clients[0].update(size=[1251,750],at=[-1251,30])
+                hypr.fail = failed
+                with self.assertRaisesRegex(RuntimeError,"Injected IPC failure"):
+                    stash.minimize()
+                retained = stash.state["windows"][0]
+                self.assertEqual((retained["size"],retained["relativePosition"],retained["floating"]),
+                                 ([1251,750],[-1251,30],False))
+                self.assertEqual(retained["phase"], "restoring")
+                self.assertEqual(json.loads(stash.path.read_text())["windows"][0],retained)
+                hypr.fail = None
+                self.assertEqual(stash.restore(retained["id"])["action"], "restored")
+                self.assertFalse(hypr.clients[0]["floating"])
+
+    def test_parking_verification_refuses_silent_size_or_floating_rule_failures(self):
+        for index, blocked in enumerate(("window.float", "window.resize")):
+            with self.subTest(blocked=blocked):
+                hypr, stash = self.race_fixture("parking-rule-"+str(index))
+                original_dispatch = hypr.dispatch
+                def blocked_action(name, **args):
+                    if name == blocked:
+                        if blocked == "window.resize":hypr.clients[0]["size"]=[320,240]
+                        return
+                    return original_dispatch(name,**args)
+                hypr.dispatch = blocked_action
+                with self.assertRaisesRegex(RuntimeError,"parked as floating|retain its saved size"):
+                    stash.minimize()
+                retained = stash.state["windows"][0]
+                self.assertEqual(retained["size"],[640,400])
+                self.assertFalse(retained["floating"])
+                self.assertEqual(retained["phase"],"restoring")
+                hypr.dispatch = original_dispatch
+                self.assertEqual(stash.restore(retained["id"])["action"],"restored")
+
+    @unittest.skipUnless(shutil.which("lua"), "Standalone Lua interpreter unavailable")
+    def test_native_parking_transaction_has_exact_guards_order_and_no_private_tiling_arrival(self):
+        record = dict(address="0x1",pid=100,stableId="0x1",tag="window-stash-test",size=[1251,750])
+        hypr = Hyprland()
+        calls = []
+        hypr.eval = calls.append
+        hypr.park_owned(record)
+        self.assertEqual(len(calls),1,"Parking must be one compositor transaction")
+        code = calls[0]
+        prelude = '''local events={}
+local original={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750}}
+local current=original
+local neighbor={workspace={name="special:window-stash"},floating=true,size={x=1256,y=750}}
+local replacement={pid=200,stable_id=2,tags={},workspace={name="7"},floating=false,size={x=333,y=222}}
+hl={get_window=function(selector) assert(selector=="address:0x1");return current end,dsp={window={}},dispatch=function(action) action() end}
+hl.dsp.window.float=function(args) return function() table.insert(events,"float");args.window.floating=true end end
+hl.dsp.window.resize=function(args) return function()
+  table.insert(events,"resize");assert(args.window.floating,"Resize was applied to a tiled window")
+  assert(args.x==1251 and args.y==750 and args.relative==false)
+  args.window.size={x=args.x,y=args.y}
+end end
+hl.dsp.window.move=function(args) return function()
+  table.insert(events,"move");assert(args.window.floating,"Private workspace received a tiled arrival")
+  assert(args.workspace=="special:window-stash" and args.follow==false and args.x==nil and args.y==nil)
+  args.window.workspace={name=args.workspace};args.window.size={x=900,y=600}
+  if replace_after_move then current=replacement end
+  if tile_after_move then args.window.floating=false end
+end end
+'''
+        success = prelude+code+'''assert(table.concat(events,",")=="float,resize,move,resize")
+assert(original.size.x==1251 and original.size.y==750 and original.floating)
+assert(original.workspace.name=="special:window-stash")
+assert(neighbor.size.x==1256 and neighbor.size.y==750)
+print("PARK_OK")
+'''
+        result = subprocess.run(["lua","-"],input=success,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn("PARK_OK",result.stdout)
+        for change in ('current.pid=200','current.stable_id=2','current.tags={"window-stash-test-lookalike"}'):
+            rejected = prelude+change+'\nlocal ok=pcall(function()\n'+code+'end)\nassert(not ok and #events==0)\n'
+            result = subprocess.run(["lua","-"],input=rejected,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+        raced = prelude+'replace_after_move=true\nlocal ok=pcall(function()\n'+code+'''end)
+assert(not ok and table.concat(events,",")=="float,resize,move")
+assert(replacement.size.x==333 and replacement.size.y==222 and not replacement.floating)
+'''
+        result = subprocess.run(["lua","-"],input=raced,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        refused = prelude+'tile_after_move=true\nlocal ok=pcall(function()\n'+code+'''end)
+assert(not ok and table.concat(events,",")=="float,resize,move")
+assert(neighbor.size.x==1256 and neighbor.size.y==750)
+'''
+        result = subprocess.run(["lua","-"],input=refused,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+        calls.clear()
+        hypr.park_owned(record,parked=True)
+        denied = prelude+'local ok=pcall(function()\n'+calls[0]+'end)\nassert(not ok and #events==0)\n'
+        result = subprocess.run(["lua","-"],input=denied,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
 
     def test_snapshot_separates_canonical_shortcut_defaults_from_saved_overrides(self):
         self.settings(minimizeShortcut="CTRL + F8", restoreLastShortcut="ALT + F9", restoreOldestShortcut="")
@@ -652,7 +1024,80 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
+            floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
+
+    def test_floating_previews_default_without_changing_existing_presentation_or_hover_settings(self):
+        self.settings(presentation="bubbles", scope="workspace", grouping="app", hoverPreview="off", iconOpacity=63)
+        result = self.stash.settings()
+        expected = dict(floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
+                        floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked")
+        self.assertEqual({key: result[key] for key in expected}, expected)
+        self.assertEqual((result["presentation"], result["scope"], result["grouping"], result["hoverPreview"], result["iconOpacity"]),
+                         ("bubbles", "workspace", "app", "off", 63))
+
+    def test_floating_previews_choices_and_invalid_values_are_independent(self):
+        choices = dict(floatingPreviewSizing=("free", "preset"),
+                       floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
+                       floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
+                       floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"))
+        for key, values in choices.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    self.settings(**{key:value}, presentation="previews", hoverPreview="off", scope="workspace", iconOpacity=63)
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], value)
+                    self.assertEqual((result["presentation"], result["hoverPreview"], result["scope"], result["iconOpacity"]),
+                                     ("previews", "off", "workspace", 63))
+            for invalid in ("invalid", "", True, False, None, 1, 100, [], {}):
+                with self.subTest(key=key, invalid=invalid):
+                    self.settings(**{key:invalid}, presentation="previews", hoverPreview="still")
+                    result = self.stash.settings()
+                    self.assertEqual(result[key], DEFAULTS[key])
+                    self.assertEqual((result["presentation"], result["hoverPreview"]), ("previews", "still"))
+
+    def test_preview_card_geometry_persists_separately_without_changing_window_restore_geometry(self):
+        self.hypr.clients[0]["floating"] = True
+        ident = self.stash.minimize()["id"]
+        self.hypr.commands.clear()
+        before_state = self.stash.path.read_bytes()
+        expected = {"output-a":{"window:0x1":[321,234], "dock:floating":[450,600]}}
+        atomic_json(self.stash.positions, expected)
+        for output, key, geometry in (("output-a", "preview:window:0x1", [120, 200, 380]),
+                                       ("output-b", "preview:app:test-app", [-20, 90, 640]),
+                                       ("output-a", "preview:window:0x1", [145, 240, 500])):
+            with patch("stash.Stash", return_value=self.stash), patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                code = main(["preview-position", output, key, *map(str, geometry)])
+            self.assertEqual(code, 0, stdout.getvalue())
+            self.assertEqual(json.loads(stdout.getvalue()), dict(ok=True))
+            expected.setdefault(output, {})[key] = geometry
+        restarted = Stash(self.hypr,self.root/"run",self.root/"shell.json",self.root/"state")
+        with restarted.locked():
+            self.assertEqual(restarted.listing()["positions"], expected)
+        self.assertEqual(self.stash.path.read_bytes(), before_state)
+        self.assertEqual(self.hypr.commands, [], "Preview placement and sizing must not mutate the stashed window")
+        self.hypr.clients[0].update(at=[900,800],size=[300,200])
+        self.stash.restore(ident,"current")
+        self.assertEqual(self.hypr.clients[0]["at"], [100,150])
+        self.assertEqual(self.hypr.clients[0]["size"], [640,400])
+
+    def test_invalid_preview_geometry_never_overwrites_any_saved_position(self):
+        atomic_json(self.stash.positions, {"output-a":{"preview:window:0x1":[120,200,380],"window:0x1":[321,234]}})
+        before = self.stash.positions.read_bytes()
+        for key, geometry in (("window:0x1", [1,2,100]), ("preview:", [1,2,100]),
+                               ("preview:window:0x1", [1,2,0]), ("preview:window:0x1", [1,2,-1]),
+                               ("preview:window:0x1", [1,2,1_000_001]),
+                               ("preview:window:0x1", [1_000_001,2,100]),
+                               ("preview:window:0x1", [1,-1_000_001,100])):
+            with self.subTest(key=key, geometry=geometry), patch("stash.Stash", return_value=self.stash), \
+                    patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(main(["preview-position", "output-a", key, *map(str,geometry)]), 1)
+                self.assertFalse(json.loads(stdout.getvalue())["ok"])
+                self.assertEqual(self.stash.positions.read_bytes(), before)
+        for invalid in ("nan", "inf", "-inf", "2.5", "100.0", "true"):
+            with self.subTest(invalid=invalid), patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                main(["preview-position", "output-a", "preview:window:0x1", "1", "2", invalid])
+            self.assertEqual(self.stash.positions.read_bytes(), before)
 
     def test_size_preset_default_and_legacy_settings(self):
         self.assertEqual(self.stash.settings()["sizePreset"], "100")
@@ -1020,6 +1465,123 @@ class ControllerTests(unittest.TestCase):
         self.stash.minimize()
         self.hypr.clients[0]["workspace"]=dict(id=4,name="4")
         self.assertEqual(self.stash.listing()["windows"],[])
+        self.assertFalse(self.hypr.clients[0]["floating"], "External restore leaked temporary parking state")
+        self.assertEqual(self.hypr.clients[0]["tags"], [])
+
+    def test_external_move_releases_parking_in_chosen_workspace_without_focus_or_geometry_changes(self):
+        self.hypr.clients[0].update(fullscreen=2,fullscreenClient=2)
+        self.stash.minimize()
+        self.hypr.clients.append(client("0x2",workspace=7,pid=200))
+        self.hypr.active = "0x2"
+        self.hypr.clients[0].update(workspace=dict(id=4,name="4"),at=[777,333],size=[1111,555],
+                                    pinned=True,fullscreen=1,fullscreenClient=1)
+        neighbor = copy.deepcopy(self.hypr.clients[1])
+        self.hypr.commands.clear()
+        self.assertEqual(self.stash.listing()["windows"], [])
+        c = self.hypr.clients[0]
+        self.assertEqual((c["workspace"],c["at"],c["size"]),(dict(id=4,name="4"),[777,333],[1111,555]))
+        self.assertFalse(c["floating"])
+        self.assertEqual((c["pinned"],c["fullscreen"],c["fullscreenClient"]),(True,1,1))
+        self.assertEqual(self.hypr.active,"0x2")
+        self.assertEqual(self.hypr.clients[1],neighbor)
+        self.assertEqual([name for name,_ in self.hypr.commands],["window.float","window.tag"])
+
+    def test_external_move_into_native_floating_workspace_claims_originally_tiled_source(self):
+        self.stash.minimize()
+        self.save_mode(4,"floating")
+        self.hypr.clients[0].update(workspace=dict(id=4,name="4"),at=[777,333],size=[1111,555])
+        self.hypr.commands.clear()
+        self.assertEqual(self.stash.listing()["windows"], [])
+        self.assertTrue(self.hypr.clients[0]["floating"])
+        self.assertEqual(self.hypr.clients[0]["tags"],["omarchy-mode-floated"])
+        self.assertEqual([name for name,_ in self.hypr.commands],["window.tag","window.tag"])
+        self.assertEqual((self.hypr.clients[0]["at"],self.hypr.clients[0]["size"]),([777,333],[1111,555]))
+
+    def test_external_move_preserves_explicit_floating_source_state_and_geometry(self):
+        for index, floating in enumerate((False,True)):
+            with self.subTest(floating=floating):
+                hypr,stash=self.race_fixture("external-original-floating-"+str(index))
+                hypr.clients[0]["floating"]=True
+                stash.minimize()
+                hypr.clients[0].update(workspace=dict(id=4,name="4"),floating=floating,
+                                        at=[777,333],size=[1111,555],pinned=True,fullscreen=1)
+                expected=copy.deepcopy(hypr.clients[0]);expected["tags"]=[]
+                hypr.commands.clear()
+                self.assertEqual(stash.listing()["windows"],[])
+                self.assertEqual(hypr.clients[0],expected)
+                self.assertEqual([name for name,_ in hypr.commands],["window.tag"])
+
+    def test_external_release_rechecks_identity_ownership_and_destination_at_transaction(self):
+        changes=(dict(pid=101),dict(stableId="0x222"),dict(tags=[]),dict(workspace=dict(id=7,name="7")))
+        for index,change in enumerate(changes):
+            with self.subTest(change=change):
+                hypr,stash=self.race_fixture("external-release-race-"+str(index))
+                stash.minimize()
+                hypr.clients[0]["workspace"]=dict(id=4,name="4")
+                original=hypr.release_external
+                untouched=[]
+                def replace_then_release(record,workspace,native_floating=False):
+                    hypr.clients[0].update(change)
+                    untouched.append(copy.deepcopy(hypr.clients[0]))
+                    return original(record,workspace,native_floating)
+                hypr.release_external=replace_then_release
+                hypr.commands.clear()
+                retained=stash.listing()["windows"][0]
+                self.assertEqual(retained["phase"],"restoring")
+                self.assertEqual(hypr.clients,[untouched[0]])
+                self.assertEqual(hypr.commands,[])
+
+    def test_external_release_failure_keeps_original_restore_metadata_and_recovery(self):
+        ident=self.stash.minimize()["id"]
+        original=copy.deepcopy(self.stash.state["windows"][0])
+        self.hypr.clients[0]["workspace"]=dict(id=4,name="4")
+        dispatch=self.hypr.dispatch
+        def refuse_float(name,**args):
+            if name!="window.float":return dispatch(name,**args)
+        self.hypr.dispatch=refuse_float
+        retained=self.stash.listing()["windows"][0]
+        self.assertEqual(retained["phase"],"restoring")
+        self.assertIn("prevented release",retained["lastError"])
+        for key in ("size","relativePosition","floating","origin","order"):
+            self.assertEqual(retained[key],original[key])
+        self.hypr.dispatch=dispatch
+        self.assertEqual(self.stash.restore(ident,"original")["action"],"restored")
+        self.assertEqual(self.hypr.clients[0]["workspace"]["id"],1)
+        self.assertFalse(self.hypr.clients[0]["floating"])
+
+    @unittest.skipUnless(shutil.which("lua"), "Standalone Lua interpreter unavailable")
+    def test_external_release_lua_checks_exact_destination_and_identity_without_focus_or_resize(self):
+        record=dict(address="0x1",pid=100,stableId="0x1",tag="window-stash-test",floating=False)
+        hypr=Hyprland();calls=[];hypr.eval=calls.append
+        prelude='''local events={}
+local current={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="4"},floating=true}
+local original=current
+local replacement={pid=200,stable_id=2,tags={},workspace={name="4"},floating=true}
+hl={get_window=function(selector) assert(selector=="address:0x1");return current end,dsp={window={}},dispatch=function(action) action() end}
+hl.dsp.window.float=function(args) return function()
+ table.insert(events,"float:"..args.action);args.window.floating=args.action=="on"
+ if replace_after_float then current=replacement end
+ if block_float then args.window.floating=true end
+end end
+hl.dsp.window.tag=function(args) return function()
+ table.insert(events,"tag:"..args.tag)
+ if args.tag:sub(1,1)=="+" then table.insert(args.window.tags,args.tag:sub(2))
+ else for i,tag in ipairs(args.window.tags) do if tag==args.tag:sub(2) then table.remove(args.window.tags,i);break end end end
+end end
+'''
+        hypr.release_external(record,dict(id=4,name="4"))
+        code=calls.pop()
+        def execute(body):
+            result=subprocess.run(["lua","-"],input=prelude+body,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+        execute(code+'assert(not original.floating and #original.tags==0)\nassert(table.concat(events,",")=="float:off,tag:-window-stash-test")')
+        for change in ('current.pid=200','current.stable_id=2','current.tags={"window-stash-test-lookalike"}',
+                       'current.workspace.name="7"'):
+            execute(change+'\nlocal ok=pcall(function()\n'+code+'end)\nassert(not ok and #events==0)')
+        execute('replace_after_float=true\nlocal ok=pcall(function()\n'+code+'end)\nassert(not ok and #events==1 and #replacement.tags==0 and replacement.floating)')
+        execute('block_float=true\nlocal ok=pcall(function()\n'+code+'end)\nassert(not ok and #events==1 and #original.tags==1)')
+        hypr.release_external(record,dict(id=4,name="4"),native_floating=True)
+        execute(calls.pop()+'assert(original.floating and #original.tags==1 and original.tags[1]=="omarchy-mode-floated")\nassert(table.concat(events,",")=="tag:+omarchy-mode-floated,tag:-window-stash-test")')
 
     def test_close_confirmed_window_does_not_touch_unstashed_app_windows(self):
         ident = self.stash.minimize()["id"]

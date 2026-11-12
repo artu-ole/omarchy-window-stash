@@ -5,6 +5,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import "ui"
 import "ui/Model.js" as Model
+import "ui/PreviewVisibility.js" as PreviewVisibility
 
 Item {
   id: root
@@ -18,7 +19,7 @@ Item {
   property string lifecycleError: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement: "edges", dockCorners: "theme", dockCornerRadius: 12, iconFrame: "hidden", dockFrame: "hidden", animations: "full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -35,15 +36,28 @@ Item {
   property bool pointerKnown:false
   property point pointerPosition:Qt.point(0,0)
   readonly property bool pointerTracking:root.surfaces.some(function(surface) {
-    return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.contextMenuOpen
+    return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.floatingPreviewsExpanded || surface.contextMenuOpen
   })
   property var previewCompatibilityRequests: ({})
   property var previewCompatibilityStatus: ({state:"idle",ids:[]})
   property string previewCompatibilityError:""
+  readonly property bool capturePollNeeded:snapshot.windows.length>0
+    && (snapshot.settings.presentation==="previews" || snapshot.settings.hoverPreview!=="off")
+  property var captureState:({known:false,monitors:[],checkedAt:0,error:""})
+  property real captureClock:Date.now()
+  function captureAllowedFor(screenName) {
+    return capturePollNeeded && PreviewVisibility.allowed(captureState,screenName,captureClock)
+  }
+  readonly property bool captureAllowed:capturePollNeeded && captureState.monitors.some(function(monitor) {
+    return !!monitor && root.captureAllowedFor(monitor.name)
+  })
+  onCapturePollNeededChanged:if (!capturePollNeeded) captureState={known:false,monitors:[],checkedAt:0,error:""}
   readonly property var previewCompatibilityIds: {
-    if (snapshot.settings.hoverPreview!=="live" || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
+    var liveSource=snapshot.settings.hoverPreview==="live"
+      || (snapshot.settings.presentation==="previews" && ["hover","live"].indexOf(snapshot.settings.floatingPreviewUpdate)>=0)
+    if (!captureAllowed || !liveSource || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
     var ids=Object.keys(previewCompatibilityRequests).map(function(key) { return root.previewCompatibilityRequests[key] })
-    return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort()
+    return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort().slice(0,128)
   }
   readonly property string previewCompatibilityStamp:JSON.stringify(previewCompatibilityIds)
   readonly property PreviewKeeperHost previewCompatibilityWorker:previewKeeper.item as PreviewKeeperHost
@@ -131,7 +145,7 @@ Item {
   }
   StashClickObserver {
     id:clickObserver
-    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.contextMenuOpen || s.previewOpen })
+    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.floatingPreviewsExpanded || s.contextMenuOpen || s.previewOpen })
     tracking:root.pointerTracking
     onMoved:function(x,y) { root.pointerPosition=Qt.point(x,y); root.pointerKnown=true; root.pointerMoved(x,y) }
     onClicked:function(x,y,button) {
@@ -153,6 +167,56 @@ Item {
     if (id) requests[key]=id
     else delete requests[key]
     previewCompatibilityRequests=requests
+  }
+  // Authentication services are deliberately private in the host. Use the
+  // compositor's passive output state instead of traversing its lock objects.
+  Loader {
+    active:root.capturePollNeeded
+    sourceComponent:Item {
+      id:monitorPoll
+      property bool outputReady:false
+      property bool exited:false
+      property bool completed:false
+      property bool timedOut:false
+      property int exitCode:-1
+      property string output:""
+      function begin() {
+        root.captureClock=Date.now()
+        if (query.running) return
+        outputReady=false; exited=false; completed=false; timedOut=false; exitCode=-1; output=""
+        query.running=true
+      }
+      function complete() {
+        if (!outputReady || !exited || completed || timedOut) return
+        completed=true; deadline.stop()
+        root.captureClock=Date.now()
+        try {
+          var monitors=exitCode===0 ? JSON.parse(output) : null
+          if (!Array.isArray(monitors)) throw new Error("unreadable")
+          root.captureState={known:true,monitors:monitors,checkedAt:root.captureClock,error:""}
+        } catch (error) {
+          root.captureState={known:false,monitors:[],checkedAt:root.captureClock,error:"Monitor capture state is unavailable"}
+        }
+        output=""
+      }
+      Process {
+        id:query
+        command:["hyprctl","-j","monitors"]
+        stdout:StdioCollector { onStreamFinished: { monitorPoll.output=text; monitorPoll.outputReady=true; monitorPoll.complete() } }
+        onStarted:deadline.restart()
+        onExited:function(code) { monitorPoll.exitCode=code; monitorPoll.exited=true; monitorPoll.complete() }
+      }
+      Timer {
+        id:deadline; interval:2000
+        onTriggered: {
+          monitorPoll.timedOut=true
+          root.captureClock=Date.now()
+          root.captureState={known:false,monitors:[],checkedAt:root.captureClock,error:"Monitor capture state timed out"}
+          if (query.running) query.signal(9)
+        }
+      }
+      Timer { interval:500; repeat:true; running:true; triggeredOnStart:true; onTriggered:monitorPoll.begin() }
+    }
   }
   // The pipe lifetime owns the optional native lease. Hiding the final Live
   // thumbnail destroys the process; EOF/SIGTERM and the native TTL release it.
@@ -191,7 +255,9 @@ Item {
       }
       Component.onDestruction: {
         root.previewCompatibilityStatus={state:"idle",ids:[]}
-        if (!root.previewCompatibilityIds.length) root.previewCompatibilityRequests={}
+        // Image delegates own their request keys. The worker can unload
+        // while those delegates still exist (for example during DPMS/lock
+        // suspension), and must not mutate the Loader's request dependency.
       }
   }
   function enqueue(args) {
@@ -365,11 +431,14 @@ Item {
       deferredSettings=deferredSettings.concat([[key,value]])
       return
     }
-    var options = {presentation:["dock","bubbles","floating"], scope:["global","workspace"],
+    var options = {presentation:["dock","bubbles","floating","previews"], scope:["global","workspace"],
       restoreDestination:["current","original"], grouping:["window","app"],
       iconShape:["auto","circle","square","rounded","squircle"], sizePreset:["50","75","100","125","150","175","200","250","300"], floatingDirection:["vertical","horizontal"], floatingAnimation:["arc","glide","cascade","spring","swing","matryoshka","matryoshka-hop","jumping"], dragMotion:["physics","direct"], dockSide:["bottom","top","left","right"], staticDockLock:["locked","unlocked"], floatingPlacement:["edges","free"], dockCorners:["theme","custom"], iconFrame:["shown","hidden"], dockFrame:["shown","hidden"], animations:["full","reduced","off"],animationSpeed:["slow","relaxed","normal","fast","ultrafast"]}
     options.hoverPreview=["off","still","live"]; options.livePreviewCompatibility=["standard","enhanced"]; options.previewSize=["small","medium","large"]
     options.previewPlacement=["auto","above","below","left","right"]; options.previewTitles=["shown","hidden"]
+    options.floatingPreviewSizing=["free","preset"]; options.floatingPreviewScale=options.sizePreset
+    options.floatingPreviewUpdate=["still","hover","live"]; options.floatingPreviewTitles=["shown","hidden"]
+    options.floatingPreviewFrame=["shown","hidden"]; options.floatingPreviewLock=["locked","unlocked"]
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
     if (numericLimits[key] !== undefined) {
       if (!/^(0|[1-9][0-9]{0,3})$/.test(String(value)) || Number(value) > numericLimits[key]) {
@@ -398,12 +467,15 @@ Item {
     edits.forEach(function(edit) { root.setting(edit[0],edit[1]) })
   }
   function positionPending(key) {
-    function targets(args) { return args[0]==="position" && args[2]===key }
+    function targets(args) { return (args[0]==="position" || args[0]==="preview-position") && args[2]===key }
     return (worker.running && targets(runningArgs)) || queue.some(targets)
   }
   function recordPosition(monitor, key, x, y) {
     var owner=key.indexOf("dock:static:")===0 ? Model.staticDockMonitorKey(monitor) : Model.monitorKey(monitor)
     enqueue(["position", owner, key, String(Math.round(x)), String(Math.round(y))])
+  }
+  function recordPreviewPosition(monitor,key,x,y,width) {
+    enqueue(["preview-position",Model.staticDockMonitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))])
   }
   function allWindows(name) { openDialog("picker", name, snapshot.windows, null) }
   function focusedScreen() {
@@ -526,6 +598,9 @@ Item {
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
+        captureVisibility:{known:root.captureState.known,checkedAt:root.captureState.checkedAt,error:root.captureState.error,
+          polling:root.capturePollNeeded,allowed:root.captureAllowed,
+          screens:root.snapshot.monitors.map(function(m) { return {name:m.name,allowed:root.captureAllowedFor(m.name)} })},
         clickObserverActive:clickObserver.ready,clickObserverCount:clickObserver.clicks,pressedPointerButtons:Object.keys(root.pressedPointerButtons),
         pointer:{known:root.pointerKnown,tracking:root.pointerTracking,x:root.pointerPosition.x,y:root.pointerPosition.y},
         screens: root.snapshot.monitors.map(function(m) { return m.name }), dialog: root.contextOpen ? "menu" : root.dialogKind, context:{open:root.contextOpen,screen:root.contextScreen,workspace:root.contextWorkspace,ids:root.contextIds}, pendingCloseIds:Object.keys(root.pendingCloseIds), error: root.lastError,
@@ -534,7 +609,7 @@ Item {
     }
     function settings(): void { root.openDialog("settings", root.focusedScreen(), [], null) }
     function all(): void { root.allWindows(root.focusedScreen()) }
-    function dismiss(): void { root.closeContext(); root.closeDialog() }
+    function dismiss(): void { root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
     function refresh(): void { root.refresh() }
     function configure(key: string, value: string): void { root.setting(key, value) }
     function minimize(): void { root.enqueue(["minimize"]) }

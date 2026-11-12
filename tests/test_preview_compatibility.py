@@ -79,9 +79,9 @@ class PreviewCompatibilityTests(unittest.TestCase):
     def save(self):
         atomic_json(self.stash.path, dict(version=1, windows=self.saved))
 
-    def settings(self, mode='live', compatibility='enhanced'):
+    def settings(self, mode='live', compatibility='enhanced', **extra):
         atomic_json(self.stash.config, dict(plugins=[dict(id=PLUGIN, hoverPreview=mode,
-                                                       livePreviewCompatibility=compatibility)]))
+                                                       livePreviewCompatibility=compatibility, **extra)]))
 
     def test_ids_are_bounded_exact_and_deduplicated(self):
         self.assertEqual(request_ids([OTHER, IDENT, OTHER]), [IDENT, OTHER])
@@ -120,6 +120,40 @@ class PreviewCompatibilityTests(unittest.TestCase):
                 self.keeper.sync(wanted)
         self.assertEqual(self.bridge.calls, [])
         self.assertEqual(self.hypr.reads, [])
+
+    def test_floating_cards_acquire_live_sources_independently_of_hover_preview_setting(self):
+        for update in ('hover', 'live'):
+            for hover in ('off', 'still'):
+                with self.subTest(update=update, hover=hover):
+                    self.settings(hover, presentation='previews', floatingPreviewUpdate=update)
+                    self.assertEqual(self.keeper.sync([IDENT]), dict(state='ready', ids=[IDENT]))
+                    self.assertEqual(self.bridge.calls[-1][0], 'update')
+                    self.keeper.close()
+
+    def test_floating_cards_still_standard_other_modes_and_no_visible_requests_never_lease(self):
+        cases = [('still', 'enhanced', 'previews', [IDENT]), ('hover', 'standard', 'previews', [IDENT]),
+                 ('live', 'standard', 'previews', [IDENT]), ('live', 'enhanced', 'floating', [IDENT]),
+                 ('hover', 'enhanced', 'bubbles', [IDENT]), ('live', 'enhanced', 'previews', [])]
+        for update, compatibility, presentation, wanted in cases:
+            with self.subTest(update=update, compatibility=compatibility, presentation=presentation, wanted=wanted):
+                self.settings('off', compatibility, presentation=presentation, floatingPreviewUpdate=update)
+                self.keeper.sync(wanted)
+        self.assertEqual(self.bridge.calls, [])
+        self.assertEqual(self.hypr.reads, [])
+
+    def test_card_update_policy_and_presentation_changes_release_owned_rendering(self):
+        for change in (dict(floatingPreviewUpdate='still'), dict(presentation='dock'),
+                       dict(livePreviewCompatibility='standard')):
+            with self.subTest(change=change):
+                settings = dict(presentation='previews', floatingPreviewUpdate='live', livePreviewCompatibility='enhanced')
+                self.settings('off', settings.pop('livePreviewCompatibility'), **settings)
+                self.keeper.sync([IDENT])
+                self.bridge.calls.clear()
+                settings['livePreviewCompatibility'] = 'enhanced'
+                settings.update(change)
+                self.settings('off', settings.pop('livePreviewCompatibility'), **settings)
+                self.keeper.sync([IDENT])
+                self.assertEqual(self.bridge.calls, [('release',self.keeper.owner)])
 
     def test_only_requested_owned_records_are_sent_with_fresh_identity(self):
         self.saved.append(record(OTHER, '0x124'))
