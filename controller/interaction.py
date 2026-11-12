@@ -19,6 +19,7 @@ MAX_EXCLUDES = 16
 RENEW_SECONDS = .5
 RESTART_REQUIRED = 'Restart Hyprland to load interactive Window Stash previews'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
+RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
 
 def exit_shortcut(value, bindings=()):
@@ -116,7 +117,7 @@ def status_json(expression):
         + ',string.byte(c)) end)..\'"\' end\n'
         + 'local function count(value) return type(value)=="table" and #value or tonumber(value) or 0 end\n')
     fields = []
-    for field in ('active', 'keyboard', 'keyboardFocused'):
+    for field in ('active', 'keyboard', 'keyboardFocused', 'restoreRequested'):
         fields.append(lua(json.dumps(field)+':')+'..tostring(result.'+field+'==true)')
     for field in ('owner', 'id', 'reason'):
         fields.append(lua(json.dumps(field)+':')+'..quote(result.'+field+')')
@@ -167,6 +168,10 @@ class InteractionBridge(PreviewBridge):
         self.hypr.eval('if hl.plugin and '+API+' and type('+API+'.interaction_release)=="function" then '
                        +API+'.interaction_release('+lua(owner)+') end')
 
+    def interaction_handoff(self, owner):
+        self.hypr.eval(self.interaction_probe+'assert(type('+API+'.interaction_handoff)=="function",'
+                       +lua(RESTART_REQUIRED)+'); local result,err='+API+'.interaction_handoff('+lua(owner)+'); assert(result,err)')
+
 
 class InteractionKeeper:
     def __init__(self, stash=None, bridge=None):
@@ -179,13 +184,18 @@ class InteractionKeeper:
         self.terminal = None
         self.exit_chord = None
         self.exit_binding = None
+        self.bound_source = None
+        self.keyboard_policy = None
 
     def _source(self, target):
         with self.stash.locked():
             settings = self.stash.settings()
-            if settings['presentation'] != 'previews' or settings['floatingPreviewInteraction'] != 'on':
-                return None
             saved = list(self.stash.state['windows'])
+        return self._validated_source(target, settings, saved)
+
+    def _validated_source(self, target, settings, saved):
+        if settings['presentation'] != 'previews' or settings['floatingPreviewInteraction'] != 'on':
+            return None
         sources = preview_records(saved, self.stash.hypr.read('clients'), [target['id']])
         monitors = [monitor for monitor in self.stash.hypr.read('monitors') if monitor.get('name') == target['monitor']]
         if len(sources) != 1 or len(monitors) != 1 or monitors[0].get('dpmsStatus') is False:
@@ -202,6 +212,41 @@ class InteractionKeeper:
                           fps=int(settings['floatingPreviewInteractionFps']), exitShortcut=settings[EXIT_SHORTCUT_KEY])
         return sources[0], parameters
 
+    def _restore_handoff(self, target):
+        # Native detection is a request, not authority to mutate a client. Hold
+        # the ledger lock and recheck the exact initially accepted identity,
+        # ownership, phase, monitor and visibility policy before restoration.
+        with self.stash.locked():
+            settings = self.stash.settings()
+            saved = list(self.stash.state['windows'])
+            source = self._validated_source(target, settings, saved)
+            if source is None or self.bound_source is None or source[0] != self.bound_source:
+                return dict(restored=False)
+            record = next(record for record in saved if record['id'] == target['id'])
+            result = self.stash.restore(record['id'], to=settings['restoreDestination'],
+                                        monitor=target['monitor'],
+                                        expected=dict(record, stableId=self.bound_source['stable_id']))
+            if result.get('action') != 'restored':
+                return dict(restored=False)
+        # The native owner tombstone retains weak exact transient identities;
+        # it may move/focus only those children after validating the now-public
+        # parent. No titles, app IDs or PIDs alone can adopt another window.
+        self.bridge.interaction_handoff(self.owner)
+        return dict(restored=True)
+
+    def _finish(self, target, status):
+        result = dict(state='ended', id=target['id'], serial=target['serial'],
+                      reason=status.get('reason') or 'Interaction ended', status=status)
+        try:
+            if status.get('restoreRequested') is True and status.get('reason') in RESTORE_REASONS:
+                if status.get('owner') != self.owner or status.get('id') != target['id']:
+                    raise RuntimeError('Native restore request does not match the active window and owner')
+                result.update(self._restore_handoff(target))
+        finally:
+            self.close()
+        self.terminal = result
+        return result
+
     def sync(self, value):
         target = request(value)
         if target is None:
@@ -213,6 +258,8 @@ class InteractionKeeper:
             self.owner = uuid.uuid4().hex
             self.activation = activation
             self.terminal = None
+            self.bound_source = None
+            self.keyboard_policy = None
         self.target = target
         if self.terminal:
             return self.terminal
@@ -220,10 +267,7 @@ class InteractionKeeper:
             status = self.bridge.interaction_status(self.owner)
             self._verify_status(status, target)
             if not status['active']:
-                self.close()
-                self.terminal = dict(state='ended', id=target['id'], serial=target['serial'],
-                                     reason=status.get('reason') or 'Interaction ended', status=status)
-                return self.terminal
+                return self._finish(target, status)
         source = self._source(target)
         if source is None:
             self.close()
@@ -238,20 +282,23 @@ class InteractionKeeper:
                 self.terminal = dict(state='ended', id=target['id'], serial=target['serial'], reason='Preview changed while interaction was starting')
                 return self.terminal
         identity, parameters = source
+        if self.bound_source is not None and identity != self.bound_source:
+            return self._finish(target, dict(active=False, reason='window-unavailable'))
+        if self.acquired and self.keyboard_policy != parameters['keyboard']:
+            return self._finish(target, dict(active=False, reason='keyboard-policy-changed'))
         chord = parameters.pop('exitShortcut')
         if not self.acquired or chord != self.exit_chord:
             _, self.exit_binding = exit_shortcut(chord, self.stash.hypr.read('binds') if chord else [])
             self.exit_chord = chord
         parameters['exitShortcut'] = self.exit_binding
+        self.bound_source = dict(identity)
+        self.keyboard_policy = parameters['keyboard']
         self.acquired = True  # Also release an acquisition that fails halfway.
         status = self.bridge.interaction_update(self.owner, identity, parameters)
         self._verify_status(status, target)
-        result = dict(state='active' if status['active'] else 'ended', id=target['id'], serial=target['serial'],
-                      reason=status.get('reason', ''), status=status)
         if not status['active']:
-            self.terminal = result
-            self.close()
-        return result
+            return self._finish(target, status)
+        return dict(state='active', id=target['id'], serial=target['serial'], reason=status.get('reason', ''), status=status)
 
     def _verify_status(self, status, target):
         if status['active'] and (status.get('owner') != self.owner or status.get('id') != target['id']):

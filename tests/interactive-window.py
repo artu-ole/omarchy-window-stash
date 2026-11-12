@@ -7,6 +7,7 @@ import time
 
 import gi
 gi.require_version('Gtk', '4.0')
+gi.require_version('Gdk', '4.0')
 from gi.repository import Gdk, Gio, GLib, Gtk
 
 if len(sys.argv) not in (3, 4):
@@ -26,6 +27,14 @@ def activate(application):
     window = Gtk.ApplicationWindow(application=application, title=title)
     window.set_decorated(False)
     window.set_default_size(1000, 700)
+    root_keys = Gtk.EventControllerKey()
+    root_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    root_keys.connect('key-pressed', lambda controller, keyval, keycode, modifiers:
+                      (emit('root-key', name=Gdk.keyval_name(keyval), keycode=keycode), False)[1])
+    window.add_controller(root_keys)
+    css = Gtk.CssProvider()
+    css.load_from_string('.stash-popup contents { background: #e64678; } .stash-popup button { background: #eb5a32; color: white; }')
+    Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     fixed = Gtk.Fixed()
     window.set_child(fixed)
     canvas = Gtk.DrawingArea()
@@ -113,6 +122,7 @@ def activate(application):
         if state['popup'] is not None:
             state['popup'].unparent()
         popup = Gtk.Popover()
+        popup.add_css_class('stash-popup')
         popup.set_parent(button)
         popup.set_autohide(True)
         popup.set_position(Gtk.PositionType.BOTTOM)
@@ -123,6 +133,15 @@ def activate(application):
         state['popup'] = popup
         popup.popup()
         emit('popup-open')
+
+        def popup_layout():
+            surface = popup.get_surface()
+            if surface and hasattr(surface, 'get_position_x'):
+                emit('popup-layout', x=surface.get_position_x(), y=surface.get_position_y(),
+                     width=surface.get_width(), height=surface.get_height())
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(100, popup_layout)
 
     popup_button.connect('clicked', show_popup)
     dialog_button = Gtk.Button(label='Modal dialog')
@@ -140,6 +159,80 @@ def activate(application):
         emit('dialog-open')
 
     dialog_button.connect('clicked', show_dialog)
+    sibling_button = Gtk.Button(label='Sibling window')
+    sibling_button.set_size_request(150, 44)
+    fixed.put(sibling_button, 650, 24)
+
+    def show_sibling(button):
+        sibling = Gtk.ApplicationWindow(application=application, title=title+' sibling')
+        sibling.set_default_size(500, 350)
+        sibling.set_decorated(False)
+        field = Gtk.Entry()
+        field.set_placeholder_text('Same-client sibling keyboard target')
+        field.connect('changed', lambda widget: emit('sibling-text', text=widget.get_text()))
+        observer = Gtk.EventControllerKey()
+        observer.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        observer.connect('key-pressed', lambda controller, keyval, keycode, modifiers:
+                         (emit('sibling-key', name=Gdk.keyval_name(keyval), keycode=keycode), False)[1])
+        field.add_controller(observer)
+        sibling.set_child(field)
+        sibling.connect('close-request', lambda widget: (emit('sibling-close'), False)[1])
+        sibling.present()
+        field.grab_focus()
+        emit('sibling-open')
+
+    sibling_button.connect('clicked', show_sibling)
+    fullscreen_button = Gtk.Button(label='Full screen')
+    fullscreen_button.set_size_request(150, 44)
+    fullscreen_button.connect('clicked', lambda widget: (emit('fullscreen-request'), window.fullscreen()))
+    fixed.put(fullscreen_button, 820, 24)
+    existing_button = Gtk.Button(label='Existing transient')
+    existing_button.set_size_request(180, 44)
+
+    def show_existing(button):
+        child = Gtk.Window(application=application, title=title+' existing', transient_for=window)
+        child.set_default_size(320, 160)
+        child.set_child(Gtk.Label(label='Pre-existing public transient'))
+        child.present()
+        emit('existing-open')
+
+    existing_button.connect('clicked', show_existing)
+    fixed.put(existing_button, 650, 84)
+    move_button = Gtk.Button(label='Move request')
+    move_button.set_size_request(150, 44)
+    move_gesture = Gtk.GestureClick()
+    move_gesture.set_button(1)
+    move_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def request_move(gesture, count, x, y):
+        event = gesture.get_current_event()
+        position = event.get_position()
+        window.get_surface().begin_move(event.get_device(), 1, position[-2], position[-1], event.get_time())
+        emit('move-request')
+
+    move_gesture.connect('pressed', request_move)
+    move_button.add_controller(move_gesture)
+    fixed.put(move_button, 480, 84)
+    activate_button = Gtk.Button(label='Activate request')
+    activate_button.set_size_request(150, 44)
+    activate_button.connect('clicked', lambda widget: (emit('activate-request'), window.get_surface().focus(Gdk.CURRENT_TIME)))
+    fixed.put(activate_button, 820, 84)
+    edge_button = Gtk.Button(label='Oversized popup')
+    edge_button.set_size_request(150, 44)
+
+    def show_edge(button):
+        popup = Gtk.Popover()
+        popup.set_parent(button)
+        popup.set_autohide(True)
+        child = Gtk.Label(label='A popup wider than the captured source needs the full window')
+        child.set_size_request(1200, 120)
+        popup.set_child(child)
+        state['popup'] = popup
+        popup.popup()
+        emit('edge-popup-open')
+
+    edge_button.connect('clicked', show_edge)
+    fixed.put(edge_button, 820, 600)
     window.connect('close-request', lambda widget: (emit('close'), False)[1])
     window.present()
     canvas.grab_focus()

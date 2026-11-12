@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Optional, session-local bridge for live captures of parked windows.
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/desktop/state/GlobalWindowController.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
@@ -11,12 +13,16 @@
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/XWaylandManager.hpp>
+#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/protocols/PointerConstraints.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
+#include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -47,6 +53,7 @@ namespace {
 using Desktop::View::CWindow;
 using Clock = std::chrono::steady_clock;
 constexpr auto LEASE_TIME = std::chrono::milliseconds(2500);
+constexpr auto HANDOFF_TIME = std::chrono::seconds(5);
 constexpr auto FRAME_TIME = std::chrono::milliseconds(66);
 constexpr auto WORKSPACE = "special:window-stash";
 constexpr auto LUA_NAMESPACE = "window_stash_preview";
@@ -93,11 +100,21 @@ struct Interaction {
     uint64_t keyEvents = 0;
     xkb_keysym_t exitSymbol = XKB_KEY_NoSymbol;
     uint32_t exitModifiers = 0;
+    std::vector<Identity> pendingChildren;
+    std::set<uint64_t> initialWindows;
 };
 struct EndedInteraction {
     std::string owner;
     std::string id;
     std::string reason;
+    Identity source;
+    std::vector<Identity> children;
+    std::set<uint64_t> initialWindows;
+    PHLWINDOWREF previousWindow;
+    WP<CWLSurfaceResource> previousSurface;
+    bool restoreRequested = false;
+    bool handedOff = false;
+    Clock::time_point handoffDeadline;
 };
 
 HANDLE handle = nullptr;
@@ -106,6 +123,19 @@ CFunctionHook* focusWindowHook = nullptr;
 CFunctionHook* focusSurfaceHook = nullptr;
 CFunctionHook* keyboardSendHook = nullptr;
 CFunctionHook* keybindHook = nullptr;
+CFunctionHook* renderWindowHook = nullptr;
+CFunctionHook* popupVisibleHook = nullptr;
+CFunctionHook* rawFocusHook = nullptr;
+CFunctionHook* dispatchFocusHook = nullptr;
+CFunctionHook* windowActivateHook = nullptr;
+CFunctionHook* warpCursorHook = nullptr;
+CFunctionHook* constraintActivateHook = nullptr;
+bool handoffSupported = false;
+bool endingInteraction = false;
+bool popupsSupported = false;
+CWindow* captureWindow = nullptr;
+uint64_t popupFrames = 0;
+std::unordered_map<CWindow*, Clock::time_point> lastFeedback;
 bool keyboardSupported = false;
 bool changingKeyboardFocus = false;
 std::string keyboardError;
@@ -120,6 +150,7 @@ std::deque<EndedInteraction> endedInteractions;
 std::set<uint32_t> releasedButtons;
 CHyprSignalListener mouseMoveListener, mouseButtonListener, mouseAxisListener, lockListener, monitorListener, workspaceListener;
 CHyprSignalListener keyboardFocusListener, keyboardEventListener;
+CHyprSignalListener windowOpenListener, fullscreenListener;
 struct ReleasedKey {
     Identity identity;
     WP<CWLSurfaceResource> surface;
@@ -132,6 +163,16 @@ void endInteraction(const std::string& reason, bool refocus = true);
 void interactionDetails(lua_State* state, const std::string& owner = "");
 void restoreKeyboard(Interaction& previous, bool refocus);
 void acquireKeyboard();
+bool restoreReason(const std::string& reason);
+void dismissPopups(const Identity& identity);
+void restoreVisibleFocus(const PHLWINDOWREF& previousWindow, const WP<CWLSurfaceResource>& previousSurface);
+void requestRestore(const std::string& reason, const PHLWINDOW& child = nullptr);
+bool grabbedPopupOutside(const PHLWINDOW& window);
+bool sourceHasConstraint(const Identity& identity);
+
+bool currentOwner(const std::string& owner) {
+    return interaction && interaction->owner == owner && !endingInteraction;
+}
 
 bool hexadecimal(const std::string& text, size_t length) {
     return text.size() == length && text.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
@@ -186,11 +227,50 @@ uint32_t eventTime() {
     return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
 }
 
+bool surfaceOwnedBy(const Identity& identity, const SP<CWLSurfaceResource>& surface) {
+    const auto window = identity.window.lock();
+    if (!surface || !window || !sameWindow(identity, window.get(), false) || !window->wlSurface())
+        return false;
+    const auto root = window->wlSurface()->resource();
+    if (!root)
+        return false;
+    if (surface == root)
+        return true;
+    bool found = false;
+    root->breadthfirst([&](SP<CWLSurfaceResource> candidate, const Vector2D&, void*) {
+        found = found || candidate == surface;
+    }, nullptr);
+    if (!found && window->m_popupHead) {
+        window->m_popupHead->breadthfirst([&](SP<Desktop::View::CPopup> popup, void*) {
+            if (found || !popup || !popup->wlSurface() || !popup->wlSurface()->resource())
+                return;
+            popup->wlSurface()->resource()->breadthfirst([&](SP<CWLSurfaceResource> candidate, const Vector2D&, void*) {
+                found = found || candidate == surface;
+            }, nullptr);
+        }, nullptr);
+    }
+    return found;
+}
+
+bool sourceHasConstraint(const Identity& identity) {
+    // InputManager removes spent one-shot constraints from this list. Checking
+    // the live list avoids mistaking their surviving protocol objects for a
+    // pointer lock that could activate when the source receives keyboard focus.
+    for (const auto& weak : g_pInputManager->m_constraints) {
+        const auto constraint = weak.lock();
+        const auto owner = constraint ? constraint->owner() : nullptr;
+        if (owner && surfaceOwnedBy(identity, owner->resource()))
+            return true;
+    }
+    return false;
+}
+
 PHLWINDOW keyboardWindow() {
     if (!interaction || !interaction->keyboardFocused)
         return nullptr;
     const auto window = interaction->identity.window.lock();
-    return window && sameWindow(interaction->identity, window.get(), true) ? window : nullptr;
+    return window && sameWindow(interaction->identity, window.get(), true)
+        && surfaceOwnedBy(interaction->identity, g_pSeatManager->m_state.keyboardFocus.lock()) ? window : nullptr;
 }
 
 PHLWINDOW focusedWindow(Desktop::CFocusState* state) {
@@ -213,7 +293,7 @@ SP<CWLSurfaceResource> focusedSurface(Desktop::CFocusState* state) {
     if (const auto window = keyboardWindow()) {
         const auto focused = g_pSeatManager->m_state.keyboardFocus.lock();
         const auto root = window->wlSurface()->resource();
-        return focused && focused->client() == root->client() ? focused : root;
+        return surfaceOwnedBy(interaction->identity, focused) ? focused : root;
     }
     using Original = SP<CWLSurfaceResource> (*)(Desktop::CFocusState*);
     return reinterpret_cast<Original>(focusSurfaceHook->m_original)(state);
@@ -225,7 +305,7 @@ void keyboardSend(CSeatManager* seat, uint32_t time, uint32_t key, wl_keyboard_k
         return; // InputManager has still consumed its matching physical release.
     if (const auto window = keyboardWindow()) {
         const auto focus = seat->m_state.keyboardFocus.lock();
-        if (focus && focus->client() == window->wlSurface()->resource()->client()) {
+        if (surfaceOwnedBy(interaction->identity, focus)) {
             if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
                 interaction->keys.insert(key);
             else
@@ -240,6 +320,10 @@ bool keybindEvent(CKeybindManager* manager, std::any data, SP<IKeyboard> keyboar
     // A deferred physical release belongs to the same original application,
     // even if an exit already restored ordinary keyboard focus. This also keeps
     // release-triggered WM bindings from acting on an unrelated visible app.
+    struct ReleaseScope {
+        std::optional<ReleasedKey> previous;
+        ~ReleaseScope() { releaseTarget = std::move(previous); }
+    } releaseScope{releaseTarget};
     const auto event = std::any_cast<IKeyboard::SKeyEvent>(&data);
     if (event && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && interaction && validateInteraction()
         && interaction->exitSymbol != XKB_KEY_NoSymbol && keyboard && keyboard->m_xkbState) {
@@ -258,9 +342,7 @@ bool keybindEvent(CKeybindManager* manager, std::any data, SP<IKeyboard> keyboar
             releaseTarget = previous->second;
     }
     using Original = bool (*)(CKeybindManager*, std::any, SP<IKeyboard>);
-    const bool result = reinterpret_cast<Original>(keybindHook->m_original)(manager, std::move(data), keyboard);
-    releaseTarget.reset();
-    return result;
+    return reinterpret_cast<Original>(keybindHook->m_original)(manager, std::move(data), keyboard);
 }
 
 void acquireKeyboard() {
@@ -269,11 +351,18 @@ void acquireKeyboard() {
     const auto window = interaction->identity.window.lock();
     if (!window || !sameWindow(interaction->identity, window.get(), true) || !g_pSeatManager->m_keyboard)
         return;
+    if (sourceHasConstraint(interaction->identity)) {
+        endInteraction("pointer-constrained");
+        return;
+    }
     if (g_pSessionLockManager->isSessionLocked() || !g_pInputManager->m_exclusiveLSes.empty())
         return;
+    const auto owner = interaction->owner;
     const auto root = window->wlSurface()->resource();
-    interaction->previousWindow = Desktop::focusState()->window();
-    interaction->previousSurface = g_pSeatManager->m_state.keyboardFocus;
+    if (!surfaceOwnedBy(interaction->identity, g_pSeatManager->m_state.keyboardFocus.lock())) {
+        interaction->previousWindow = Desktop::focusState()->window();
+        interaction->previousSurface = g_pSeatManager->m_state.keyboardFocus;
+    }
     interaction->keyboardSurface = root;
     interaction->keyboardFocused = true;
     changingKeyboardFocus = true;
@@ -281,17 +370,21 @@ void acquireKeyboard() {
         g_pXWaylandManager->activateSurface(previous->wlSurface()->resource(), false);
     Desktop::focusState()->rawSurfaceFocus(root, window);
     changingKeyboardFocus = false;
-    if (g_pSeatManager->m_state.keyboardFocus != root)
+    if (currentOwner(owner) && g_pSeatManager->m_state.keyboardFocus != root)
         interaction->keyboardFocused = false;
 }
 
 void restoreKeyboard(Interaction& previous, bool refocus) {
-    if (!previous.keyboardFocused || !g_pSeatManager)
+    if (!g_pSeatManager)
         return;
     changingKeyboardFocus = true;
     const auto root = previous.keyboardSurface.lock();
     const auto focused = g_pSeatManager->m_state.keyboardFocus.lock();
-    const bool ownsFocus = root && focused && focused->client() == root->client();
+    const bool ownsFocus = surfaceOwnedBy(previous.identity, focused);
+    if (!previous.keyboardFocused && !ownsFocus) {
+        changingKeyboardFocus = false;
+        return;
+    }
     if (ownsFocus && keyboardSendHook) {
         using Original = void (*)(CSeatManager*, uint32_t, uint32_t, wl_keyboard_key_state);
         for (const auto key : previous.keys) {
@@ -307,27 +400,39 @@ void restoreKeyboard(Interaction& previous, bool refocus) {
             // Leave an already focused lock surface untouched; never enter a
             // hidden application in order to clean up its input while locked.
             g_pSeatManager->setKeyboardFocus(nullptr);
-        } else if (refocus) {
-            const auto original = previous.previousWindow.lock();
-            const auto surface = previous.previousSurface.lock();
-            if (original && original->m_isMapped && original->m_workspace && original->m_workspace->isVisible())
-                Desktop::focusState()->rawWindowFocus(original, Desktop::FOCUS_REASON_OTHER, surface);
-            else if (surface && surface->m_hlSurface && surface->m_hlSurface->view() && surface->m_hlSurface->view()->visible())
-                Desktop::focusState()->rawSurfaceFocus(surface);
-            else
-                Desktop::focusState()->rawWindowFocus(nullptr, Desktop::FOCUS_REASON_OTHER);
-        }
+        } else if (refocus)
+            restoreVisibleFocus(previous.previousWindow, previous.previousSurface);
     }
     changingKeyboardFocus = false;
 }
 
 void keyboardFocusChanged() {
-    if (changingKeyboardFocus || !interaction || !interaction->keyboardFocused)
+    if (changingKeyboardFocus || !interaction)
         return;
     const auto root = interaction->keyboardSurface.lock();
     const auto focus = g_pSeatManager->m_state.keyboardFocus.lock();
-    if (root && focus && root->client() == focus->client())
+    if (!interaction->keyboard || !interaction->keyboardFocused) {
+        // An application popup grab must not silently opt a mouse-only card in
+        // to keyboard input. Its pointer events remain scoped to the popup tree.
+        if (surfaceOwnedBy(interaction->identity, focus)) {
+            changingKeyboardFocus = true;
+            if (const auto previous = interaction->previousSurface.lock())
+                g_pSeatManager->setKeyboardFocus(previous);
+            else
+                g_pSeatManager->setKeyboardFocus(nullptr);
+            changingKeyboardFocus = false;
+        }
         return;
+    }
+    if (surfaceOwnedBy(interaction->identity, focus))
+        return;
+    if (!focus && root && !g_pSessionLockManager->isSessionLocked() && g_pInputManager->m_exclusiveLSes.empty()) {
+        changingKeyboardFocus = true;
+        g_pSeatManager->setKeyboardFocus(root);
+        Event::bus()->m_events.input.keyboard.focus.emit(root);
+        changingKeyboardFocus = false;
+        return;
+    }
     // An external focus change owns the seat now. It already received Wayland's
     // enter/held-key state; keep normal release bookkeeping for that transition.
     interaction->keyboardFocused = false;
@@ -343,19 +448,37 @@ void keyboardEvent(const IKeyboard::SKeyEvent& event, Event::SCallbackInfo&) {
         validateInteraction();
 }
 
-void rememberEnd(const std::string& owner, const std::string& id, const std::string& reason) {
+void rememberEnd(const std::string& owner, const std::string& id, const std::string& reason, const Interaction* previous = nullptr) {
     std::erase_if(endedInteractions, [&](const auto& ended) { return ended.owner == owner; });
-    endedInteractions.push_back({owner, id, reason});
+    EndedInteraction ended;
+    ended.owner = owner;
+    ended.id = id;
+    ended.reason = reason;
+    if (previous) {
+        ended.source = previous->identity;
+        ended.children = previous->pendingChildren;
+        ended.initialWindows = previous->initialWindows;
+        ended.previousWindow = previous->previousWindow;
+        ended.previousSurface = previous->previousSurface;
+        ended.restoreRequested = restoreReason(reason);
+        ended.handoffDeadline = Clock::now() + HANDOFF_TIME;
+    }
+    endedInteractions.push_back(std::move(ended));
     while (endedInteractions.size() > 64)
         endedInteractions.pop_front();
 }
 
 void endInteraction(const std::string& reason, bool refocus) {
-    if (!interaction)
+    if (!interaction || endingInteraction)
         return;
+    endingInteraction = true;
+    changingKeyboardFocus = true;
+    dismissPopups(interaction->identity);
+    if (const auto window = interaction->identity.window.lock(); window && g_layoutManager->dragController()->target() == window->layoutTarget())
+        g_layoutManager->endDragTarget();
     auto previous = std::move(*interaction);
     interaction.reset();
-    rememberEnd(previous.owner, previous.identity.id, reason);
+    rememberEnd(previous.owner, previous.identity.id, reason, &previous);
     restoreKeyboard(previous, refocus);
     if (g_pSeatManager) {
         const auto grabbed = previous.grab.lock();
@@ -374,10 +497,270 @@ void endInteraction(const std::string& reason, bool refocus) {
     releasedButtons.insert(previous.buttons.begin(), previous.buttons.end());
     if (refocus && g_pInputManager && g_pSessionLockManager && !g_pSessionLockManager->isSessionLocked())
         g_pInputManager->refocus();
+    changingKeyboardFocus = false;
+    endingInteraction = false;
+}
+
+bool restoreReason(const std::string& reason) {
+    return reason == "modal-dialog" || reason == "source-fullscreen" || reason == "popup-outside"
+        || reason == "source-activation" || reason == "window-management";
+}
+
+bool privateWindow(const PHLWINDOW& window) {
+    return window && window->m_isMapped && window->m_workspace && window->m_workspace->m_name == WORKSPACE;
+}
+
+bool stashTagged(const PHLWINDOW& window) {
+    if (!window)
+        return false;
+    const auto& tags = window->m_ruleApplicator->m_tagKeeper.getTags();
+    return std::any_of(tags.begin(), tags.end(), [](const auto& tag) { return tag.starts_with("window-stash-"); });
+}
+
+Identity windowIdentity(const PHLWINDOW& window) {
+    Identity identity;
+    identity.address = reinterpret_cast<uintptr_t>(window.get());
+    identity.pid = window->getPID();
+    identity.stable = window->m_stableID;
+    identity.window = window;
+    return identity;
+}
+
+bool descendantOf(const PHLWINDOW& window, const PHLWINDOW& parent) {
+    if (!window || !parent || window == parent)
+        return false;
+    auto current = window->parent();
+    for (int depth = 0; current && depth < 32; ++depth) {
+        if (current == parent)
+            return true;
+        current = current->parent();
+    }
+    return false;
+}
+
+bool pendingHandoff(const EndedInteraction& ended) {
+    return ended.restoreRequested && !ended.handedOff && ended.handoffDeadline > Clock::now();
+}
+
+bool pendingRelative(EndedInteraction& ended, const PHLWINDOW& candidate) {
+    if (!pendingHandoff(ended) || !candidate)
+        return false;
+    const auto source = ended.source.window.lock();
+    if (!source || !sameWindow(ended.source, source.get(), false))
+        return false;
+    if (candidate == source)
+        return true;
+    if (stashTagged(candidate) || !descendantOf(candidate, source))
+        return false;
+    if (!ended.initialWindows.contains(candidate->m_stableID) && ended.children.size() < 16
+        && std::none_of(ended.children.begin(), ended.children.end(), [&](const auto& child) {
+        return sameWindow(child, candidate.get(), false);
+    }))
+        ended.children.push_back(windowIdentity(candidate));
+    return true;
+}
+
+bool ownsPopupGrab(const PHLWINDOW& window) {
+    const auto grab = g_pSeatManager->m_seatGrab;
+    if (!grab || !window || !window->wlSurface())
+        return false;
+    if (grab->accepts(window->wlSurface()->resource()))
+        return true;
+    bool found = false;
+    if (window->m_popupHead) {
+        window->m_popupHead->breadthfirst([&](SP<Desktop::View::CPopup> popup, void*) {
+            if (popup && popup->wlSurface() && popup->wlSurface()->resource() && grab->accepts(popup->wlSurface()->resource()))
+                found = true;
+        }, nullptr);
+    }
+    return found;
+}
+
+void dismissPopups(const Identity& identity) {
+    const auto window = identity.window.lock();
+    if (!window || !sameWindow(identity, window.get(), true))
+        return;
+    if (ownsPopupGrab(window))
+        g_pSeatManager->setGrab(nullptr);
+    if (!window->m_popupHead)
+        return;
+    std::vector<SP<CXDGPopupResource>> resources;
+    window->m_popupHead->breadthfirst([&](SP<Desktop::View::CPopup> popup, void*) {
+        if (!popup || !popup->m_mapped || !popup->wlSurface() || !popup->wlSurface()->resource())
+            return;
+        const auto role = dynamicPointerCast<CXDGSurfaceRole>(popup->wlSurface()->resource()->m_role);
+        if (role && role->m_xdgSurface && role->m_xdgSurface->m_popup)
+            resources.push_back(role->m_xdgSurface->m_popup.lock());
+    }, nullptr);
+    for (const auto& popup : resources)
+        popup->done();
+}
+
+void restoreVisibleFocus(const PHLWINDOWREF& previousWindow, const WP<CWLSurfaceResource>& previousSurface) {
+    if (g_pSessionLockManager->isSessionLocked() || !g_pInputManager->m_exclusiveLSes.empty())
+        return;
+    const auto window = previousWindow.lock();
+    const auto surface = previousSurface.lock();
+    if (window && window->m_isMapped && window->m_workspace && window->m_workspace->isVisible())
+        Desktop::focusState()->rawWindowFocus(window, Desktop::FOCUS_REASON_OTHER, surface);
+    else if (surface && surface->m_hlSurface && surface->m_hlSurface->view() && surface->m_hlSurface->view()->visible())
+        Desktop::focusState()->rawSurfaceFocus(surface);
+    else
+        Desktop::focusState()->rawWindowFocus(nullptr, Desktop::FOCUS_REASON_OTHER);
+}
+
+void requestRestore(const std::string& reason, const PHLWINDOW& child) {
+    if (!interaction || endingInteraction)
+        return;
+    const auto source = interaction->identity.window.lock();
+    if (!source || !sameWindow(interaction->identity, source.get(), true))
+        return;
+    if (child && !stashTagged(child) && descendantOf(child, source)
+        && !interaction->initialWindows.contains(child->m_stableID) && interaction->pendingChildren.size() < 16)
+        interaction->pendingChildren.push_back(windowIdentity(child));
+    endInteraction(reason);
+}
+
+bool guardActivation(const PHLWINDOW& candidate) {
+    if (privateWindow(candidate)) {
+        if (interaction) {
+            const auto source = interaction->identity.window.lock();
+            if (source && sameWindow(interaction->identity, source.get(), true)) {
+                if (candidate == source) {
+                    requestRestore("source-activation");
+                    return true;
+                }
+                if (!stashTagged(candidate) && descendantOf(candidate, source)) {
+                    requestRestore("modal-dialog", candidate);
+                    return true;
+                }
+            }
+        }
+        for (auto& ended : endedInteractions)
+            if (pendingRelative(ended, candidate))
+                return true;
+    }
+    return false;
+}
+
+Config::Actions::ActionResult dispatchFocus(PHLWINDOW candidate) {
+    if (guardActivation(candidate))
+        return {};
+    // The focus dispatcher changes workspaces before rawWindowFocus. Guarding
+    // here prevents even a transient exposure of every other stashed window.
+    using Original = Config::Actions::ActionResult (*)(PHLWINDOW);
+    return reinterpret_cast<Original>(dispatchFocusHook->m_original)(candidate);
+}
+
+void activateWindow(CWindow* window, bool force) {
+    if (window && guardActivation(window->m_self.lock()))
+        return;
+    // CWindow::activate otherwise returns early when the source is already
+    // reported as our keyboard target, masking explicit switcher activation.
+    using Original = void (*)(CWindow*, bool);
+    reinterpret_cast<Original>(windowActivateHook->m_original)(window, force);
+}
+
+void rawWindowFocus(Desktop::CFocusState* state, PHLWINDOW candidate, Desktop::eFocusReason reason, SP<CWLSurfaceResource> surface) {
+    using Original = void (*)(Desktop::CFocusState*, PHLWINDOW, Desktop::eFocusReason, SP<CWLSurfaceResource>);
+    if (interaction && !endingInteraction && candidate && candidate->m_isMapped && candidate->m_workspace
+        && !candidate->m_workspace->m_isSpecialWorkspace && reason == Desktop::FOCUS_REASON_NEW_WINDOW
+        && !interaction->initialWindows.contains(candidate->m_stableID) && !stashTagged(candidate)) {
+        const auto identity = windowIdentity(candidate);
+        // A new public window already has a legitimate destination. End the
+        // old route without restoring its source or stealing the incoming
+        // focus. Existing mapped siblings continue to follow normal policy.
+        endInteraction("new-window", false);
+        if (!sameWindow(identity, candidate.get(), false) || !candidate->m_workspace || candidate->m_workspace->m_isSpecialWorkspace)
+            return;
+    }
+    if (privateWindow(candidate)) {
+        if (interaction) {
+            const auto source = interaction->identity.window.lock();
+            if (source && sameWindow(interaction->identity, source.get(), true)) {
+                const bool related = candidate == source || descendantOf(candidate, source);
+                if (related && endingInteraction)
+                    return;
+                if (candidate == source) {
+                    if (reason == Desktop::FOCUS_REASON_FFM) {
+                        // Popup-grab teardown wants its parent again. Keep the
+                        // miniature's input focus; do not expose its workspace.
+                        if (interaction->keyboard && interaction->keyboardFocused) {
+                            changingKeyboardFocus = true;
+                            g_pSeatManager->setKeyboardFocus(source->wlSurface()->resource());
+                            Event::bus()->m_events.input.keyboard.focus.emit(source->wlSurface()->resource());
+                            changingKeyboardFocus = false;
+                        } else if (surfaceOwnedBy(interaction->identity, g_pSeatManager->m_state.keyboardFocus.lock()))
+                            restoreVisibleFocus(interaction->previousWindow, interaction->previousSurface);
+                        return;
+                    }
+                    requestRestore("source-activation");
+                    return;
+                }
+                if (related && !stashTagged(candidate)) {
+                    requestRestore("modal-dialog", candidate);
+                    return;
+                }
+                if (reason == Desktop::FOCUS_REASON_NEW_WINDOW && !stashTagged(candidate)
+                    && !interaction->initialWindows.contains(candidate->m_stableID)) {
+                    const auto monitor = interaction->monitor.lock();
+                    const auto destination = monitor ? monitor->m_activeWorkspace : nullptr;
+                    if (destination && !destination->m_isSpecialWorkspace && destination->isVisible()) {
+                        Desktop::globalWindowController()->moveWindowToWorkspace(candidate, destination);
+                        endInteraction("new-window");
+                    } else
+                        return;
+                }
+            }
+        }
+        // A dismissed popup can finish its grab after the input lease ended.
+        // Its old parent still must not open SPECIAL or steal keyboard focus.
+        for (auto it = endedInteractions.rbegin(); it != endedInteractions.rend(); ++it) {
+            if (pendingRelative(*it, candidate))
+                return;
+            if (sameWindow(it->source, candidate.get(), true)) {
+                if (reason == Desktop::FOCUS_REASON_FFM) {
+                    if (!endingInteraction)
+                        restoreVisibleFocus(it->previousWindow, it->previousSurface);
+                    return;
+                }
+            }
+        }
+    }
+    reinterpret_cast<Original>(rawFocusHook->m_original)(state, candidate, reason, surface);
+}
+
+void warpCursor(CWindow* window, bool force) {
+    if (window && window->m_workspace && window->m_workspace->m_name == WORKSPACE) {
+        if (interaction) {
+            const auto source = interaction->identity.window.lock();
+            if (source && sameWindow(interaction->identity, source.get(), true)
+                && (window == source.get() || descendantOf(window->m_self.lock(), source)))
+                return;
+        }
+        for (auto& ended : endedInteractions)
+            if (pendingRelative(ended, window->m_self.lock()))
+                return;
+    }
+    using Original = void (*)(CWindow*, bool);
+    reinterpret_cast<Original>(warpCursorHook->m_original)(window, force);
+}
+
+void activateConstraint(CPointerConstraint* constraint) {
+    const auto owner = constraint->owner();
+    if (interaction && owner && surfaceOwnedBy(interaction->identity, owner->resource())) {
+        // A lock request can activate immediately inside the protocol handler,
+        // before the next timer/input validation. Do not let that activation
+        // confine or warp the physical cursor out of the miniature.
+        endInteraction("pointer-constrained");
+        return;
+    }
+    using Original = void (*)(CPointerConstraint*);
+    reinterpret_cast<Original>(constraintActivateHook->m_original)(constraint);
 }
 
 bool validateInteraction() {
-    if (!interaction)
+    if (!interaction || endingInteraction)
         return false;
     auto& current = *interaction;
     const auto window = current.identity.window.lock();
@@ -389,14 +772,22 @@ bool validateInteraction() {
         reason = "window-unavailable";
     else if (!window->wlSurface() || !window->wlSurface()->resource() || !window->wlSurface()->resource()->m_mapped)
         reason = "surface-unavailable";
+    else if (window->m_ruleApplicator->noScreenShare().valueOrDefault())
+        reason = "capture-unavailable";
+    else if (current.keyboard && window->m_ruleApplicator->noFocus().valueOrDefault())
+        reason = "keyboard-unavailable";
     else if (g_pSessionLockManager->isSessionLocked())
         reason = "locked";
     else if (!g_pInputManager->m_exclusiveLSes.empty())
         reason = "exclusive-overlay";
     else if (!monitor || !State::monitorState()->contains(monitor) || !monitor->m_dpmsStatus)
         reason = "display-unavailable";
-    else if (g_pInputManager->isConstrained())
+    else if (g_pInputManager->isConstrained() || sourceHasConstraint(current.identity))
         reason = "pointer-constrained";
+    else if (g_layoutManager->dragController()->target() == window->layoutTarget())
+        reason = "window-management";
+    else if (grabbedPopupOutside(window))
+        reason = "popup-outside";
     if (reason) {
         endInteraction(reason);
         return false;
@@ -415,6 +806,28 @@ bool managementHit(const Vector2D& global) {
 
 bool contentHit(const Vector2D& global) {
     return interaction && interaction->rect.containsPoint(global) && !managementHit(global);
+}
+
+bool grabbedPopupOutside(const PHLWINDOW& window) {
+    // Hover tooltips do not change window placement. Only an application's
+    // grabbed menu/popover needs the full-window fallback when it is clipped.
+    if (!window || !window->m_popupHead || !ownsPopupGrab(window))
+        return false;
+    const CBox source{window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT), window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT)};
+    bool outside = false;
+    window->m_popupHead->breadthfirst([&](SP<Desktop::View::CPopup> popup, void*) {
+        if (!popup || !popup->m_mapped || !popup->wlSurface() || !popup->wlSurface()->resource())
+            return;
+        const auto resource = popup->wlSurface()->resource();
+        const auto role = dynamicPointerCast<CXDGSurfaceRole>(resource->m_role);
+        CBox box{popup->coordsGlobal(), resource->m_current.size};
+        if (role && role->m_xdgSurface && role->m_xdgSurface->m_current.geometry.size() > Vector2D{})
+            box = role->m_xdgSurface->m_current.geometry.copy().translate(popup->coordsGlobal());
+        if (box.w > 0 && box.h > 0 && (box.x < source.x - 1 || box.y < source.y - 1
+            || box.x + box.w > source.x + source.w + 1 || box.y + box.h > source.y + source.h + 1))
+            outside = true;
+    }, nullptr);
+    return outside;
 }
 
 struct InputPoint {
@@ -438,6 +851,8 @@ InputPoint inputPoint(const Vector2D& global) {
     Vector2D rootPoint = point;
     if (window->m_xdgSurface)
         rootPoint += window->m_xdgSurface->m_current.geometry.pos();
+    else if (window->m_isX11)
+        rootPoint *= window->m_X11SurfaceScaledBy;
     // The implicit grab keeps its exact surface until every button is released,
     // including when a text selection or slider leaves the miniature's bounds.
     if (!interaction->buttons.empty()) {
@@ -459,10 +874,15 @@ InputPoint inputPoint(const Vector2D& global) {
 }
 
 bool focusPoint(const Vector2D& global, uint32_t time) {
+    if (!interaction)
+        return false;
+    const auto owner = interaction->owner;
     const auto point = inputPoint(global);
     if (!point.surface)
         return false;
     g_pSeatManager->setPointerFocus(point.surface, point.local);
+    if (!currentOwner(owner))
+        return false;
     g_pSeatManager->sendPointerMotion(time, point.local);
     interaction->lastLocal = point.local;
     interaction->lastGlobal = global;
@@ -472,13 +892,15 @@ bool focusPoint(const Vector2D& global, uint32_t time) {
 void mouseMove(const Vector2D& global, Event::SCallbackInfo& info) {
     if (!validateInteraction() || (!contentHit(global) && interaction->buttons.empty()))
         return;
+    const auto owner = interaction->owner;
+    info.cancelled = true;
     if (!focusPoint(global, eventTime())) {
-        endInteraction("surface-unavailable");
+        if (currentOwner(owner))
+            endInteraction("surface-unavailable");
         return;
     }
     g_pSeatManager->sendPointerFrame();
     ++interaction->motionEvents;
-    info.cancelled = true;
 }
 
 void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
@@ -497,29 +919,56 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
             endInteraction("outside-click");
         return;
     }
+    const auto owner = interaction->owner;
+    const bool pressed = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
+    if (!pressed && !interaction->buttons.contains(event.button))
+        return; // Never retarget a press delivered through another surface.
+    info.cancelled = true;
+    const auto undelivered = [&] {
+        if (pressed)
+            releasedButtons.insert(event.button);
+        else
+            releasedButtons.erase(event.button);
+    };
     auto point = inputPoint(position);
     if (!point.surface) {
         endInteraction("surface-unavailable");
+        undelivered();
         return;
     }
-    if (event.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        if (interaction->buttons.size() >= 16)
+    if (pressed) {
+        if (interaction->buttons.size() >= 16) {
+            undelivered();
             return;
+        }
+        if (const auto monitor = interaction->monitor.lock())
+            Desktop::focusState()->rawMonitorFocus(monitor);
+        if (!currentOwner(owner)) {
+            undelivered();
+            return;
+        }
+        if (interaction->keyboard && !interaction->keyboardFocused)
+            acquireKeyboard();
+        if (!currentOwner(owner)) {
+            undelivered();
+            return;
+        }
+    }
+    g_pSeatManager->setPointerFocus(point.surface, point.local);
+    if (!currentOwner(owner)) {
+        undelivered();
+        return;
+    }
+    g_pSeatManager->sendPointerMotion(event.timeMs, point.local);
+    interaction->lastLocal = point.local;
+    interaction->lastGlobal = position;
+    if (pressed) {
         if (interaction->buttons.empty()) {
             interaction->grab = point.surface;
             interaction->grabOffset = point.root - point.local;
         }
         interaction->buttons.insert(event.button);
-        if (interaction->keyboard && !interaction->keyboardFocused)
-            acquireKeyboard();
-    } else if (!interaction->buttons.contains(event.button)) {
-        // A press that entered through another surface cannot be retargeted.
-        return;
     }
-    g_pSeatManager->setPointerFocus(point.surface, point.local);
-    g_pSeatManager->sendPointerMotion(event.timeMs, point.local);
-    interaction->lastLocal = point.local;
-    interaction->lastGlobal = position;
     g_pSeatManager->sendPointerButton(event.timeMs, event.button, event.state);
     g_pSeatManager->sendPointerFrame();
     if (event.state == WL_POINTER_BUTTON_STATE_RELEASED) {
@@ -528,7 +977,6 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
             interaction->grab.reset();
     }
     ++interaction->buttonEvents;
-    info.cancelled = true;
 }
 
 void mouseAxis(const IPointer::SAxisEvent& event, Event::SCallbackInfo& info) {
@@ -540,11 +988,15 @@ void mouseAxis(const IPointer::SAxisEvent& event, Event::SCallbackInfo& info) {
     const auto point = inputPoint(position);
     if (!point.surface)
         return;
+    const auto owner = interaction->owner;
+    info.cancelled = true;
     // A wheel frame is an axis frame, not a newly synthesized mouse movement.
     // Flush a changed focus before delivering its first axis; stable focus must
     // retain the same event ordering as the compositor's ordinary wheel path.
     if (g_pSeatManager->m_state.pointerFocus != point.surface) {
         g_pSeatManager->setPointerFocus(point.surface, point.local);
+        if (!currentOwner(owner))
+            return;
         g_pSeatManager->sendPointerMotion(event.timeMs, point.local);
         g_pSeatManager->sendPointerFrame();
     }
@@ -558,7 +1010,6 @@ void mouseAxis(const IPointer::SAxisEvent& event, Event::SCallbackInfo& info) {
                                   event.source, event.relativeDirection);
     g_pSeatManager->sendPointerFrame();
     ++interaction->axisEvents;
-    info.cancelled = true;
 }
 
 void suspend(CWindow* window, bool requested) {
@@ -601,6 +1052,7 @@ void synchronize() {
     for (const auto& [window, identity] : previous)
         if (!active.contains(window))
             naturalSuspension(identity);
+    std::erase_if(lastFeedback, [](const auto& entry) { return !active.contains(entry.first); });
     for (const auto& [window, identity] : active)
         window->setSuspended(false);
     if (frameTimer) {
@@ -625,6 +1077,13 @@ void frame() {
         const auto window = identity.window.lock();
         if (!window || !leased(window.get()))
             continue;
+        const auto now = Clock::now();
+        const auto interval = interaction && interaction->identity.id == identity.id
+            ? std::chrono::milliseconds((1000 + interaction->fps - 1) / interaction->fps) : FRAME_TIME;
+        const auto previous = lastFeedback.find(window.get());
+        if (previous != lastFeedback.end() && now - previous->second < interval)
+            continue;
+        lastFeedback[window.get()] = now;
         if (!window->wlSurface() || !window->wlSurface()->resource())
             continue;
         const auto monitor = window->m_monitor.lock();
@@ -639,6 +1098,22 @@ void frame() {
                 surface->m_stateQueue.unlockFirst(LOCK_REASON_FENCE | LOCK_REASON_FIFO | LOCK_REASON_TIMER);
                 surface->presentFeedback(Time::steadyNow(), monitor, true);
             }, nullptr);
+        // XDG popups are independent surface trees, not wl_subsurfaces of the
+        // source. They need their own feedback while an interactive capture is
+        // rendering them, even though their real workspace stays hidden.
+        if (interaction && interaction->identity.id == identity.id && window->m_popupHead) {
+            window->m_popupHead->breadthfirst([&window, &monitor](SP<Desktop::View::CPopup> popup, void*) {
+                if (!popup || !popup->m_mapped || !popup->wlSurface() || !popup->wlSurface()->resource())
+                    return;
+                popup->wlSurface()->resource()->breadthfirst([&window, &monitor](SP<CWLSurfaceResource> surface, const Vector2D&, void*) {
+                    if (!leased(window.get()))
+                        return;
+                    surface->m_stateQueue.unlockFirst(LOCK_REASON_FENCE | LOCK_REASON_FIFO | LOCK_REASON_TIMER);
+                    surface->presentFeedback(Time::steadyNow(), monitor, true);
+                }, nullptr);
+                ++popupFrames;
+            }, nullptr);
+        }
         ++frames;
     }
 }
@@ -711,6 +1186,7 @@ void interactionDetails(lua_State* state, const std::string& owner) {
     booleanField(state, "active", matches);
     booleanField(state, "keyboard", matches && interaction->keyboard);
     booleanField(state, "keyboardFocused", matches && interaction->keyboardFocused);
+    booleanField(state, "restoreRequested", false);
     field(state, "heldKeys", matches ? interaction->keys.size() : 0);
     field(state, "keyEvents", matches ? interaction->keyEvents : 0);
     if (matches) {
@@ -749,6 +1225,7 @@ void interactionDetails(lua_State* state, const std::string& owner) {
                 field(state, "owner", it->owner);
                 field(state, "id", it->id);
                 field(state, "reason", it->reason);
+                booleanField(state, "restoreRequested", it->restoreRequested && !it->handedOff);
                 break;
             }
         }
@@ -774,6 +1251,10 @@ int interactionUpdate(lua_State* state) {
     try {
         if (lua_type(state, 1) != LUA_TTABLE)
             throw std::invalid_argument("Expected an interaction lease table");
+        if (endingInteraction)
+            throw std::invalid_argument("The previous interaction is still releasing its input");
+        if (!handoffSupported)
+            throw std::invalid_argument("This compositor does not expose the required private-window focus guard");
         const auto owner = stringField(state, 1, "owner");
         if (!hexadecimal(owner, 32))
             throw std::invalid_argument("Invalid interaction owner");
@@ -796,6 +1277,12 @@ int interactionUpdate(lua_State* state) {
         lua_getfield(state, 1, "window");
         auto identity = readIdentity(state, -1);
         lua_pop(state, 1);
+        if (identity.window->m_ruleApplicator->noScreenShare().valueOrDefault())
+            throw std::invalid_argument("This window disallows screen capture");
+        if (sourceHasConstraint(identity))
+            throw std::invalid_argument("Pointer-locked or pointer-confined windows cannot receive miniature input");
+        if (keyboard && identity.window->m_ruleApplicator->noFocus().valueOrDefault())
+            throw std::invalid_argument("This window disallows keyboard focus");
         if (interaction && interaction->identity.id != identity.id)
             throw std::invalid_argument("Release the current window before switching interaction targets");
         if (interaction && interaction->keyboard != keyboard)
@@ -848,8 +1335,15 @@ int interactionUpdate(lua_State* state) {
             lua_pop(state, 1);
         }
         lua_pop(state, 1);
-        if (!interaction)
+        if (!interaction) {
             interaction.emplace();
+            interaction->previousWindow = Desktop::focusState()->window();
+            interaction->previousSurface = g_pSeatManager->m_state.keyboardFocus;
+            interaction->keyboardSurface = identity.window->wlSurface()->resource();
+            for (const auto& window : Desktop::windowState()->windows())
+                if (window->m_isMapped)
+                    interaction->initialWindows.insert(window->m_stableID);
+        }
         interaction->owner = owner;
         interaction->identity = std::move(identity);
         interaction->rect = rect;
@@ -889,6 +1383,57 @@ int interactionRelease(lua_State* state) {
     }
 }
 
+int interactionHandoff(lua_State* state) {
+    try {
+        const auto owner = stringAt(state, 1);
+        if (!hexadecimal(owner, 32))
+            throw std::invalid_argument("Invalid interaction owner");
+        auto ended = std::find_if(endedInteractions.begin(), endedInteractions.end(), [&](const auto& item) { return item.owner == owner; });
+        if (ended == endedInteractions.end() || !ended->restoreRequested)
+            throw std::invalid_argument("This interaction did not request a window handoff");
+        const auto source = ended->source.window.lock();
+        if (!source || !sameWindow(ended->source, source.get(), false))
+            throw std::invalid_argument("The original handoff window is no longer available");
+        const auto destination = source->m_workspace;
+        if (!destination || destination->m_isSpecialWorkspace || !destination->isVisible())
+            throw std::invalid_argument("Restore the original window before completing its handoff");
+        const auto children = ended->children;
+        size_t moved = 0;
+        PHLWINDOW focused;
+        for (const auto& identity : children) {
+            const auto child = identity.window.lock();
+            if (!child || !sameWindow(identity, child.get(), false))
+                continue;
+            if (stashTagged(child) || !descendantOf(child, source))
+                continue;
+            // A new transient can map provisionally on the visible invoking
+            // workspace. Its exact parent still determines the final restore
+            // destination. Pre-existing mapped windows are never captured here.
+            if (child->m_workspace != destination) {
+                Desktop::globalWindowController()->moveWindowToWorkspace(child, destination);
+                ++moved;
+            }
+            if (child->m_workspace == destination)
+                focused = child;
+        }
+        // Workspace moves emit callbacks; find the owner again rather than
+        // retaining an iterator across a reentrant release or new session.
+        ended = std::find_if(endedInteractions.begin(), endedInteractions.end(), [&](const auto& item) { return item.owner == owner; });
+        if (ended != endedInteractions.end())
+            ended->handedOff = true;
+        if (focused)
+            Desktop::focusState()->fullWindowFocus(focused, Desktop::FOCUS_REASON_OTHER);
+        lua_newtable(state);
+        field(state, "moved", moved);
+        booleanField(state, "focused", focused != nullptr);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
+
 int status(lua_State* state) {
     synchronize();
     lua_newtable(state);
@@ -901,6 +1446,7 @@ int status(lua_State* state) {
     field(state, "frameInterval", frameInterval.count());
     field(state, "frames", frames);
     field(state, "preventedSuspends", preventedSuspends);
+    field(state, "popupFrames", popupFrames);
     lua_newtable(state);
     int ordinal = 1;
     for (const auto& [window, identity] : active) {
@@ -911,9 +1457,11 @@ int status(lua_State* state) {
     interactionDetails(state);
     lua_setfield(state, -2, "interaction");
     lua_newtable(state);
-    booleanField(state, "pointer", true);
+    booleanField(state, "pointer", handoffSupported);
     booleanField(state, "keyboard", keyboardSupported);
     booleanField(state, "exitShortcut", keybindHook != nullptr);
+    booleanField(state, "popups", popupsSupported);
+    booleanField(state, "handoff", handoffSupported);
     field(state, "keyboardError", keyboardError);
     field(state, "interactionProtocol", 1);
     lua_setfield(state, -2, "capabilities");
@@ -1020,6 +1568,77 @@ CFunctionHook* optionalHook(const std::string& name, const std::string& demangle
     return hook;
 }
 
+bool popupVisible(const Desktop::View::CPopup* popup) {
+    if (captureWindow && popupsSupported && leased(captureWindow) && popup->m_mapped && popup->getMonitor()
+        && popup->getT1Owner() == captureWindow->wlSurface())
+        return true;
+    using Original = bool (*)(const Desktop::View::CPopup*);
+    return reinterpret_cast<Original>(popupVisibleHook->m_original)(popup);
+}
+
+void renderWindow(Render::IHyprRenderer* renderer, PHLWINDOW window, PHLMONITOR monitor, const Time::steady_tp& time,
+                  bool decorate, Render::eRenderPassMode mode, bool ignorePosition, bool standalone) {
+    struct CaptureScope {
+        CWindow* previous;
+        ~CaptureScope() { captureWindow = previous; }
+    } scope{captureWindow};
+    if (standalone && popupsSupported && interaction && sameWindow(interaction->identity, window.get(), true))
+        captureWindow = window.get();
+    using Original = void (*)(Render::IHyprRenderer*, PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, Render::eRenderPassMode, bool, bool);
+    reinterpret_cast<Original>(renderWindowHook->m_original)(renderer, window, monitor, time, decorate, mode, ignorePosition, standalone);
+}
+
+void setupPopups() {
+    try {
+        popupVisibleHook = optionalHook("visible", "Desktop::View::CPopup::visible() const", reinterpret_cast<const void*>(&popupVisible));
+        renderWindowHook = optionalHook("renderWindow", "Render::IHyprRenderer::renderWindow(", reinterpret_cast<const void*>(&renderWindow));
+        popupsSupported = true;
+    } catch (const std::exception&) {
+        for (auto** hook : {&renderWindowHook, &popupVisibleHook}) {
+            if (*hook)
+                HyprlandAPI::removeFunctionHook(handle, *hook);
+            *hook = nullptr;
+        }
+    }
+}
+
+void windowOpened(PHLWINDOW candidate) {
+    if (!candidate || stashTagged(candidate))
+        return;
+    if (interaction && !endingInteraction) {
+        const auto source = interaction->identity.window.lock();
+        if (source && sameWindow(interaction->identity, source.get(), true) && descendantOf(candidate, source))
+            requestRestore("modal-dialog", candidate);
+    }
+    for (auto& ended : endedInteractions)
+        pendingRelative(ended, candidate);
+}
+
+void fullscreenChanged(PHLWINDOW candidate) {
+    if (!interaction || endingInteraction || !candidate || !sameWindow(interaction->identity, candidate.get(), true))
+        return;
+    const auto modes = Fullscreen::controller()->getFullscreenModes(candidate);
+    if (modes.internal != Fullscreen::FSMODE_NONE || modes.client != Fullscreen::FSMODE_NONE)
+        requestRestore("source-fullscreen");
+}
+
+void setupHandoff() {
+    try {
+        rawFocusHook = optionalHook("rawWindowFocus", "Desktop::CFocusState::rawWindowFocus(", reinterpret_cast<const void*>(&rawWindowFocus));
+        dispatchFocusHook = optionalHook("focus", "Config::Actions::focus(", reinterpret_cast<const void*>(&dispatchFocus));
+        windowActivateHook = optionalHook("activate", "Desktop::View::CWindow::activate(", reinterpret_cast<const void*>(&activateWindow));
+        warpCursorHook = optionalHook("warpCursor", "Desktop::View::CWindow::warpCursor(", reinterpret_cast<const void*>(&warpCursor));
+        constraintActivateHook = optionalHook("activate", "CPointerConstraint::activate(", reinterpret_cast<const void*>(&activateConstraint));
+        handoffSupported = true;
+    } catch (const std::exception&) {
+        for (auto** hook : {&constraintActivateHook, &warpCursorHook, &windowActivateHook, &dispatchFocusHook, &rawFocusHook}) {
+            if (*hook)
+                HyprlandAPI::removeFunctionHook(handle, *hook);
+            *hook = nullptr;
+        }
+    }
+}
+
 void setupKeyboard() {
     try {
         // The active-session exit chord is useful in mouse-only mode too.
@@ -1073,14 +1692,19 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "status", status)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_update", interactionUpdate)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_release", interactionRelease)
-        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus))
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_handoff", interactionHandoff))
         throw std::runtime_error("Could not register the preview lease API");
     mouseMoveListener = Event::bus()->m_events.input.mouse.move.listen(mouseMove);
     mouseButtonListener = Event::bus()->m_events.input.mouse.button.listen(mouseButton);
     mouseAxisListener = Event::bus()->m_events.input.mouse.axis.listen(mouseAxis);
     setupKeyboard();
+    setupPopups();
+    setupHandoff();
     keyboardFocusListener = g_pSeatManager->m_events.keyboardFocusChange.listen(keyboardFocusChanged);
     keyboardEventListener = Event::bus()->m_events.input.keyboard.key.listen(keyboardEvent);
+    windowOpenListener = Event::bus()->m_events.window.openEarly.listen(windowOpened);
+    fullscreenListener = Event::bus()->m_events.window.fullscreen.listen(fullscreenChanged);
     lockListener = g_pSessionLockManager->m_events.lock.listen([] { endInteraction("locked", false); });
     monitorListener = Event::bus()->m_events.monitor.layoutChanged.listen([] { endInteraction("display-changed"); });
     workspaceListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE) { endInteraction("workspace-changed"); });
@@ -1097,6 +1721,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     mouseAxisListener.reset();
     keyboardFocusListener.reset();
     keyboardEventListener.reset();
+    windowOpenListener.reset();
+    fullscreenListener.reset();
     lockListener.reset();
     monitorListener.reset();
     workspaceListener.reset();

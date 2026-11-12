@@ -48,12 +48,12 @@ def main():
     assert not command('list')['windows'], 'Keyboard proof requires an empty disposable stash'
     PreviewBridge(h).ensure()
     binding = '__window_stash_keyboard_proof_'+str(os.getpid())
-    chord = 'SUPER + CTRL + ALT + F24'
+    occupied = {str(value.get('key','')).lower() for value in h.read('binds') if value.get('modmask') == 76}
+    proof_key = next(('F'+str(number) for number in range(24, 12, -1) if 'f'+str(number) not in occupied), None)
+    assert proof_key, 'No unused high function chord is available for the owned close proof'
+    chord = 'SUPER + CTRL + ALT + '+proof_key
     matching = h.call('repl', 'return hl.get_config("input.resolve_binds_by_sym")')
     assert matching in ('true', 'false')
-    assert not any(value.get('modmask') == 76 and str(value.get('key','')).lower() == 'f24'
-                   and value.get('description') != 'Window Stash isolated keyboard close proof'
-                   for value in h.read('binds')), 'Owned keyboard proof chord is occupied'
     with tempfile.TemporaryDirectory(prefix='stash-keyboard-') as temporary, NativeSession() as session:
         configure('presentation','dock')
         configure('hoverPreview','off')
@@ -107,21 +107,24 @@ def main():
             print('PASS plain Escape remains an application key',flush=True)
 
             end(owner)
-            for keyboard in (False, True):
+            for keyboard, key, modifiers, exit_keys in (
+                    (False, 'Escape', 12, ('-M','ctrl','-M','alt','-k','Escape','-m','alt','-m','ctrl')),
+                    (True, 'Escape', 12, ('-M','ctrl','-M','alt','-k','Escape','-m','alt','-m','ctrl')),
+                    (True, 'F8', 4, ('-M','ctrl','-k','F8','-m','ctrl'))):
                 owner = uuid.uuid4().hex
                 begin(owner,record,session.monitor['name'],rect,keyboard=keyboard,
-                      exit_shortcut=dict(modmask=12,key='Escape'))
+                      exit_shortcut=dict(modmask=modifiers,key=key))
                 content_click(session,rect,size,size[0]*.75,size[1]*.75)
-                source_escapes = key_count(log,'Escape')
-                control_escapes = key_count(control_log,'Escape')
-                source_releases = key_count(log,'Escape','key-release')
-                control_releases = key_count(control_log,'Escape','key-release')
-                session.keys('-M','ctrl','-M','alt','-k','Escape','-m','alt','-m','ctrl')
+                source_escapes = key_count(log,key)
+                control_escapes = key_count(control_log,key)
+                source_releases = key_count(log,key,'key-release')
+                control_releases = key_count(control_log,key,'key-release')
+                session.keys(*exit_keys)
                 wait(lambda:not native_status(owner)['active'],'Configured exit chord did not end the session')
                 assert native_status(owner)['reason'] == 'shortcut', native_status(owner)
-                assert key_count(log,'Escape') == source_escapes and key_count(control_log,'Escape') == control_escapes, \
+                assert key_count(log,key) == source_escapes and key_count(control_log,key) == control_escapes, \
                     'Consumed exit shortcut leaked its press to an application'
-                assert key_count(log,'Escape','key-release') == source_releases and key_count(control_log,'Escape','key-release') == control_releases, \
+                assert key_count(log,key,'key-release') == source_releases and key_count(control_log,key,'key-release') == control_releases, \
                     'Consumed exit shortcut leaked an orphan release'
             print('PASS configurable exit chord works in mouse and keyboard modes without leaked key presses/releases',flush=True)
 
@@ -159,12 +162,12 @@ def main():
 
             # Bind only an unoccupied high function chord, disable the exact
             # returned handle in finally, and use the stock close dispatcher.
+            h.call('repl','_G.'+binding+'=assert(hl.bind('+lua(chord)+',hl.dsp.window.close(),{description="Window Stash isolated keyboard close proof"}));return true')
             h.eval('hl.config({input={resolve_binds_by_sym=true}})')
-            h.eval('_G.'+binding+'=assert(hl.bind('+lua(chord)+',hl.dsp.window.close(),{description="Window Stash isolated keyboard close proof"}))')
             owner = uuid.uuid4().hex
             begin(owner,record,session.monitor['name'],rect,keyboard=True)
             content_click(session,rect,size,size[0]*.75,size[1]*.75)
-            session.keys('-M','logo','-M','ctrl','-M','alt','-s','60','-k','F24','-s','60','-m','alt','-m','ctrl','-m','logo')
+            session.keys('-M','logo','-M','ctrl','-M','alt','-s','60','-k',proof_key,'-s','60','-m','alt','-m','ctrl','-m','logo')
             wait(lambda:not h.client(address),'Default-focus WM close did not target the hidden interactive window')
             assert events(log,'close'), 'The hidden source did not receive its normal close request'
             assert h.client(control) and not events(control_log,'close'), 'WM close incorrectly targeted the visible underlying control'
@@ -180,7 +183,7 @@ def main():
             if held is not None:
                 try:held.wait(timeout=4)
                 except subprocess.TimeoutExpired:held.terminate();held.wait(timeout=3)
-            h.eval('if _G.'+binding+' then _G.'+binding+':set_enabled(false);_G.'+binding+'=nil end')
+            h.call('repl','if _G.'+binding+' then _G.'+binding+':set_enabled(false);_G.'+binding+'=nil end;return true')
             h.eval('hl.config({input={resolve_binds_by_sym='+matching+'}})')
 
 
