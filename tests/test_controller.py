@@ -82,11 +82,13 @@ class FakeHypr:
                 raise RuntimeError("Stashed window identity changed")
         if not self.client(record["address"])["floating"]:
             raise RuntimeError("The window could not be parked as floating")
-        self.dispatch_owned("window.resize", record, parked=parked,
-                            x=record["size"][0], y=record["size"][1], relative=False)
+        if self.client(record["address"])["size"] != record["size"]:
+            self.dispatch_owned("window.resize", record, parked=parked,
+                                x=record["size"][0], y=record["size"][1], relative=False)
         self.dispatch_owned("window.move", record, parked=parked, workspace=SPECIAL, follow=False)
-        self.dispatch_owned("window.resize", record, parked=True,
-                            x=record["size"][0], y=record["size"][1], relative=False)
+        if self.client(record["address"])["size"] != record["size"]:
+            self.dispatch_owned("window.resize", record, parked=True,
+                                x=record["size"][0], y=record["size"][1], relative=False)
 
     def scrolling_width(self, record):
         c=self.client(record["address"])
@@ -395,6 +397,14 @@ assert(not w.floating)
             with self.subTest(failed=failed):
                 hypr, stash = self.race_fixture("parking-failure-"+str(index))
                 hypr.clients[0].update(size=[1251,750],at=[-1251,30])
+                if failed == "window.resize":
+                    original_dispatch = hypr.dispatch
+                    def adjust_on_move(name, **args):
+                        result = original_dispatch(name, **args)
+                        if name == "window.move" and args.get("workspace") == SPECIAL:
+                            hypr.clients[0]["size"] = [900,600]
+                        return result
+                    hypr.dispatch = adjust_on_move
                 hypr.fail = failed
                 with self.assertRaisesRegex(RuntimeError,"Injected IPC failure"):
                     stash.minimize()
@@ -416,7 +426,10 @@ assert(not w.floating)
                     if name == blocked:
                         if blocked == "window.resize":hypr.clients[0]["size"]=[320,240]
                         return
-                    return original_dispatch(name,**args)
+                    result = original_dispatch(name,**args)
+                    if blocked == "window.resize" and name == "window.move" and args.get("workspace") == SPECIAL:
+                        hypr.clients[0]["size"]=[320,240]
+                    return result
                 hypr.dispatch = blocked_action
                 with self.assertRaisesRegex(RuntimeError,"parked as floating|retain its saved size"):
                     stash.minimize()
@@ -437,46 +450,64 @@ assert(not w.floating)
         self.assertEqual(len(calls),1,"Parking must be one compositor transaction")
         code = calls[0]
         prelude = '''local events={}
-local original={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750}}
+local original={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750},suspended=false}
 local current=original
-local neighbor={workspace={name="special:window-stash"},floating=true,size={x=1256,y=750}}
+local neighbor={workspace={name="special:window-stash"},floating=true,size={x=1256,y=750},suspended=true}
 local replacement={pid=200,stable_id=2,tags={},workspace={name="7"},floating=false,size={x=333,y=222}}
 hl={get_window=function(selector) assert(selector=="address:0x1");return current end,dsp={window={}},dispatch=function(action) action() end}
 hl.dsp.window.float=function(args) return function() table.insert(events,"float");args.window.floating=true end end
 hl.dsp.window.resize=function(args) return function()
   table.insert(events,"resize");assert(args.window.floating,"Resize was applied to a tiled window")
   assert(args.x==1251 and args.y==750 and args.relative==false)
-  args.window.size={x=args.x,y=args.y}
+  args.window.size={x=args.x,y=args.y};args.window.suspended=false
 end end
 hl.dsp.window.move=function(args) return function()
   table.insert(events,"move");assert(args.window.floating,"Private workspace received a tiled arrival")
   assert(args.workspace=="special:window-stash" and args.follow==false and args.x==nil and args.y==nil)
-  args.window.workspace={name=args.workspace};args.window.size={x=900,y=600}
+  if args.window.workspace.name==args.workspace then return end
+  args.window.workspace={name=args.workspace};args.window.suspended=true
+  if adjust_size_after_move then args.window.size={x=900,y=600} end
   if replace_after_move then current=replacement end
   if tile_after_move then args.window.floating=false end
 end end
 '''
-        success = prelude+code+'''assert(table.concat(events,",")=="float,resize,move,resize")
+        success = prelude+code+'''assert(table.concat(events,",")=="float,move")
 assert(original.size.x==1251 and original.size.y==750 and original.floating)
 assert(original.workspace.name=="special:window-stash")
-assert(neighbor.size.x==1256 and neighbor.size.y==750)
+assert(original.suspended,"Unnecessary resize woke a naturally suspended source")
+assert(neighbor.size.x==1256 and neighbor.size.y==750 and neighbor.suspended)
 print("PARK_OK")
 '''
         result = subprocess.run(["lua","-"],input=success,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn("PARK_OK",result.stdout)
+        for setup, expected_events in (
+                ('original.size={x=640,y=400}', 'float,resize,move'),
+                ('original.workspace={name="special:window-stash"};original.floating=true;original.suspended=true', 'move')):
+            unchanged = prelude+setup+'\n'+code+'''assert(table.concat(events,",")=="'''+expected_events+'''")
+assert(original.size.x==1251 and original.size.y==750 and original.suspended)
+assert(neighbor.size.x==1256 and neighbor.size.y==750 and neighbor.suspended)
+'''
+            result = subprocess.run(["lua","-"],input=unchanged,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+        adjusted = prelude+'adjust_size_after_move=true\n'+code+'''assert(table.concat(events,",")=="float,move,resize")
+assert(original.size.x==1251 and original.size.y==750 and original.floating)
+assert(neighbor.size.x==1256 and neighbor.size.y==750 and neighbor.suspended)
+'''
+        result = subprocess.run(["lua","-"],input=adjusted,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
         for change in ('current.pid=200','current.stable_id=2','current.tags={"window-stash-test-lookalike"}'):
             rejected = prelude+change+'\nlocal ok=pcall(function()\n'+code+'end)\nassert(not ok and #events==0)\n'
             result = subprocess.run(["lua","-"],input=rejected,text=True,capture_output=True)
             self.assertEqual(result.returncode,0,result.stderr)
         raced = prelude+'replace_after_move=true\nlocal ok=pcall(function()\n'+code+'''end)
-assert(not ok and table.concat(events,",")=="float,resize,move")
+assert(not ok and table.concat(events,",")=="float,move")
 assert(replacement.size.x==333 and replacement.size.y==222 and not replacement.floating)
 '''
         result = subprocess.run(["lua","-"],input=raced,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
         refused = prelude+'tile_after_move=true\nlocal ok=pcall(function()\n'+code+'''end)
-assert(not ok and table.concat(events,",")=="float,resize,move")
+assert(not ok and table.concat(events,",")=="float,move")
 assert(neighbor.size.x==1256 and neighbor.size.y==750)
 '''
         result = subprocess.run(["lua","-"],input=refused,text=True,capture_output=True)

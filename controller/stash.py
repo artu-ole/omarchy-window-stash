@@ -171,11 +171,14 @@ class Hyprland:
 
     def park_owned(self, record, parked=False):
         width, height = map(lua, record["size"])
-        resize = "hl.dispatch(hl.dsp.window.resize({window = w, x = " + width + ", y = " + height + ", relative = false}))\n"
+        resize = ("if w.size.x ~= " + width + " or w.size.y ~= " + height + " then\n"
+                  + "hl.dispatch(hl.dsp.window.resize({window = w, x = " + width + ", y = " + height + ", relative = false}))\nend\n")
         # Keep the complete transition in one compositor transaction. Floating
         # before moving prevents the private workspace's tiler from configuring
         # this client or its already parked neighbors to a different geometry.
         # The saved floating flag remains the original restoration state.
+        # Even an unchanged resize clears Hyprland's natural suspension. Avoid
+        # it when geometry already matches, especially after the private move.
         self.eval(owned_window_guard(record, parked)
                   + 'if not w.floating then hl.dispatch(hl.dsp.window.float({window = w, action = "on"})) end\n'
                   + 'if not w.floating then error("The window could not be parked as floating") end\n'
