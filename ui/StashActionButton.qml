@@ -8,6 +8,8 @@ Ui.PanelActionButton {
   property string animationSpeed:"normal"
   opacity:interaction.visualOpacity
   property MouseArea pressArea: null
+  signal pressed()
+  signal canceled()
   layer.enabled: true
   layer.smooth: true
   layer.effect: StashHoverEffect { feedback:interaction }
@@ -18,5 +20,10 @@ Ui.PanelActionButton {
     down: button.pressArea ? button.pressArea.pressed : false
   }
   HoverHandler { id:hover }
+  Connections {
+    target:button.pressArea
+    function onPressed() {button.pressed()}
+    function onCanceled() {button.canceled()}
+  }
   Component.onCompleted: pressArea = interaction.mouseArea(button)
 }

@@ -24,7 +24,7 @@ PanelWindow {
   // The native monitor object can retain an old workspace after hotplugging.
   // Prefer the controller's compositor snapshot once that output is known.
   readonly property int activeWorkspaceId:monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : liveMonitor && liveMonitor.activeWorkspace ? liveMonitor.activeWorkspace.id : -1
-  onActiveWorkspaceIdChanged: { if (floatingDock) floatingDock.close(); if (floatingPreviews) floatingPreviews.closeExpansion(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
+  onActiveWorkspaceIdChanged: { if (stash.previewInteractionRequest && stash.previewInteractionRequest.monitor===screen.name) stash.endPreviewInteraction("workspace-changed"); if (floatingDock) floatingDock.close(); if (floatingPreviews) floatingPreviews.closeExpansion(); if (windowPreview) windowPreview.dismiss(true); if (contextMenuOpen && stash.contextWorkspace!==activeWorkspaceId) stash.closeContext(); if (modelDelay) modelDelay.restart() }
   readonly property var config: stash.snapshot.settings
   readonly property string animations: config.animations || "full"
   readonly property string animationSpeed:config.animationSpeed || "normal"
@@ -91,6 +91,7 @@ PanelWindow {
   onPreviewLayoutKeyChanged:if (windowPreview) windowPreview.dismiss(true)
   function dismissPreview() { windowPreview.dismiss(true) }
   function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
+  function activatePreviewInteraction(id) {return floatingPreviews.activateInteraction(id)}
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open || floatingPreviewsExpanded || contextMenuOpen
   property bool pointerFocusHeld:false
@@ -289,8 +290,9 @@ PanelWindow {
     var choices=settingItems(),numbers=numberItems()
     for (var i=0;i<choices.length;i++) if (within(item,choices[i].selector)) return choices[i].selector
     for (var j=0;j<numbers.length;j++) if (within(item,numbers[j].numberField.field)) return numbers[j].numberField.field
-    for (var n=0;n<shortcutRows.count;n++) {
-      var row=shortcutRows.itemAt(n) as StashShortcutField
+    var shortcuts=shortcutItems()
+    for (var n=0;n<shortcuts.length;n++) {
+      var row=shortcuts[n]
       if (row && within(item,row.field)) return row.field
     }
     return item
@@ -317,8 +319,9 @@ PanelWindow {
     for (var j=0;j<numbers.length;j++) {
       if (within(item,numbers[j])) { result.key=numbers[j].modelData.key;result.part="number";return result }
     }
-    for (var n=0;n<shortcutRows.count;n++) {
-      var row=shortcutRows.itemAt(n) as StashShortcutField
+    var shortcuts=shortcutItems()
+    for (var n=0;n<shortcuts.length;n++) {
+      var row=shortcuts[n]
       if (!row || !within(item,row)) continue
       result.key=row.settingKey
       var record=row.details(surface.contentItem),parts=["field","apply","clear","default"]
@@ -399,7 +402,7 @@ PanelWindow {
     }
   }
   function settingItems() {
-    var rows=[],repeaters=[generalRows,placementRows,iconRows,dockRows,motionRows,previewRows,floatingPreviewRows]
+    var rows=[],repeaters=[generalRows,placementRows,iconRows,dockRows,motionRows,previewRows,floatingPreviewRows,interactionRows]
     for (var i=0;i<repeaters.length;i++) {
       if (!repeaters[i]) continue
       for (var j=0;j<repeaters[i].count;j++) {
@@ -407,6 +410,15 @@ PanelWindow {
         if (row) rows.push(row)
       }
     }
+    return rows
+  }
+  function shortcutItems() {
+    var rows=[]
+    for(var index=0;index<shortcutRows.count;index++) {
+      var row=shortcutRows.itemAt(index) as StashShortcutField
+      if(row) rows.push(row)
+    }
+    if(interactionExitRow) rows.push(interactionExitRow)
     return rows
   }
   component SettingChoice:GridLayout {
@@ -426,6 +438,7 @@ PanelWindow {
       && (["iconShape","iconFrame","sizePreset"].indexOf(modelData.key)<0 || !surface.previewMode)
       && (modelData.key.indexOf("floatingPreview")!==0 || surface.previewMode)
       && (modelData.key!=="floatingPreviewScale" || surface.config.floatingPreviewSizing==="preset")
+      && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
     columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
@@ -501,9 +514,10 @@ PanelWindow {
       if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
     }
     var shortcutControls=[]
-    for (var n=0;n<shortcutRows.count;n++) {
-      var shortcut=shortcutRows.itemAt(n) as StashShortcutField
-      if (shortcut) shortcutControls.push(Object.assign({section:"shortcuts"},shortcut.details(surface.contentItem)))
+    var shortcutFields=shortcutItems()
+    for (var n=0;n<shortcutFields.length;n++) {
+      var shortcut=shortcutFields[n]
+      if (shortcut) shortcutControls.push(Object.assign({section:shortcut===interactionExitRow ? "interaction" : "shortcuts",visible:shortcut.visible},shortcut.details(surface.contentItem)))
     }
     var numericControls=[],numericItems=numberItems(),focusDetails=settingsFocusDetails()
     for (var q=0;q<numericItems.length;q++) {
@@ -537,6 +551,7 @@ PanelWindow {
         {key:"appearance",title:appearanceHeader.text,rect:itemRect(appearanceHeader)},
         {key:"motion",title:motionHeader.text,rect:itemRect(motionHeader)},
         {key:"previews",title:previewsHeader.text,rect:itemRect(previewsHeader)},
+        {key:"interaction",title:interactionHeader.text,rect:itemRect(interactionHeader),visible:interactionHeader.visible},
         {key:"shortcuts",title:shortcutsHeader.text,rect:itemRect(shortcutsHeader)}],
       settingsScroll:{rect:itemRect(settingsViewport),contentY:settingsViewport.contentY,contentHeight:settingsViewport.contentHeight,
         focusedRect:focusDetails.rect,activeFocusRect:focusDetails.activeRect,focusedKey:focusDetails.key,focusedPart:focusDetails.part,
@@ -1195,6 +1210,37 @@ PanelWindow {
             color:surface.stash.previewCompatibilityError ? Commons.Color.urgent : surface.popupColors.text
             font.family:surface.fonts.family; font.pixelSize:surface.fonts.caption
             wrapMode:Text.Wrap; Layout.fillWidth:true; Layout.minimumWidth:0
+          }
+          Ui.PanelSeparator {visible:surface.previewMode;Layout.fillWidth:true;Layout.minimumWidth:0;foreground:surface.popupColors.text}
+          Ui.PanelSectionHeader {id:interactionHeader;visible:surface.previewMode;text:"Preview interaction";Layout.fillWidth:true;Layout.minimumWidth:0;wrapMode:Text.Wrap;foreground:surface.popupColors.text}
+          Repeater {
+            id:interactionRows
+            model:[
+              {key:"floatingPreviewInteraction",label:"Interactive previews",values:["off","on"],labels:["Off","On"],section:"interaction"},
+              {key:"floatingPreviewActivation",label:"Start interacting",values:["explicit","click"],labels:["Interact control","First click"],section:"interaction"},
+              {key:"floatingPreviewKeyboard",label:"Application input",values:["mouse","click"],labels:["Mouse only","Mouse and keyboard"],section:"interaction"},
+              {key:"floatingPreviewInteractionFps",label:"Active frame rate",values:["30","60"],labels:["Up to 30 FPS","Up to 60 FPS"],section:"interaction"},
+              {key:"floatingPreviewControls",label:"Controls when inactive",values:["hover","always"],labels:["On hover","Always shown"],section:"interaction"}
+            ]
+            delegate:SettingChoice {}
+          }
+          StashShortcutField {
+            id:interactionExitRow
+            readonly property string canonicalDefault:(surface.stash.snapshot.shortcutDefaults || {}).floatingPreviewExitShortcut || ""
+            visible:surface.previewMode && surface.config.floatingPreviewInteraction==="on"
+            enabled:!!surface.stash.snapshot.shortcutDefaults
+            stash:surface.stash;settingKey:"floatingPreviewExitShortcut";label:"Stop interacting"
+            binding:surface.config.floatingPreviewExitShortcut===undefined ? canonicalDefault : surface.config.floatingPreviewExitShortcut
+            defaultBinding:canonicalDefault
+            animations:surface.animations;animationSpeed:surface.animationSpeed;foreground:surface.popupColors.text
+          }
+          Text {
+            visible:surface.previewMode && surface.config.floatingPreviewInteraction==="on"
+            text:surface.stash.previewInteractionError || "Interact sends input into the running app without restoring it. Use the preview controls to stop, restore, move or resize. Clicking elsewhere ends interaction. Native support is set up automatically; the app's saved window size stays unchanged."
+            textFormat:Text.PlainText
+            color:surface.stash.previewInteractionError ? Commons.Color.urgent : surface.popupColors.text
+            font.family:surface.fonts.family;font.pixelSize:surface.fonts.caption
+            wrapMode:Text.Wrap;Layout.fillWidth:true;Layout.minimumWidth:0
           }
           Repeater {
             id:previewTimingRows

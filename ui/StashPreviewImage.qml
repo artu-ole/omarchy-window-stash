@@ -94,6 +94,9 @@ Item {
         mapped:!!candidateIpc && candidateIpc.mapped===true,
         tags:!!candidateIpc && !!candidateIpc.tags ? candidateIpc.tags.length : 0}}
   }
+  function contentRect() {
+    return captureView && hasContent ? captureView.contentRect() : null
+  }
   onActiveChanged:begin()
   onCandidateIpcChanged: {
     if (acceptedHandle && !Capture.matches(record,candidateIpc)) unavailable()
@@ -174,6 +177,7 @@ Item {
   component CaptureItem:Item {
     readonly property bool hasContent:view.hasContent
     readonly property size sourceSize:view.sourceSize
+    function contentRect() {return {x:view.x,y:view.y,width:view.width,height:view.height}}
     ScreencopyView {
       id:view
       anchors.centerIn:parent

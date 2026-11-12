@@ -38,6 +38,14 @@ works in mouse and keyboard sessions without leaking its press or release. Local
 exit preferences survive checkpoints and reset; no global binding is registered.
 261 Python tests pass, including 25 interaction-worker regressions.
 
+Completed UI acceptance: explicit and consumed first-click activation, application
+mouse buttons and scrolling, unchanged Still/Standard preferences, managed movement,
+outside-click delivery, exact restore, context activation and dismissal all pass in
+the production shell. Controls sit outside the active image when space permits.
+Stop retains the source and blocks management until native release is acknowledged;
+replacement owners wait for that handoff. Delayed-ack and failure-quarantine Qt
+regressions cover those transitions alongside card identity and geometry tests.
+
 ## Architecture
 
 QML owns the miniature and its controls. It publishes the exact image rectangle in

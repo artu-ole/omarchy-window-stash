@@ -6,6 +6,7 @@ import Quickshell.Io
 import "ui"
 import "ui/Model.js" as Model
 import "ui/PreviewVisibility.js" as PreviewVisibility
+import "ui/PreviewInteraction.js" as PreviewInteraction
 
 Item {
   id: root
@@ -19,7 +20,7 @@ Item {
   property string lifecycleError: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -37,7 +38,7 @@ Item {
   property point pointerPosition:Qt.point(0,0)
   readonly property bool pointerTracking:root.surfaces.some(function(surface) {
     return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.floatingPreviewsExpanded || surface.contextMenuOpen
-  })
+  }) || !!previewInteractionRequest
   property var previewCompatibilityRequests: ({})
   property var previewCompatibilityStatus: ({state:"idle",ids:[]})
   property string previewCompatibilityError:""
@@ -63,6 +64,19 @@ Item {
   readonly property PreviewKeeperHost previewCompatibilityWorker:previewKeeper.item as PreviewKeeperHost
   onPreviewCompatibilityStampChanged:if (previewCompatibilityWorker) previewCompatibilityWorker.send()
   property bool contextOpen:false
+  property var previewInteractionRequest:null
+  property var previewInteractionPendingRequest:null
+  property bool previewInteractionStopping:false
+  property string previewInteractionStopReason:""
+  property var previewInteractionStatus:({state:"idle"})
+  property string previewInteractionError:""
+  property int previewInteractionSerial:0
+  readonly property string previewInteractionStamp:JSON.stringify(PreviewInteraction.wire(previewInteractionRequest))
+  readonly property InteractionHost previewInteractionWorker:interactionKeeper.item as InteractionHost
+  onPreviewInteractionStampChanged:if(previewInteractionWorker) previewInteractionWorker.send()
+  onCaptureStateChanged:validatePreviewInteraction()
+  onCaptureClockChanged:validatePreviewInteraction()
+  onSnapshotChanged:validatePreviewInteraction()
   property string contextScreen:""
   property int contextWorkspace:1
   property point contextPoint:Qt.point(0,0)
@@ -73,7 +87,8 @@ Item {
   property var runningArgs:[]
   property bool closeNotified:false
   readonly property var shortcutKeys:["minimizeShortcut","restoreLastShortcut","restoreOldestShortcut"]
-  readonly property bool shortcutsBusy:(worker.running && runningArgs[0]==="shortcut") || queue.some(function(args) { return args[0]==="shortcut" })
+  readonly property bool shortcutsBusy:(worker.running && ["shortcut","interaction-exit-shortcut"].indexOf(runningArgs[0])>=0)
+    || queue.some(function(args) { return ["shortcut","interaction-exit-shortcut"].indexOf(args[0])>=0 })
   readonly property string shortcutStamp:JSON.stringify(shortcutKeys.map(function(key) { return snapshot.settings[key] }))
   property var deferredSettings:[]
   property string shortcutSyncError:""
@@ -82,7 +97,7 @@ Item {
   property int resetSerial:0
   readonly property bool resetBusy:resetting || (worker.running && runningArgs[0]==="reset-settings")
     || queue.some(function(args) { return args[0]==="reset-settings" })
-  readonly property bool settingsBusy:resetBusy || shortcutsBusy
+  readonly property bool settingsBusy:resetBusy || shortcutsBusy || previewInteractionStopping
   onShortcutStampChanged:shortcutSyncDelay.restart()
 
   signal pointerClicked(real x,real y,int button)
@@ -145,7 +160,7 @@ Item {
   }
   StashClickObserver {
     id:clickObserver
-    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.floatingPreviewsExpanded || s.contextMenuOpen || s.previewOpen })
+    watching:root.pointerButtonHeld || !!root.previewInteractionRequest || root.surfaces.some(function(s) { return s.floatingDockOpen || s.floatingPreviewsExpanded || s.contextMenuOpen || s.previewOpen })
     tracking:root.pointerTracking
     onMoved:function(x,y) { root.pointerPosition=Qt.point(x,y); root.pointerKnown=true; root.pointerMoved(x,y) }
     onClicked:function(x,y,button) {
@@ -261,13 +276,177 @@ Item {
       }
   }
   function enqueue(args) {
+    if(previewInteractionRequest && ["restore","restore-last","restore-oldest","restore-all","minimize","activate","close","close-all","reset-settings"].indexOf(args[0])>=0)
+      endPreviewInteraction("window-action")
     var next = queue.slice()
     next.push(args)
     queue = next
     pump()
   }
+  function previewInteractionMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionRequest,id,monitor,key)}
+  function previewInteractionPendingMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionPendingRequest,id,monitor,key)}
+  function validInteractionTarget(request) {
+    return !!request && lifecycleReady && PreviewInteraction.enabled(snapshot.settings) && captureAllowedFor(request.monitor)
+      && !pendingCloseIds[request.id] && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed"})
+      && snapshot.monitors.some(function(monitor) {return monitor.name===request.monitor})
+  }
+  function activatePreviewInteraction(request) {
+    if(!validInteractionTarget(request) || previewInteractionRequest || stopping) return false
+    previewInteractionError="";previewInteractionStopReason="";previewInteractionStopping=false
+    previewInteractionStatus={state:"starting",id:request.id,serial:request.serial}
+    previewInteractionRequest=request
+    interactionKeeper.active=true
+    return true
+  }
+  function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
+    if(!record || pendingCloseIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
+        || !snapshot.windows.some(function(window) {return window.id===record.id && window.phase==="stashed"})) return false
+    var request=PreviewInteraction.request(previewInteractionSerial+1,record.id,monitor,key,rect,excludeRects,snapshot.settings)
+    if(!request) return false
+    closeContext();closeDialog()
+    previewInteractionSerial=request.serial
+    if(previewInteractionRequest) {
+      previewInteractionPendingRequest=request
+      endPreviewInteraction("replaced")
+      return true
+    }
+    return activatePreviewInteraction(request)
+  }
+  function updatePreviewInteraction(id,monitor,key,rect,excludeRects) {
+    if(previewInteractionPendingMatches(id,monitor,key)) {
+      previewInteractionPendingRequest=PreviewInteraction.request(previewInteractionPendingRequest.serial,id,monitor,key,rect,excludeRects,snapshot.settings)
+      return
+    }
+    if(!previewInteractionMatches(id,monitor,key)) return
+    if(previewInteractionStopping) return
+    var request=PreviewInteraction.request(previewInteractionRequest.serial,id,monitor,key,rect,excludeRects,snapshot.settings)
+    if(!request) {endPreviewInteraction("geometry-unavailable");return}
+    if(JSON.stringify(request)!==JSON.stringify(previewInteractionRequest)) previewInteractionRequest=request
+  }
+  function endPreviewInteraction(reason) {
+    if(reason!=="replaced") previewInteractionPendingRequest=null
+    if(!previewInteractionRequest) return
+    if(previewInteractionStopping) return
+    previewInteractionStopping=true;previewInteractionStopReason=reason || "stopped"
+    previewInteractionStatus={state:"stopping",id:previewInteractionRequest.id,serial:previewInteractionRequest.serial,reason:previewInteractionStopReason}
+    if(previewInteractionWorker) previewInteractionWorker.stop()
+    interactionStopDeadline.restart()
+  }
+  function finishPreviewInteraction(value) {
+    interactionStopDeadline.stop();interactionKillDeadline.stop();interactionExpiryDeadline.stop()
+    previewInteractionStatus=value
+    previewInteractionRequest=null;previewInteractionStopping=false;previewInteractionStopReason=""
+    interactionKeeper.active=false
+    Qt.callLater(function() {
+      var pending=root.previewInteractionPendingRequest
+      if(!pending || root.previewInteractionRequest || root.stopping) return
+      root.previewInteractionPendingRequest=null
+      root.activatePreviewInteraction(pending)
+    })
+    Qt.callLater(root.pump)
+    Qt.callLater(root.applyDeferredSettings)
+  }
+  function quarantinePreviewInteraction(reason) {
+    if(!previewInteractionRequest) return
+    previewInteractionStopping=true;previewInteractionStopReason=reason
+    previewInteractionStatus={state:"stopping",id:previewInteractionRequest.id,serial:previewInteractionRequest.serial,reason:reason}
+    interactionStopDeadline.stop();interactionKillDeadline.stop()
+    // An abnormal worker exit cannot acknowledge native cleanup. Its last
+    // renewal expires after 2500 ms; keep management frozen past that limit.
+    if(!interactionExpiryDeadline.running) interactionExpiryDeadline.restart()
+  }
+  function validatePreviewInteraction() {
+    if(previewInteractionPendingRequest && !validInteractionTarget(previewInteractionPendingRequest)) previewInteractionPendingRequest=null
+    var request=previewInteractionRequest
+    if(!request) return
+    if(!validInteractionTarget(request)) {
+      endPreviewInteraction("preview-unavailable");return
+    }
+    if(previewInteractionStopping) return
+    var next=PreviewInteraction.request(request.serial,request.id,request.monitor,request.viewKey,request.rect,request.excludeRects,snapshot.settings)
+    if(JSON.stringify(next)!==JSON.stringify(request)) previewInteractionRequest=next
+  }
+  function interactionMessage(value,serial) {
+    if(!previewInteractionRequest || previewInteractionRequest.serial!==serial) return
+    if(!value || ["starting","building","loading","active","ended","idle","unavailable"].indexOf(value.state)<0)
+      throw new Error("Invalid interactive preview status")
+    if(value.serial!==undefined && value.serial!==serial) return
+    if(value.state==="active" && value.id!==previewInteractionRequest.id) throw new Error("Interactive preview target changed")
+    if(value.error) previewInteractionError=String(value.error)
+    if(["ended","idle"].indexOf(value.state)>=0) {
+      // A native outside click permanently ends this activation. Clearing the
+      // owner, rather than merely renewing a stale rectangle, prevents re-entry.
+      finishPreviewInteraction(value)
+    } else if(value.state==="unavailable") quarantinePreviewInteraction("native-unavailable")
+    else if(!previewInteractionStopping) previewInteractionStatus=value
+  }
+  Timer {
+    id:interactionStopDeadline;interval:1500
+    onTriggered:if(root.previewInteractionRequest && root.previewInteractionStopping) {
+      if(root.previewInteractionWorker) root.previewInteractionWorker.terminate(15)
+      interactionKillDeadline.restart()
+    }
+  }
+  Timer {
+    id:interactionKillDeadline;interval:1000
+    onTriggered:if(root.previewInteractionRequest && root.previewInteractionStopping) {
+      if(root.previewInteractionWorker) root.previewInteractionWorker.terminate(9)
+      root.quarantinePreviewInteraction("release-timeout")
+    }
+  }
+  Timer {
+    id:interactionExpiryDeadline;interval:2800
+    onTriggered:if(root.previewInteractionRequest) root.finishPreviewInteraction({state:"ended",id:root.previewInteractionRequest.id,
+      serial:root.previewInteractionRequest.serial,reason:"native-lease-expired"})
+  }
+  Loader {
+    id:interactionKeeper
+    active:false
+    sourceComponent:InteractionHost {}
+  }
+  component InteractionHost:Item {
+    id:interactionHost
+    readonly property bool running:interactionProcess.running
+    property int serial:0
+    property bool stopSent:false
+    function send() {
+      if(!root.previewInteractionStopping && interactionProcess.running && root.previewInteractionRequest && serial===root.previewInteractionRequest.serial)
+        interactionProcess.write(root.previewInteractionStamp+"\n")
+    }
+    function stop() {
+      if(interactionProcess.running && !stopSent) {stopSent=true;interactionProcess.write("null\n")}
+    }
+    function terminate(signal) {if(interactionProcess.running) interactionProcess.signal(signal)}
+    Component.onCompleted:serial=root.previewInteractionRequest ? root.previewInteractionRequest.serial : 0
+    Process {
+      id:interactionProcess
+      command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/interaction.py").toString().replace(/^file:\/\//,""))]
+      stdinEnabled:true
+      running:true
+      onStarted: {if(root.previewInteractionStopping) interactionHost.stop();else interactionHost.send()}
+      stdout:SplitParser {
+        onRead:function(line) {
+          try {root.interactionMessage(JSON.parse(line),interactionHost.serial)}
+          catch(error) {
+            root.previewInteractionError="Could not read interactive preview status"
+            root.endPreviewInteraction("invalid-status")
+          }
+        }
+      }
+      stderr:StdioCollector {}
+      onExited:function(code) {
+        if(!root.previewInteractionRequest || root.previewInteractionRequest.serial!==interactionHost.serial) return
+        if(code===0) root.finishPreviewInteraction({state:"ended",id:root.previewInteractionRequest.id,serial:interactionHost.serial,
+          reason:root.previewInteractionStopReason || "worker-exited"})
+        else {
+          if(!root.previewInteractionError) root.previewInteractionError="Interactive preview support stopped unexpectedly"
+          root.quarantinePreviewInteraction("worker-failed")
+        }
+      }
+    }
+  }
   function pump() {
-    if (worker.running || !lifecycleReady) return
+    if (worker.running || !lifecycleReady || previewInteractionStopping) return
     if (queue.length === 0) {
       if (pendingRefresh) { pendingRefresh = false; enqueue(["list"]) }
       return
@@ -293,6 +472,7 @@ Item {
   function openContext(group,name,point) {
     var m=screenMonitor(name)
     if (!m || !group) return
+    endPreviewInteraction("menu")
     resetConfirmation=false
     contextScreen=name; contextWorkspace=invocationWorkspace(name)
     contextPoint=Qt.point(point.x,point.y)
@@ -334,6 +514,13 @@ Item {
     var windows=scopeWindows(contextScreen,contextWorkspace),name=contextScreen,workspace=contextWorkspace
     closeContext(); closeDialog(); closeWindows(windows,name,workspace)
   }
+  function interactContext() {
+    var windows=contextWindows(),name=contextScreen
+    closeContext();closeDialog()
+    if(windows.length!==1) return
+    var surface=surfaces.find(function(item) {return item.screen.name===name})
+    if(surface) Qt.callLater(function() {surface.activatePreviewInteraction(windows[0].id)})
+  }
   function restoreContext(destination) {
     var windows=contextWindows(),name=contextScreen,workspace=contextWorkspace,group=contextGroup
     closeContext()
@@ -361,7 +548,7 @@ Item {
         notifyCloseError(lastError)
       }
     }
-    if (runningArgs[0]==="shortcut") pendingRefresh=true
+    if (["shortcut","interaction-exit-shortcut"].indexOf(runningArgs[0])>=0) pendingRefresh=true
     if (runningArgs[0]==="reset-settings") {
       if (resetting && !lastError) lastError="Could not confirm the settings reset"
       resetting=false; pendingRefresh=true
@@ -369,6 +556,7 @@ Item {
     Qt.callLater(pump)
   }
   function openDialog(kind, name, windows, group) {
+    endPreviewInteraction("dialog")
     resetConfirmation=false
     closeContext()
     var m = screenMonitor(name)
@@ -421,7 +609,17 @@ Item {
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
     if (resetBusy || resetConfirmation) return
+    if(previewInteractionRequest) {
+      deferredSettings=deferredSettings.concat([[key,value]])
+      endPreviewInteraction("settings")
+      return
+    }
     shortcutSyncError=""
+    if (key==="floatingPreviewExitShortcut") {
+      lastError=""
+      enqueue(["interaction-exit-shortcut",String(value)])
+      return
+    }
     if (shortcutKeys.indexOf(key)>=0) {
       lastError=""
       enqueue(["shortcut",key,String(value)])
@@ -439,6 +637,9 @@ Item {
     options.floatingPreviewSizing=["free","preset"]; options.floatingPreviewScale=options.sizePreset
     options.floatingPreviewUpdate=["still","hover","live"]; options.floatingPreviewTitles=["shown","hidden"]
     options.floatingPreviewFrame=["shown","hidden"]; options.floatingPreviewLock=["locked","unlocked"]
+    options.floatingPreviewInteraction=["off","on"]; options.floatingPreviewActivation=["explicit","click"]
+    options.floatingPreviewKeyboard=["mouse","click"]; options.floatingPreviewInteractionFps=["30","60"]
+    options.floatingPreviewControls=["hover","always"]
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
     if (numericLimits[key] !== undefined) {
       if (!/^(0|[1-9][0-9]{0,3})$/.test(String(value)) || Number(value) > numericLimits[key]) {
@@ -462,7 +663,7 @@ Item {
     refresh()
   }
   function applyDeferredSettings() {
-    if (settingsBusy || resetConfirmation || !deferredSettings.length) return
+    if (settingsBusy || previewInteractionRequest || resetConfirmation || !deferredSettings.length) return
     var edits=deferredSettings.slice(); deferredSettings=[]
     edits.forEach(function(edit) { root.setting(edit[0],edit[1]) })
   }
@@ -531,7 +732,7 @@ Item {
               root.shortcutSyncError=""
             }
             root.pendingRefresh = true
-            if (root.runningArgs[0]==="shortcut" && result.key!==undefined && result.binding!==undefined) {
+            if (["shortcut","interaction-exit-shortcut"].indexOf(root.runningArgs[0])>=0 && result.key!==undefined && result.binding!==undefined) {
               var next=Object.assign({},root.snapshot), settings=Object.assign({},root.snapshot.settings)
               settings[result.key]=result.binding; next.settings=settings; root.snapshot=next
               root.checkpointPreferences()
@@ -574,6 +775,7 @@ Item {
         shortcutSyncDelay.restart()
         root.pointerKnown=false; root.resetPointerHold()
       }
+      if (event.name==="monitorremoved") root.endPreviewInteraction("monitor-removed")
       if (root.contextOpen && (event.name==="workspace" || event.name==="workspacev2" || event.name==="monitorremoved")) root.closeContext()
       if (event.name === "changeworkspaceid") {
         var parts = String(event.data || "").split(",")
@@ -584,7 +786,7 @@ Item {
   }
   Connections {
     target: Quickshell
-    function onScreensChanged() { root.closeContext(); root.closeDialog(); root.refresh() }
+    function onScreensChanged() { root.endPreviewInteraction("screens-changed"); root.closeContext(); root.closeDialog(); root.refresh() }
   }
   Variants {
     model: Quickshell.screens
@@ -598,6 +800,8 @@ Item {
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
+        previewInteraction:{request:root.previewInteractionRequest,pendingRequest:root.previewInteractionPendingRequest,stopping:root.previewInteractionStopping,
+          status:root.previewInteractionStatus,error:root.previewInteractionError,running:!!root.previewInteractionWorker && root.previewInteractionWorker.running},
         captureVisibility:{known:root.captureState.known,checkedAt:root.captureState.checkedAt,error:root.captureState.error,
           polling:root.capturePollNeeded,allowed:root.captureAllowed,
           screens:root.snapshot.monitors.map(function(m) { return {name:m.name,allowed:root.captureAllowedFor(m.name)} })},
@@ -609,7 +813,7 @@ Item {
     }
     function settings(): void { root.openDialog("settings", root.focusedScreen(), [], null) }
     function all(): void { root.allWindows(root.focusedScreen()) }
-    function dismiss(): void { root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
+    function dismiss(): void { root.endPreviewInteraction("dismissed"); root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
     function refresh(): void { root.refresh() }
     function configure(key: string, value: string): void { root.setting(key, value) }
     function minimize(): void { root.enqueue(["minimize"]) }
@@ -617,5 +821,5 @@ Item {
     function restoreOldest(): void { root.enqueue(["restore-oldest"]) }
   }
   Component.onCompleted: refresh()
-  Component.onDestruction:root.stopping=true
+  Component.onDestruction: {root.stopping=true;root.endPreviewInteraction("service-stopped")}
 }

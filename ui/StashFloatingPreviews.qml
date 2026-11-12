@@ -27,6 +27,9 @@ Item {
   property string expandedKey:""
   property int selectedIndex:0
   property bool keyboardSelection:false
+  property string pendingInteractionId:""
+  property int interactionAttempts:0
+  readonly property bool interacting:typeof stash.endPreviewInteraction==="function" && (!!stash.previewInteractionRequest || !!stash.previewInteractionPendingRequest)
   property int regionRevision:0
   property var inputRegions:[]
   readonly property string animations:config.animations || "full"
@@ -53,21 +56,59 @@ Item {
   signal inputChanged()
   width:coordinateRoot.width;height:coordinateRoot.height
   visible:present && captureAllowed
-  Shortcut {sequence:"Escape";context:Qt.WindowShortcut;enabled:previews.expanded;onActivated:previews.closeExpansion()}
-  Shortcut {sequence:"Left";context:Qt.WindowShortcut;enabled:previews.expanded;onActivated:previews.selectTile(-1)}
-  Shortcut {sequence:"Right";context:Qt.WindowShortcut;enabled:previews.expanded;onActivated:previews.selectTile(1)}
-  Shortcut {sequence:"Up";context:Qt.WindowShortcut;enabled:previews.expanded;onActivated:previews.selectTile(-previews.expandedLayout.columns)}
-  Shortcut {sequence:"Down";context:Qt.WindowShortcut;enabled:previews.expanded;onActivated:previews.selectTile(previews.expandedLayout.columns)}
-  Shortcut {sequence:"Return";context:Qt.WindowShortcut;enabled:previews.expanded;onActivated:previews.restoreSelected()}
+  Shortcut {sequence:"Escape";context:Qt.WindowShortcut;enabled:previews.expanded && !previews.interacting;onActivated:previews.closeExpansion()}
+  Shortcut {sequence:"Left";context:Qt.WindowShortcut;enabled:previews.expanded && !previews.interacting;onActivated:previews.selectTile(-1)}
+  Shortcut {sequence:"Right";context:Qt.WindowShortcut;enabled:previews.expanded && !previews.interacting;onActivated:previews.selectTile(1)}
+  Shortcut {sequence:"Up";context:Qt.WindowShortcut;enabled:previews.expanded && !previews.interacting;onActivated:previews.selectTile(-previews.expandedLayout.columns)}
+  Shortcut {sequence:"Down";context:Qt.WindowShortcut;enabled:previews.expanded && !previews.interacting;onActivated:previews.selectTile(previews.expandedLayout.columns)}
+  Shortcut {sequence:"Return";context:Qt.WindowShortcut;enabled:previews.expanded && !previews.interacting;onActivated:previews.restoreSelected()}
 
   function cardList() {var result=[];for(var i=0;i<cards.count;i++) {var card=cards.itemAt(i);if(card) result.push(card)}return result}
   function tileList() {var result=[];for(var i=0;i<tiles.count;i++) {var tile=tiles.itemAt(i);if(tile) result.push(tile)}return result}
   function cardForKey(key) {return cardList().find(function(card) {return card.key===key}) || null}
+  function updateNativeInteractions() {cardList().concat(tileList()).forEach(function(card) {if(card.interactionBusy) card.syncNativeInteraction()})}
+  function activateInteraction(id) {
+    if(config.floatingPreviewInteraction!=="on" || !active || blocked) return false
+    var cover=cardList().find(function(card) {return !card.retiring && card.group.windows.some(function(window) {return window.id===id})})
+    if(!cover) return false
+    pendingInteractionId=id;interactionAttempts=0
+    var target=layout.cards[cover.key]
+    if(target && target.page!==layout.page) {page=target.page;scheduleLayout()}
+    if(cover.group.windows.length>1 && expandedKey!==cover.group.key) {
+      clearExpandedGeometry();expandedKey=cover.group.key;keyboardSelection=false;strip.contentY=0
+    }
+    interactionStart.restart()
+    return true
+  }
+  function startPendingInteraction() {
+    if(!pendingInteractionId || !active || blocked || config.floatingPreviewInteraction!=="on") {pendingInteractionId="";return}
+    if(++interactionAttempts>100) {
+      pendingInteractionId="";stash.previewInteractionError="The preview is not ready or cannot fit completely on this screen";return
+    }
+    var id=pendingInteractionId
+    var card=cardList().find(function(item) {return item.visible && !item.retiring && item.group.windows.length===1 && item.record && item.record.id===id})
+    if(!card) {
+      card=tileList().find(function(item) {return item.record && item.record.id===id})
+      if(card) {
+        var cell=expandedLayout.cells[id]
+        if(cell && (cell.y<strip.contentY || cell.y+cell.height>strip.contentY+strip.height)) {
+          strip.contentY=Geometry.clamp(cell.y,0,Math.max(0,strip.contentHeight-strip.height))
+          interactionStart.restart();return
+        }
+      }
+    }
+    if(card && card.beginNativeInteraction()) {pendingInteractionId="";return}
+    interactionStart.restart()
+  }
   function updateRegions() {
     var next=[]
     if(active && captureAllowed && !blocked) {
-      cardList().forEach(function(card) {if(card.visible && !card.retiring) next.push(card.inputRegion)})
-      if(expanded) tileList().forEach(function(tile) {if(tile.inViewport) next.push(tile.clippedRegion)})
+      cardList().forEach(function(card) {
+        if(card.visible && !card.retiring) {next.push(card.inputRegion);if(card.controlsOutside) next.push(card.managementRegion)}
+      })
+      if(expanded) tileList().forEach(function(tile) {
+        if(tile.inViewport) {next.push(tile.clippedRegion);if(tile.controlsOutside) next.push(tile.managementRegion)}
+      })
       if(layout.pages>1) next.push(navigationRegion)
     }
     inputRegions=next;inputChanged()
@@ -92,7 +133,7 @@ Item {
     collection.entries.forEach(function(group) {group.windows.forEach(function(record) {owned[record.id]=true})})
     Object.keys(pending).forEach(function(id) {
       if(!owned[id]) {delete pending[id];return}
-      if(cardList().some(function(card) {return card.record && card.record.id===id && (card.held || card.resizing || card.moving)})) return
+      if(cardList().some(function(card) {return card.displayRecord && card.displayRecord.id===id && (card.held || card.resizing || card.moving || card.interactionBusy)})) return
       if(!Geometry.sameAspect(next[id],pending[id])) {next[id]=pending[id];changed=true}
       delete pending[id]
     })
@@ -104,6 +145,7 @@ Item {
     var expandedOwned={},expandedNext=Object.assign({},expandedObservedSizes),expandedPending=Object.assign({},expandedPendingSizes),expandedChanged=false
     if(expanded) expandedRecords.forEach(function(record) {expandedOwned[record.id]=true})
     Object.keys(expandedPending).forEach(function(id) {
+      if(tileList().some(function(tile) {return tile.displayRecord && tile.displayRecord.id===id && tile.interactionBusy})) return
       if(expandedOwned[id] && !Geometry.sameAspect(expandedNext[id],expandedPending[id])) {expandedNext[id]=expandedPending[id];expandedChanged=true}
       delete expandedPending[id]
     })
@@ -122,7 +164,7 @@ Item {
     stash.recordPreviewPosition(monitor,card.key,point[0],point[1],point[2])
   }
   function clearExpandedGeometry() {expandedObservedSizes={};expandedPendingSizes={}}
-  function closeExpansion() {expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
+  function closeExpansion() {pendingInteractionId="";expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
   function selectTile(delta) {
     if(!expandedRecords.length) return
     selectedIndex=Geometry.clamp(selectedIndex+delta,0,expandedRecords.length-1);keyboardSelection=true
@@ -157,6 +199,7 @@ Item {
       if(!target || !target.visible || card.retiring) {world.remove(card.key);card.registered=false;return}
       if(card.held || card.resizing) return
       var body=world.body(card.key)
+      if(card.interactionBusy) {world.freeze(card.key,true);card.syncNativeInteraction();return}
       if(body && body.moving) return
       var changed=!body || Math.abs(body.width-target.width)>.05 || Math.abs(body.height-target.height)>.05
       card.width=target.width
@@ -193,6 +236,7 @@ Item {
   onCaptureAllowedChanged: {if(!captureAllowed) closeExpansion();scheduleLayout()}
   onBlockedChanged: {if(blocked) {closeExpansion();cardList().forEach(function(card) {card.cancelInteraction()})};scheduleLayout()}
   onExpandedChanged: {expansionValidation.restart();scheduleRegions();scheduleLayout()}
+  onInteractingChanged: {scheduleLayout();sourceGeometryDelay.restart();scheduleRegions()}
   onExpandedRecordsChanged: {expansionValidation.restart();sourceGeometryDelay.restart();scheduleRegions()}
   onSavedPositionsChanged: {
     var next=Object.assign({},drafts)
@@ -202,6 +246,7 @@ Item {
   }
   Connections {
     target:previews.stash
+    ignoreUnknownSignals:true
     function onPointerClicked(x,y,button) {
       if(!previews.expanded || !previews.monitor) return
       var px=x-previews.monitor.x,py=y-previews.monitor.y
@@ -210,7 +255,10 @@ Item {
       previews.closeExpansion()
     }
     function onSnapshotChanged() {previews.scheduleLayout()}
+    function onPreviewInteractionRequestChanged() {previews.scheduleLayout()}
+    function onPreviewInteractionPendingRequestChanged() {previews.scheduleLayout()}
   }
+  Timer {id:interactionStart;interval:50;onTriggered:previews.startPendingInteraction()}
   Timer {id:regionDelay;interval:0;onTriggered:previews.updateRegions()}
   Timer {id:placementDelay;interval:0;onTriggered:previews.arrange()}
   Timer {id:sourceGeometryDelay;interval:0;onTriggered:previews.applySourceGeometry()}
@@ -258,6 +306,7 @@ Item {
       stash:previews.stash;config:previews.config;group:collection.dataByKey[groupKey] || ({key:groupKey,windows:[]})
       sourceSizes:previews.observedSizes
       coordinateRoot:previews.coordinateRoot;screenName:previews.screenName
+      managementArea:previews.area
       captureAllowed:previews.captureAllowed && previews.active && !!target && target.visible
       interactive:previews.active && previews.captureAllowed && !previews.blocked && !previews.stash.groupClosing(group)
       visible:!!target && target.visible && previews.captureAllowed
@@ -303,10 +352,10 @@ Item {
     width:previews.expandedLayout.width;height:previews.expandedLayout.height
     contentWidth:width;contentHeight:previews.expandedLayout.contentHeight
     clip:true;visible:previews.expanded && previews.active && previews.captureAllowed
-    interactive:previews.expandedLayout.overflow
+    interactive:previews.expandedLayout.overflow && !previews.interacting
     flickableDirection:Flickable.VerticalFlick;boundsBehavior:Flickable.StopAtBounds
     z:40
-    onContentYChanged:previews.scheduleRegions()
+    onContentYChanged: {previews.scheduleRegions();previews.updateNativeInteractions()}
     Repeater {
       id:tiles
       model:previews.expanded ? previews.expandedRecords : []
@@ -323,11 +372,13 @@ Item {
         stash:previews.stash;config:previews.config;group:({key:"window:"+modelData.id,windows:[modelData]})
         sourceSizes:previews.expandedSourceSizes
         coordinateRoot:previews.coordinateRoot;screenName:previews.screenName
+        managementArea:previews.area
         x:cell.x;y:cell.y;width:cell.width
         captureAllowed:previews.captureAllowed && inViewport
         interactive:previews.expanded && !previews.blocked && !previews.stash.pendingCloseIds[modelData.id]
         movable:false;resizable:false;expandedTile:true
         maximumHeight:previews.area.height
+        interactionClipRect:({x:strip.x,y:strip.y,width:strip.width,height:strip.height,offset:strip.contentY})
         keyboardSelected:!!(previews.keyboardSelection && previews.expandedRecords[previews.selectedIndex] && previews.expandedRecords[previews.selectedIndex].id===modelData.id)
         onInputChanged:previews.scheduleRegions()
         onSourceAspectObserved:function(recordId,width,height) {previews.observeExpandedSource(recordId,width,height)}
