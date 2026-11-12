@@ -97,6 +97,11 @@ Item {
   function contentRect() {
     return captureView && hasContent ? captureView.contentRect() : null
   }
+  function refreshFrame() {
+    if(!eligible || mode!=="still" || !captureView) return false
+    captureView.refreshFrame()
+    return true
+  }
   onActiveChanged:begin()
   onCandidateIpcChanged: {
     if (acceptedHandle && !Capture.matches(record,candidateIpc)) unavailable()
@@ -178,6 +183,7 @@ Item {
     readonly property bool hasContent:view.hasContent
     readonly property size sourceSize:view.sourceSize
     function contentRect() {return {x:view.x,y:view.y,width:view.width,height:view.height}}
+    function refreshFrame() {if(!view.live) view.captureFrame()}
     ScreencopyView {
       id:view
       anchors.centerIn:parent

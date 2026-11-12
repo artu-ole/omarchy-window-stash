@@ -26,7 +26,9 @@ Item {
   property size sourceSize:Qt.size(640,420)
   readonly property bool eligible:active
   readonly property bool hasContent:active
+  property int refreshCount:0
   function contentRect() {return {x:2,y:3,width:width-4,height:height-6}}
+  function refreshFrame() {if(active && mode==="still") {refreshCount++;return true};return false}
   function details() {return {captureActive:active,live:active && mode==="live",hasContent:hasContent,sourceSize:sourceSize}}
 }
 ''')
@@ -142,6 +144,7 @@ ShellRoot {
           check(!previews.details().world.bodies[0].frozen,"Leaving interaction retained frozen physics")
           near(one().width/one().height,2,"Leaving interaction did not apply deferred source proportions")
           check(image(one()).mode==="still","Leaving interaction did not resume the saved capture policy")
+          check(image(one()).refreshCount===1,"Acknowledged interaction exit did not refresh the final Still frame exactly once")
           check(root.first.size.join(",")==="640,420","Interaction rewrote the original window dimensions")
           check(one().beginNativeInteraction(),"Explicit re-entry failed")
           var stop=find(window.contentItem,"floating-preview-interact"),begun=fake.begun
@@ -158,6 +161,7 @@ ShellRoot {
           fake.acknowledgeStop();fake.deferStop=false
         } else if(root.phase===5) {
           check(!fake.previewInteractionRequest && one().displayRecord.id==="second","Native acknowledgement did not release the old displayed source")
+          check(image(one()).refreshCount===1,"Ending the old source refreshed a different replacement window")
           previews.groups=[{key:"app:test",windows:[root.first,root.second]}]
         } else if(root.phase===6) {
           check(!one().beginNativeInteraction(),"A multi-window cover accepted ambiguous application input")
@@ -175,6 +179,19 @@ ShellRoot {
           previews.closeExpansion();setting("floatingPreviewInteraction","off")
         } else if(root.phase===9) {
           check(!one().interactionEnabled && !one().details().interaction.controlsVisible,"Disabled interaction left controls on ordinary previews")
+          window.width=320;window.height=240
+          previews.area={x:0,y:26,width:320,height:214}
+          setting("floatingPreviewInteraction","on");setting("floatingPreviewSizing","preset");setting("floatingPreviewScale","75")
+        } else if(root.phase===10) {
+          one().activatePrimary()
+        } else if(root.phase===11) {
+          check(previews.expanded && previews.details().groupOverflow.enabled,"Small-grid fixture did not exercise clipped rows")
+          var state=previews.details(),viewport=state.viewportRect
+          var partial=state.tiles.find(function(tile) {var r=tile.imageRect;return r.y<viewport.y-.5 || r.y+r.height>viewport.y+viewport.height+.5})
+          check(!!partial,"Small-grid fixture has no genuinely clipped thumbnail")
+          check(!partial.interaction.fullyVisible,"A newly positioned clipped row retained construction-time visibility")
+          var target=previews.tileList().find(function(tile) {return tile.record.id===partial.recordId})
+          check(!target.beginNativeInteraction(),"A newly positioned clipped row acquired native input")
           console.log("PREVIEW_INTERACTION_CARDS_QT_PASS");Qt.quit()
         }
         root.phase++

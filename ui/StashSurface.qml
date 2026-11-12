@@ -93,7 +93,8 @@ PanelWindow {
   function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
   function activatePreviewInteraction(id) {return floatingPreviews.activateInteraction(id)}
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
-  readonly property bool keyboardOpen: dialogOpen || floatingDock.open || floatingPreviewsExpanded || contextMenuOpen
+  readonly property bool previewInteractionOwnsScreen:(!!stash.previewInteractionRequest && stash.previewInteractionRequest.monitor===screen.name) || (!!stash.previewInteractionPendingRequest && stash.previewInteractionPendingRequest.monitor===screen.name)
+  readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen || (floatingPreviewsExpanded && !previewInteractionOwnsScreen)
   property bool pointerFocusHeld:false
   readonly property bool retainingPointerFocus:pointerFocusHeld && stash.pointerButtonHeld
   function beginPointerFocusHold() { if (keyboardOpen) pointerFocusHeld=true }

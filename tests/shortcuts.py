@@ -50,6 +50,7 @@ def free_chords(settings):
     foreign = foreign_bindings()
     occupied = {(b.get('modmask'), str(b.get('key', '')).upper()) for b in foreign}
     current = {settings.get(key) for key in KEYS}
+    current.add(settings.get('floatingPreviewExitShortcut'))
     result = ['SUPER + CTRL + ALT + F'+str(n) for n in range(24, 0, -1)
               if (76, 'F'+str(n)) not in occupied and 'SUPER + CTRL + ALT + F'+str(n) not in current]
     assert len(result) >= 4, 'Four unused test chords were not available'
@@ -88,7 +89,8 @@ def reveal(session, key, part='fieldRect'):
 def open_settings(session):
     shell('settings')
     wait(lambda: session.surface()['dialog']['visible'], 'Shortcut settings did not open')
-    wait(lambda: len(session.surface()['shortcutControls']) == 3, 'Shortcut controls were not created')
+    wait(lambda: {row['key'] for row in session.surface()['shortcutControls'] if row['key'] in KEYS} == set(KEYS),
+         'The three global shortcut controls were not created')
 
 
 def edit(session, key, value, enter=False):
@@ -177,7 +179,7 @@ def main():
         edit(session, KEYS[2], oldest, enter=True)
         saved(session, KEYS[2], oldest)
         session.click(reveal(session, KEYS[2], 'defaultRect'))
-        saved(session, KEYS[2], '')
+        saved(session, KEYS[2], DEFAULT_SHORTCUTS[KEYS[2]])
         assert not any(b.get('enabled') and b.get('description') == OLDEST_DESCRIPTION for b in owned())
         edit(session, KEYS[2], oldest)
         saved(session, KEYS[2], oldest)

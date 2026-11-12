@@ -33,6 +33,8 @@ Item {
   property var interactionClipRect:null
   property string claimedInteractionKey:""
   property var leasedRecord:null
+  property bool hadNativeInteraction:false
+  property int interactionGeometryRevision:0
   property var managementArea:({x:0,y:0,width:coordinateRoot.width,height:coordinateRoot.height})
   readonly property var record:group && group.windows.length ? group.windows[0] : null
   readonly property var displayRecord:interactionBusy && leasedRecord ? leasedRecord : record
@@ -54,11 +56,7 @@ Item {
   readonly property bool interactionBusy:interactionOwned || interactionQueued
   readonly property bool interactionRequested:interactionOwned && !!displayRecord && stash.previewInteractionRequest.id===displayRecord.id
   readonly property bool interactionActive:interactionRequested && stash.previewInteractionStatus.state==="active"
-  readonly property bool interactionFullyVisible: {
-    if(!interactionClipRect) return true
-    var image=rectOf(thumbnail),clip=interactionClipRect
-    return image.x>=clip.x-.5 && image.y>=clip.y-.5 && image.x+image.width<=clip.x+clip.width+.5 && image.y+image.height<=clip.y+clip.height+.5
-  }
+  readonly property bool interactionFullyVisible:visibleForInteraction(interactionGeometryRevision)
   readonly property bool nativeHovered:interactionRequested && stash.pointerKnown && Geometry.contains(nativeImageRect(),stash.pointerPosition.x,stash.pointerPosition.y)
   readonly property bool hovered:hover.hovered || pointer.containsMouse || nativeHovered
   readonly property bool live:interactionBusy || (config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
@@ -86,11 +84,13 @@ Item {
   opacity:presence*feedback.visualOpacity
   scale:Motion.full(animations) ? .97+.03*presence : 1
   z:held || resizing ? 20 : hovered ? 10 : 0
-  onXChanged: {inputChanged();interactionGeometry.restart()}
-  onYChanged: {inputChanged();interactionGeometry.restart()}
-  onWidthChanged: {inputChanged();interactionGeometry.restart()}
-  onHeightChanged: {inputChanged();interactionGeometry.restart()}
-  onPresenceChanged: {inputChanged();interactionGeometry.restart()}
+  onXChanged:invalidateInteractionGeometry()
+  onYChanged:invalidateInteractionGeometry()
+  onWidthChanged:invalidateInteractionGeometry()
+  onHeightChanged:invalidateInteractionGeometry()
+  onPresenceChanged:invalidateInteractionGeometry()
+  onScaleChanged:invalidateInteractionGeometry()
+  onParentChanged:invalidateInteractionGeometry()
   onHeldChanged:if(!held) geometryReleased()
   onResizingChanged:if(!resizing) geometryReleased()
   onMovingChanged:if(!moving) geometryReleased()
@@ -102,11 +102,19 @@ Item {
   onGroupChanged:if(interactionEnabled && claimedInteractionKey && (!group || group.windows.length!==1)) endNativeInteraction("preview-group-changed")
   onKeyChanged:if(claimedInteractionKey && claimedInteractionKey!==key) endNativeInteraction("preview-replaced")
   onInteractionRequestedChanged: {geometryReleased();interactionGeometry.restart()}
+  onInteractionActiveChanged:if(interactionActive) hadNativeInteraction=true
   onInteractionBusyChanged: {
-    if(!interactionBusy) {leasedRecord=null;claimedInteractionKey="";presence=retiring ? 0 : 1}
+    if(!interactionBusy) {
+      var releasedId=leasedRecord ? leasedRecord.id : "",refresh=hadNativeInteraction
+      leasedRecord=null;claimedInteractionKey="";hadNativeInteraction=false;presence=retiring ? 0 : 1
+      if(refresh && releasedId) Qt.callLater(function() {
+        if(card && thumbnail && !card.interactionBusy && card.visible && card.captureAllowed && card.record && card.record.id===releasedId
+            && typeof thumbnail.refreshFrame==="function") thumbnail.refreshFrame()
+      })
+    }
     geometryReleased();interactionGeometry.restart()
   }
-  onInteractionClipRectChanged:interactionGeometry.restart()
+  onInteractionClipRectChanged:invalidateInteractionGeometry()
   onCanMoveChanged:if (!canMove) cancelInteraction()
   onCanResizeChanged:if (!canResize && resizing) cancelInteraction()
   Behavior on presence { NumberAnimation { duration:card.retiring ? Motion.exit(card.animations,card.animationSpeed) : Motion.enter(card.animations,card.animationSpeed);easing.type:Easing.OutCubic } }
@@ -117,6 +125,17 @@ Item {
     resizing=false
   }
   function rectOf(item) {var p=item.mapToItem(coordinateRoot,0,0);return {x:p.x,y:p.y,width:item.width,height:item.height}}
+  function invalidateInteractionGeometry() {
+    interactionGeometryRevision++
+    inputChanged()
+    if(interactionGeometry) interactionGeometry.restart()
+  }
+  function visibleForInteraction(revision) {
+    if(!Number.isFinite(revision)) return false
+    if(!interactionClipRect) return true
+    var image=rectOf(thumbnail),clip=interactionClipRect
+    return image.x>=clip.x-.5 && image.y>=clip.y-.5 && image.x+image.width<=clip.x+clip.width+.5 && image.y+image.height<=clip.y+clip.height+.5
+  }
   function visualRectOf(item,rect) {
     rect=rect || {x:0,y:0,width:item.width,height:item.height}
     var first=item.mapToItem(coordinateRoot,rect.x,rect.y),last=item.mapToItem(coordinateRoot,rect.x+rect.width,rect.y+rect.height)
@@ -142,7 +161,7 @@ Item {
     return excluded
   }
   function beginNativeInteraction() {
-    if(interactionBusy || !interactionEnabled || !record || group.windows.length!==1 || !interactive || !interactionFullyVisible || !thumbnail.hasContent || !thumbnail.eligible) return false
+    if(interactionBusy || !interactionEnabled || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
     claimedInteractionKey=key
     leasedRecord=record
     var accepted=stash.beginPreviewInteraction(record,screenName,key,nativeImageRect(),nativeExcludeRects())
@@ -151,7 +170,7 @@ Item {
   }
   function syncNativeInteraction() {
     if(!interactionBusy || !displayRecord) return
-    if(!visible || !captureAllowed || !interactionFullyVisible || !thumbnail.hasContent || !thumbnail.eligible) {endNativeInteraction("capture-unavailable");return}
+    if(!visible || !captureAllowed || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) {endNativeInteraction("capture-unavailable");return}
     stash.updatePreviewInteraction(displayRecord.id,screenName,claimedInteractionKey || key,nativeImageRect(),nativeExcludeRects())
   }
   function endNativeInteraction(reason) {
@@ -405,6 +424,6 @@ Item {
       }
     }
   }
-  Component.onCompleted:presence=retiring ? 0 : 1
+  Component.onCompleted: {presence=retiring ? 0 : 1;invalidateInteractionGeometry()}
   Component.onDestruction: {cancelInteraction();endNativeInteraction("card-destroyed")}
 }
