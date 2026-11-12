@@ -11,7 +11,7 @@ windows retain size and position; scrolling layouts retain window width.
 | Static dock | Four edges, bar clearance and overflow scrolling. Unlock to drag along the edge; lock to retain placement. |
 | Floating icons | Individual draggable icons, initially at the middle right. Edge gravity or free placement. |
 | Floating dock | Draggable stack. One window restores directly; multiple windows unfold into a row or column. |
-| Floating previews | Persistent window miniatures. Resize directly or use presets; app groups expand into individual thumbnails. |
+| Floating previews | Resizable window miniatures; app groups expand into individual thumbnails. Optional pointer and keyboard interaction. |
 
 All modes follow Omarchy's theme. Visibility is global across monitors or filtered
 by original workspace; icons and previews represent individual windows or application groups.
@@ -60,8 +60,11 @@ overrides are preserved.
 | Super+Alt+Z | Restore oldest eligible window: first in, first out. |
 | Click icon | Restore; multi-window app groups open a searchable chooser. Floating stacks unfold first. |
 | Click preview | Restore; app covers expand into individual window thumbnails. |
+| Preview Interact control | Enter interaction; optional first-click activation consumes the activating click. |
+| Interactive preview content | Application clicks, scrolling, selection and dragging; typing when click-to-focus keyboard input is enabled. |
+| Ctrl+Alt+Escape / Stop | Leave preview interaction. The shortcut is configurable; plain Escape reaches the application. |
 | Right-click icon/stack | Pointer-positioned window/app menu, Settings, recovery and Close all. |
-| Middle-click icon/thumbnail | Close represented stashed window(s). Unstashed instances are unaffected. |
+| Middle-click icon/view-only thumbnail | Close represented stashed window(s). Unstashed instances are unaffected. |
 | Thumbnail title × | Close the represented stashed window(s); requires a title strip. |
 | Drag | Move floating items or an unlocked static dock. Resize a floating preview from a corner. Scroll overflowing lists. |
 | Arrow keys / Enter | Navigate and select in choosers, unfolded docks or preview groups. |
@@ -118,7 +121,8 @@ omarchy-shell window-stash configure sizePreset 150
 | `dockCornerRadius` | `12` | 0–64 px in custom mode; clamped without cutting icons |
 
 Default backgrounds are hidden; artwork remains opaque. Hover tints icons and
-restores full opacity. Zero-opacity elements retain their input regions.
+restores full opacity. Active interactive previews remain opaque. Zero-opacity
+elements retain their input regions.
 
 ### Motion
 
@@ -156,8 +160,42 @@ Stashing another window or starting live updates does not reshape existing sourc
 | `floatingPreviewLock` | `unlocked` | `unlocked`, `locked`; retain placement and dimensions |
 
 Click restores; dragging moves; middle-click closes; right-click opens the window
-menu. Grouped cards expand into a bounded grid for exact-window selection. These
-are visual previews, without input forwarding into the application.
+menu. Grouped cards expand into a bounded grid for exact-window selection.
+
+Optional interaction is configured under **Preview interaction**:
+
+| Key | Default | Values / meaning |
+|---|---|---|
+| `floatingPreviewInteraction` | `off` | `off`, `on`; floating previews only |
+| `floatingPreviewActivation` | `explicit` | `explicit`: Interact control/context action; `click`: first click enters interaction without forwarding that click |
+| `floatingPreviewKeyboard` | `mouse` | `mouse`: pointer only; `click`: content click also acquires keyboard focus; hover never does |
+| `floatingPreviewInteractionFps` | `"60"` | `"30"`, `"60"`; active preview rendering limit |
+| `floatingPreviewControls` | `hover` | `hover`, `always`; controls stay visible during interaction |
+| `floatingPreviewExitShortcut` | `CTRL + ALT + Escape` | Session-only exit chord; empty disables it. Occupied desktop shortcuts are rejected. |
+
+Interact makes one window receive normal left/right/middle clicks, wheel input and
+content dragging. App groups require choosing an individual window. Keyboard mode
+supports typing, selection, native copy/paste and application shortcuts. In-bounds
+application popups are rendered and receive input at the miniature's scale.
+
+An active miniature has a themed outline and Stop/Restore/Manage controls. The
+toolbar sits outside the image when space permits; its inline fallback excludes
+those buttons from application input. Stop waits for native input release before
+moving or resizing becomes available. Movement/physics pauses during interaction;
+the source geometry remains unchanged. Outside clicks stop interaction and reach
+their destination once; moving the pointer away alone keeps it active.
+
+Interaction loads native support automatically and uses live capture independently
+of the ordinary snapshot/hover and Standard/Enhanced preferences. Its setup
+requirements are the same as Enhanced previews below. Pointer-locked applications,
+cross-window drag-and-drop and input-method popup positioning require the restored
+window. Interaction respects `no_screen_share`; keyboard input also respects
+`no_focus` window rules.
+
+Modal dialogs, fullscreen requests and out-of-bounds popups restore the full window
+using the configured destination. New dialogs follow their parent; pre-existing
+windows remain in place. Application activation and window-management requests also
+leave miniature interaction. See [VALIDATION.md](VALIDATION.md) for acceptance checks.
 
 Hover previews for the other three display modes:
 
@@ -187,8 +225,10 @@ preview setting. Hidden cards release capture resources. Capture pauses while th
 session is locked or its display sleeps; live cards resume when available.
 
 Enhanced keeps only verified windows with visible live thumbnails drawing at up to
-15 FPS. Hiding previews releases rendering leases; no global rendering rules or app
-profiles change. Application-level throttling can still limit updates.
+15 FPS; the active interactive source has its separate 30/60 FPS limit. Hiding
+previews releases rendering leases; no global rendering rules or app profiles
+change. Application-level throttling can still limit updates. Updating an already
+loaded native bridge requires restarting Hyprland.
 See [native/README.md](native/README.md) for the bridge implementation and build API.
 
 ### Shortcuts
@@ -201,6 +241,8 @@ See [native/README.md](native/README.md) for the bridge implementation and build
 
 Empty strings disable an action. Restore actions follow visibility scope and the
 configured destination. Per-field reset and Reset all use the same defaults.
+The interactive exit chord above is active only during interaction and does not
+register another global binding.
 
 ## API and implementation
 
@@ -217,7 +259,8 @@ python3 "$controller" --help
 
 Commands: `minimize [--address ADDRESS]`, `restore ID`, `restore-last`,
 `restore-oldest`, `restore-all`, `close ID [ID ...]`, `close-all`, `activate ADDRESS`,
-`shortcut KEY BINDING`, `shortcuts-sync`, `reset-settings --confirm`, `list`, `status`.
+`shortcut KEY BINDING`, `shortcuts-sync`, `interaction-exit-shortcut BINDING`,
+`reset-settings --confirm`, `list`, `status`.
 Restore/activate accept `--to current|original`; restore/activate/close accept
 `--monitor OUTPUT --workspace ID`. `restore-all` ignores visibility scope.
 Internal helpers: `position MONITOR KEY X Y`, `preview-position MONITOR KEY X Y WIDTH`,
@@ -228,6 +271,9 @@ Internal helpers: `position MONITOR KEY X Y`, `preview-position MONITOR KEY X Y 
 guardian; preloaded cleanup survives checkout removal. Only owned/tagged windows
 on `special:window-stash` are managed. Shell restarts retain records; logout or a
 compositor restart does not restore application sessions.
+`controller/interaction.py` owns one native input lease through its stdin lifetime;
+continuous input is routed inside Hyprland. See [native/README.md](native/README.md)
+for the lease protocol and focus/cleanup invariants.
 
 | Local data | Location |
 |---|---|

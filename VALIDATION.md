@@ -1,5 +1,68 @@
 # Validation
 
+## v1.29.0 — interactive floating previews — 12 November 2026
+
+Adds optional native pointer and keyboard input to one selected floating preview.
+Interaction is off by default; explicit Interact preserves click-to-restore.
+Keyboard focus requires a content click, and the configurable exit chord defaults
+to Ctrl+Alt+Escape. Plain Escape remains available to the application. Active
+capture uses its own 30/60 FPS setting without changing ordinary preview policies.
+
+The complete non-graphical check passes **274 Python tests**, **14 Node suites**,
+**ten offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **96 Python files**. Native bridge **1.29.1** builds without warnings
+against the running compositor's matching headers. All **42 settings** are documented.
+
+Native acceptance in the disposable Hyprland/Omarchy desktop passes:
+
+- Scaled left/right/middle clicks, actual wheel input, implicit content drags
+  beyond the miniature, consumed first-click activation and explicit controls.
+  Outside clicks reach their destination once; ended owners cannot rearm.
+- Actual entry typing, UTF-8, selection, native copy/paste, application Escape,
+  default/custom exit chords and matching held-key releases. Unqualified WM close
+  targets the hidden source and leaves the visible control application intact.
+- Exact grouped-window selection and replacement, chooser keyboard ownership,
+  bounded controls on 320×240, clipped-target cancellation and context activation
+  that scrolls the selected row fully into view before acquiring input.
+- Real hidden GTK popup pixels and item clicks, all four focus-follow modes,
+  application Escape and stopping an open grab. Mouse-only popups retain visible
+  keyboard focus and cannot silently enable application typing.
+- Modal dialogs at current/original destinations, fullscreen, oversized popups,
+  switcher-style focus, actual client activation and application move requests.
+  Exact new descendants follow their parent; pre-existing public children and
+  unrelated stashes remain untouched. Independent new windows are not adopted.
+  The compositor event stream records no private-workspace exposure in these flows.
+- Three outputs including scale 1.5, rotation and negative coordinates; viewport
+  renewal, display sleep/removal, actual session lock/unlock, source restoration,
+  invalid requests, helper cancellation and lease expiry.
+- Dormant and newly requested pointer lock/confinement are rejected before
+  activation or cursor warping; unrelated constraints retain normal operation.
+- Actual Ghostty, Chromium and Brave receive synthetic text and application
+  input, show changed pixels in the miniature, and restore with their saved size.
+- Existing persistent and hover previews, side-by-side groups, small-output
+  overflow, scrolling-width restoration and Omarchy 4.5 dock/workspace coexistence.
+  Ghostty/btop produces one distinct Standard frame versus nine Enhanced frames;
+  leaving preview mode releases rendering owners and returns to idle.
+
+All 42 settings and the local exit field remain reachable on scaled 640×480 and
+400×300 work areas with reserved edges. Native tests cover local exit Apply,
+Default and Disable without changing the three global actions. Settings support
+wheel, drag, scrollbar and Tab navigation, bounded dropdowns and reset cancellation.
+Confirmed Reset all restores all 42 canonical defaults while preserving windows,
+positions and geometry. Native shortcut edits, FIFO/LIFO actions and the complete
+CLI add/update/disable/source-deleted-remove/reinstall lifecycle also pass.
+
+The sweep also caught an existing parking issue: an unnecessary resize woke the
+newest hidden window. Correctly sized sources now skip that dispatcher; required
+cross-monitor size correction remains. The rendering-lease test observes exact
+Wayland suspension states, independent owner unions, scoped release and expiry.
+Its owned active-unload/reload branch passes and restores natural suspension.
+
+Pointer-locked applications, cross-window drag-and-drop and input-method popup
+positioning require restoring the full application. Compatibility beyond the
+verified clients is not inferred. Tests use a private home, runtime, D-Bus,
+compositor, browser profiles and synthetic input; the real desktop is unchanged.
+
 ## v1.28.1 — stable stashed dimensions — 12 November 2026
 
 Owned windows park floating at their saved source dimensions inside the private

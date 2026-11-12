@@ -1,78 +1,100 @@
 # Interactive floating previews
 
-Development plan for the optional interaction layer. Ordinary previews remain
-available without the native input bridge. The default entry point is an explicit
-Interact control/context action; first-click activation is optional and consumes
-the activating click.
+Optional input routing for floating preview cards. Interaction is disabled by
+default. Explicit Interact preserves ordinary click-to-restore; optional first-click
+activation consumes its activating click. App groups require selecting one window.
+See [README.md](../README.md) for settings and [VALIDATION.md](../VALIDATION.md) for
+acceptance evidence; this document describes the implementation contract.
 
-## Milestones
+## Components
 
-1. Prove surface-local pointer routing in a disposable compositor. Add bounded
-   ownership-checked leases, input cleanup and a controller helper; validate
-   scaled clicks, scrolling, drags, outside clicks and expiry before UI activation.
-2. Integrate floating cards, app-group selection, themed active controls, settings,
-   live capture, move/resize suspension and display/lifecycle cleanup.
-3. Expand native input where verified: keyboard focus and modifiers, native cursors,
-   popups/subsurfaces, and safe handling of dialogs. Test window-management shortcuts
-   against an unrelated visible application before enabling keyboard interaction.
-4. Complete compatibility, failure, small-screen, scaling and lifecycle checks;
-   document the supported behavior and remaining limitations.
+QML publishes one selected record ID, an activation serial, the monitor, the full
+image rectangle and up to 16 control-exclusion rectangles. Coordinates are global
+compositor logical units, including negative output positions. The controller
+requires the image and exclusions to fit the target output; a partially clipped
+group member must scroll into view before activation.
 
-Each milestone is committed independently after its acceptance checks. Features
-that cannot meet their focus or cleanup invariants stay unavailable with a clear
-reason rather than being advertised as supported.
+`controller/interaction.py` validates the bounded JSON-lines request against the
+locked ledger, fresh clients, monitor state and workspace scope. It pins the exact
+source identity and creates a fresh owner for each activation. The helper's stdin
+lifetime owns the lease; it renews every 500 ms and releases on EOF, cancellation
+or failure. Configuration, pixels and application events do not pass through a
+per-event helper process.
 
-Completed foundation: the isolated GTK proof verifies scaled left/right/middle
-clicks, wheel scrolling, implicit drags outside the miniature, unchanged source and
-workspace, outside-click delivery without duplicate activation, terminal renewals
-and lease expiry. Native code builds without warnings against the running headers;
-253 Python tests pass, including 17 interaction-worker regressions. Axis focus
-changes are framed before scroll events so GTK receives complete scroll sequences.
+The native API owns one input session and expires it after 2.5 seconds without a
+renewal. Address, PID, stable ID, ownership tag, mapped state and private workspace
+membership are checked inside the compositor. Input and rendering leases are
+separate: interaction automatically acquires live rendering at the chosen 30/60 FPS
+without changing Standard/Enhanced or Still/Hover/Live preferences. Other enhanced
+live sources retain their 15 FPS budget.
 
-Completed keyboard proof: explicit content clicks acquire focus; entry typing,
-selection, native copy/paste and ordinary Escape work while the source stays hidden.
-Held keys are released once on exit, outside clicks restore visible keyboard focus,
-and an unqualified window-manager close action targets the hidden source without
-closing the visible control application. The configurable Ctrl+Alt+Escape exit
-works in mouse and keyboard sessions without leaking its press or release. Local
-exit preferences survive checkpoints and reset; no global binding is registered.
-261 Python tests pass, including 25 interaction-worker regressions.
+## Input and controls
 
-Completed UI acceptance: explicit and consumed first-click activation, application
-mouse buttons and scrolling, unchanged Still/Standard preferences, managed movement,
-outside-click delivery, exact restore, context activation and dismissal all pass in
-the production shell. Controls sit outside the active image when space permits.
-Stop retains the source and blocks management until native release is acknowledged;
-replacement owners wait for that handoff. Delayed-ack and failure-quarantine Qt
-regressions cover those transitions alongside card identity and geometry tests.
+The native bridge maps the full image rectangle to source-local coordinates,
+resolves subsurfaces/popups, and routes pointer movement, buttons and axes through
+the seat. Exclusions change hit testing without changing the image transform.
+Implicit grabs preserve drags beyond the card; the physical cursor stays at the
+miniature and follows application cursor requests.
 
-## Architecture
+Mouse-only is the default. Optional keyboard mode acquires focus on a content click,
+never on hover or activation. Typing, selection, native clipboard operations and
+application shortcuts use the normal keyboard pipeline. Focused-window commands
+target the same hidden source. Plain Escape reaches the application; the configurable
+Ctrl+Alt+Escape default ends only an active session and registers no global binding.
+The controller rejects occupied chords, including bindings in other submaps.
 
-QML owns the miniature and its controls. It publishes the exact image rectangle in
-global compositor logical coordinates, a verified stash record ID, the monitor and
-rectangles occupied by overlay controls. `controller/interaction.py` validates the
-request against the current ledger and compositor, owns the native session through
-stdin lifetime and renews it periodically. Continuous input stays in Hyprland.
+An active card is opaque, retains a themed outline and exposes Stop/Restore/Manage.
+Controls sit outside the image when space permits; inline controls are excluded
+from source input. Movement, resizing and physics wait for native release
+acknowledgement. A replacement activation also waits for release. If the helper
+cannot acknowledge cleanup, management stays blocked until the lease expires.
 
-The native bridge owns one active interaction session. It maps the full image into
-the source surface's logical coordinates, resolves the appropriate surface and
-routes input without warping the desktop cursor. Overlay exclusions affect hit
-testing, never the content transform. A session ending from an outside click must
-not restart on the next automatic renewal.
+Outside clicks end routing and continue to their normal destination once; pointer
+leave alone does not stop interaction. Interruption releases held buttons/keys and
+consumes stale corresponding physical releases. Native ended-owner tokens prevent
+automatic renewals from reactivating a session; explicit activation uses a new owner.
 
-## Invariants
+## Restoration fallback
 
-- Only the exact mapped, tagged window in the private stash can receive input.
-  Address, process and stable identity are verified again inside the compositor.
-- Interaction never changes the source geometry, original restoration metadata or
-  the active workspace. Moving/resizing the miniature ends or suspends forwarding.
-- One session owns keyboard input at a time. Hover never acquires keyboard focus.
-  Desktop window actions must not target an unrelated visible application.
-- The application receives complete press/release sequences. Interruption releases
-  held input and consumes corresponding stale physical releases safely.
-- Outside clicks end forwarding and reach their normal destination exactly once.
-  The application's Escape remains available; an explicit Exit control always exists.
-- Restore, close, lock, display sleep/removal, hidden capture, failed identity,
-  helper exit, lease expiry and plugin unload release routing and native resources.
-- Native setup errors do not replace user preferences or break ordinary previews.
-  Runtime data, application contents and local test artifacts are never committed.
+The implementation requests restoration for modal dialogs, fullscreen, overflowing
+popups, explicit application activation and application move/resize requests.
+Native acceptance covers dialogs at both destinations, fullscreen, oversized
+popups and independent new windows without exposing unrelated stashes.
+
+Only an ended status with `restoreRequested=true` and an allowlisted reason may
+start fallback. The helper revalidates its original owner/source and fresh scope
+under the ledger lock, then uses normal `Stash.restore` and the configured
+destination. A fullscreen request is temporarily cleared for geometry restoration
+and reapplied afterward; partial failures retain the request and original snapshot
+for retry.
+
+After successful restoration, `interaction_handoff(owner)` validates the now-visible
+public parent and exact new transient descendants. Native weak identities and the
+initial mapped-window snapshot exclude pre-existing or independently owned windows,
+including unrelated same-app windows. A new descendant provisionally mapped on the
+invoking workspace may follow its parent to the chosen destination. A new unparented
+window is handled separately by native code and never becomes a stash record.
+
+Failed restoration retains the normal retryable ledger. A later handoff failure
+can leave a dialog on its current workspace after its parent has restored; it does
+not reacquire input or adopt another window. Pending private-focus/warp suppression
+expires after five seconds independently of the bounded ended-owner history.
+
+## Boundaries
+
+Routing ends on restore/close, source identity or ownership loss, workspace/display
+changes, DPMS, screen lock, exclusive overlays, pointer constraints, hidden capture,
+helper exit, expiry or unload. `no_screen_share` sources are rejected; keyboard
+interaction also respects `no_focus`. Enabling either rule mid-session ends the
+affected routing. Ordinary previews remain available when native setup fails.
+
+Interaction preserves source geometry and original restoration metadata. A fallback
+deliberately restores the full window when its requested UI needs that environment.
+Pointer-locked applications, cross-window drag-and-drop and input-method popup
+positioning require the restored application; broader compatibility is not inferred
+from the GTK, browser or terminal fixtures.
+
+Tests use disposable compositor sessions and unrelated visible control windows.
+Desktop suites enforce the shared five-second notification/countdown and cleanup
+contract. Runtime identities, application contents and local artifacts stay outside
+the source tree.
