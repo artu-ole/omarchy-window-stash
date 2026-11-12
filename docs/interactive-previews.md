@@ -22,6 +22,13 @@ Each milestone is committed independently after its acceptance checks. Features
 that cannot meet their focus or cleanup invariants stay unavailable with a clear
 reason rather than being advertised as supported.
 
+Completed foundation: the isolated GTK proof verifies scaled left/right/middle
+clicks, wheel scrolling, implicit drags outside the miniature, unchanged source and
+workspace, outside-click delivery without duplicate activation, terminal renewals
+and lease expiry. Native code builds without warnings against the running headers;
+253 Python tests pass, including 17 interaction-worker regressions. Axis focus
+changes are framed before scroll events so GTK receives complete scroll sequences.
+
 ## Architecture
 
 QML owns the miniature and its controls. It publishes the exact image rectangle in

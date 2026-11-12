@@ -27,7 +27,9 @@ PREFIX = "window-stash-"
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
                 floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
-                floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked")
+                floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked",
+                floatingPreviewInteraction="off", floatingPreviewActivation="explicit", floatingPreviewKeyboard="mouse",
+                floatingPreviewInteractionFps="60", floatingPreviewControls="hover")
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
@@ -43,7 +45,10 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=(
                floatingPreviewSizing=("free", "preset"),
                floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
                floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
-               floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"))
+               floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),
+               floatingPreviewInteraction=("off", "on"), floatingPreviewActivation=("explicit", "click"),
+               floatingPreviewKeyboard=("mouse", "click"), floatingPreviewInteractionFps=("30", "60"),
+               floatingPreviewControls=("hover", "always"))
 
 
 def lua(value):

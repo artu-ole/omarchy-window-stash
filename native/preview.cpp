@@ -5,17 +5,30 @@
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
+#include <hyprland/src/desktop/view/Popup.hpp>
+#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/SessionLockManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/protocols/XDGShell.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
 
 extern "C" {
 #include <lua.h>
 }
 
 #include <charconv>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <deque>
 #include <limits>
+#include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -47,6 +60,31 @@ struct Lease {
     Clock::time_point expires;
     std::vector<Identity> windows;
 };
+struct Interaction {
+    std::string owner;
+    Identity identity;
+    CBox rect;
+    std::vector<CBox> excludeRects;
+    PHLMONITORREF monitor;
+    Clock::time_point expires;
+    int fps = 60;
+    WP<CWLSurfaceResource> grab;
+    Vector2D grabOffset;
+    Vector2D lastLocal;
+    std::set<uint32_t> buttons;
+    uint64_t motionEvents = 0;
+    uint64_t buttonEvents = 0;
+    uint64_t axisEvents = 0;
+    Vector2D lastGlobal;
+    double lastAxisDelta = 0;
+    int32_t lastAxisDiscrete = 0;
+    int lastAxisSource = 0;
+};
+struct EndedInteraction {
+    std::string owner;
+    std::string id;
+    std::string reason;
+};
 
 HANDLE handle = nullptr;
 CFunctionHook* suspendHook = nullptr;
@@ -55,6 +93,15 @@ std::unordered_map<std::string, Lease> owners;
 std::unordered_map<CWindow*, Identity> active;
 uint64_t frames = 0;
 uint64_t preventedSuspends = 0;
+auto frameInterval = FRAME_TIME;
+std::optional<Interaction> interaction;
+std::deque<EndedInteraction> endedInteractions;
+std::set<uint32_t> releasedButtons;
+CHyprSignalListener mouseMoveListener, mouseButtonListener, mouseAxisListener, lockListener, monitorListener, workspaceListener;
+
+bool validateInteraction();
+void endInteraction(const std::string& reason, bool refocus = true);
+void interactionDetails(lua_State* state, const std::string& owner = "");
 
 bool hexadecimal(const std::string& text, size_t length) {
     return text.size() == length && text.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
@@ -105,6 +152,212 @@ bool leased(CWindow* window) {
     return it != active.end() && it->second.window.lock().get() == window && sameWindow(it->second, window, true);
 }
 
+uint32_t eventTime() {
+    return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+}
+
+void rememberEnd(const std::string& owner, const std::string& id, const std::string& reason) {
+    std::erase_if(endedInteractions, [&](const auto& ended) { return ended.owner == owner; });
+    endedInteractions.push_back({owner, id, reason});
+    while (endedInteractions.size() > 64)
+        endedInteractions.pop_front();
+}
+
+void endInteraction(const std::string& reason, bool refocus) {
+    if (!interaction)
+        return;
+    auto previous = std::move(*interaction);
+    interaction.reset();
+    rememberEnd(previous.owner, previous.identity.id, reason);
+    if (g_pSeatManager) {
+        const auto grabbed = previous.grab.lock();
+        if (grabbed && !previous.buttons.empty()) {
+            // Release to the exact grab surface, never to a replacement client.
+            g_pSeatManager->setPointerFocus(grabbed, previous.lastLocal);
+            for (const auto button : previous.buttons)
+                g_pSeatManager->sendPointerButton(eventTime(), button, WL_POINTER_BUTTON_STATE_RELEASED);
+            g_pSeatManager->sendPointerFrame();
+        }
+    }
+    releasedButtons.insert(previous.buttons.begin(), previous.buttons.end());
+    if (refocus && g_pInputManager && g_pSessionLockManager && !g_pSessionLockManager->isSessionLocked())
+        g_pInputManager->refocus();
+}
+
+bool validateInteraction() {
+    if (!interaction)
+        return false;
+    auto& current = *interaction;
+    const auto window = current.identity.window.lock();
+    const auto monitor = current.monitor.lock();
+    const char* reason = nullptr;
+    if (current.expires <= Clock::now())
+        reason = "expired";
+    else if (!window || !sameWindow(current.identity, window.get(), true))
+        reason = "window-unavailable";
+    else if (!window->wlSurface() || !window->wlSurface()->resource() || !window->wlSurface()->resource()->m_mapped)
+        reason = "surface-unavailable";
+    else if (g_pSessionLockManager->isSessionLocked())
+        reason = "locked";
+    else if (!monitor || !State::monitorState()->contains(monitor) || !monitor->m_dpmsStatus)
+        reason = "display-unavailable";
+    else if (g_pInputManager->isConstrained())
+        reason = "pointer-constrained";
+    if (reason) {
+        endInteraction(reason);
+        return false;
+    }
+    return true;
+}
+
+bool contentHit(const Vector2D& global) {
+    if (!interaction || !interaction->rect.containsPoint(global))
+        return false;
+    for (const auto& excluded : interaction->excludeRects)
+        if (excluded.containsPoint(global))
+            return false;
+    return true;
+}
+
+struct InputPoint {
+    SP<CWLSurfaceResource> surface;
+    Vector2D local;
+    Vector2D root;
+};
+
+InputPoint inputPoint(const Vector2D& global) {
+    if (!interaction)
+        return {};
+    const auto window = interaction->identity.window.lock();
+    if (!window || !window->wlSurface() || !window->wlSurface()->resource())
+        return {};
+    const auto root = window->wlSurface()->resource();
+    const auto size = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    if (size.x <= 0 || size.y <= 0)
+        return {};
+    Vector2D point = {(global.x - interaction->rect.x) * size.x / interaction->rect.w,
+                      (global.y - interaction->rect.y) * size.y / interaction->rect.h};
+    Vector2D rootPoint = point;
+    if (window->m_xdgSurface)
+        rootPoint += window->m_xdgSurface->m_current.geometry.pos();
+    // The implicit grab keeps its exact surface until every button is released,
+    // including when a text selection or slider leaves the miniature's bounds.
+    if (!interaction->buttons.empty()) {
+        const auto grabbed = interaction->grab.lock();
+        return {grabbed, rootPoint - interaction->grabOffset, rootPoint};
+    }
+    if (window->m_popupHead) {
+        const auto sourceGlobal = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + point;
+        if (const auto popup = window->m_popupHead->at(sourceGlobal, true)) {
+            if (const auto surface = popup->resource()) {
+                const auto found = surface->at(sourceGlobal - popup->coordsGlobal(), true);
+                if (found.first)
+                    return {found.first, found.second, rootPoint};
+            }
+        }
+    }
+    const auto found = root->at(rootPoint, true);
+    return {found.first, found.second, rootPoint};
+}
+
+bool focusPoint(const Vector2D& global, uint32_t time) {
+    const auto point = inputPoint(global);
+    if (!point.surface)
+        return false;
+    g_pSeatManager->setPointerFocus(point.surface, point.local);
+    g_pSeatManager->sendPointerMotion(time, point.local);
+    interaction->lastLocal = point.local;
+    interaction->lastGlobal = global;
+    return true;
+}
+
+void mouseMove(const Vector2D& global, Event::SCallbackInfo& info) {
+    if (!validateInteraction() || (!contentHit(global) && interaction->buttons.empty()))
+        return;
+    if (!focusPoint(global, eventTime())) {
+        endInteraction("surface-unavailable");
+        return;
+    }
+    g_pSeatManager->sendPointerFrame();
+    ++interaction->motionEvents;
+    info.cancelled = true;
+}
+
+void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
+    if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && releasedButtons.erase(event.button)) {
+        info.cancelled = true;
+        return;
+    }
+    if (!validateInteraction())
+        return;
+    const auto position = g_pInputManager->getMouseCoordsInternal();
+    if (!contentHit(position) && interaction->buttons.empty()) {
+        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED)
+            endInteraction("outside-click");
+        return;
+    }
+    auto point = inputPoint(position);
+    if (!point.surface) {
+        endInteraction("surface-unavailable");
+        return;
+    }
+    if (event.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        if (interaction->buttons.size() >= 16)
+            return;
+        if (interaction->buttons.empty()) {
+            interaction->grab = point.surface;
+            interaction->grabOffset = point.root - point.local;
+        }
+        interaction->buttons.insert(event.button);
+    } else if (!interaction->buttons.contains(event.button)) {
+        // A press that entered through another surface cannot be retargeted.
+        return;
+    }
+    g_pSeatManager->setPointerFocus(point.surface, point.local);
+    g_pSeatManager->sendPointerMotion(event.timeMs, point.local);
+    interaction->lastLocal = point.local;
+    interaction->lastGlobal = position;
+    g_pSeatManager->sendPointerButton(event.timeMs, event.button, event.state);
+    g_pSeatManager->sendPointerFrame();
+    if (event.state == WL_POINTER_BUTTON_STATE_RELEASED) {
+        interaction->buttons.erase(event.button);
+        if (interaction->buttons.empty())
+            interaction->grab.reset();
+    }
+    ++interaction->buttonEvents;
+    info.cancelled = true;
+}
+
+void mouseAxis(const IPointer::SAxisEvent& event, Event::SCallbackInfo& info) {
+    if (!validateInteraction())
+        return;
+    const auto position = g_pInputManager->getMouseCoordsInternal();
+    if (!contentHit(position) && interaction->buttons.empty())
+        return;
+    const auto point = inputPoint(position);
+    if (!point.surface)
+        return;
+    // A wheel frame is an axis frame, not a newly synthesized mouse movement.
+    // Flush a changed focus before delivering its first axis; stable focus must
+    // retain the same event ordering as the compositor's ordinary wheel path.
+    if (g_pSeatManager->m_state.pointerFocus != point.surface) {
+        g_pSeatManager->setPointerFocus(point.surface, point.local);
+        g_pSeatManager->sendPointerMotion(event.timeMs, point.local);
+        g_pSeatManager->sendPointerFrame();
+    }
+    interaction->lastLocal = point.local;
+    interaction->lastGlobal = position;
+    const auto discrete = event.deltaDiscrete == 0 ? 0 : (event.deltaDiscrete > 0 ? 1 : -1);
+    interaction->lastAxisDelta = event.delta;
+    interaction->lastAxisDiscrete = event.deltaDiscrete;
+    interaction->lastAxisSource = event.source;
+    g_pSeatManager->sendPointerAxis(event.timeMs, event.axis, event.delta, discrete, event.deltaDiscrete,
+                                  event.source, event.relativeDirection);
+    g_pSeatManager->sendPointerFrame();
+    ++interaction->axisEvents;
+    info.cancelled = true;
+}
+
 void suspend(CWindow* window, bool requested) {
     if (requested && leased(window)) {
         requested = false;
@@ -138,16 +391,22 @@ void synchronize() {
         }
         ++it;
     }
+    if (validateInteraction()) {
+        const auto window = interaction->identity.window.lock();
+        active.emplace(window.get(), interaction->identity);
+    }
     for (const auto& [window, identity] : previous)
         if (!active.contains(window))
             naturalSuspension(identity);
     for (const auto& [window, identity] : active)
         window->setSuspended(false);
     if (frameTimer) {
-        if (owners.empty())
+        const auto desired = interaction ? std::chrono::milliseconds((1000 + interaction->fps - 1) / interaction->fps) : FRAME_TIME;
+        if (owners.empty() && !interaction)
             frameTimer->updateTimeout(std::nullopt);
-        else if (!frameTimer->armed() || frameTimer->passed())
-            frameTimer->updateTimeout(FRAME_TIME);
+        else if (!frameTimer->armed() || frameTimer->passed() || desired != frameInterval)
+            frameTimer->updateTimeout(desired);
+        frameInterval = desired;
     }
 }
 
@@ -189,6 +448,216 @@ void field(lua_State* state, const char* name, const std::string& value) {
     lua_pushlstring(state, value.data(), value.size());
     lua_setfield(state, -2, name);
 }
+void booleanField(lua_State* state, const char* name, bool value) {
+    lua_pushboolean(state, value);
+    lua_setfield(state, -2, name);
+}
+void numberField(lua_State* state, const char* name, double value) {
+    lua_pushnumber(state, value);
+    lua_setfield(state, -2, name);
+}
+double readNumber(lua_State* state, int table, const char* name) {
+    lua_getfield(state, table, name);
+    if (lua_type(state, -1) != LUA_TNUMBER)
+        throw std::invalid_argument("Expected a numeric rectangle field");
+    const auto value = lua_tonumber(state, -1);
+    lua_pop(state, 1);
+    if (!std::isfinite(value) || std::abs(value) > 1000000)
+        throw std::invalid_argument("Invalid rectangle field");
+    return value;
+}
+CBox readRect(lua_State* state, int table) {
+    const int index = lua_absindex(state, table);
+    if (lua_type(state, index) != LUA_TTABLE)
+        throw std::invalid_argument("Expected a rectangle table");
+    CBox rect{readNumber(state, index, "x"), readNumber(state, index, "y"),
+              readNumber(state, index, "width"), readNumber(state, index, "height")};
+    if (rect.w <= 0 || rect.h <= 0 || rect.w > 32768 || rect.h > 32768)
+        throw std::invalid_argument("Invalid rectangle dimensions");
+    return rect;
+}
+Identity readIdentity(lua_State* state, int table) {
+    const int index = lua_absindex(state, table);
+    if (lua_type(state, index) != LUA_TTABLE)
+        throw std::invalid_argument("Expected a window identity table");
+    Identity identity;
+    identity.id = stringField(state, index, "id");
+    identity.tag = stringField(state, index, "tag");
+    identity.address = integerHex(stringField(state, index, "address"));
+    identity.stable = integerHex(stringField(state, index, "stable_id"));
+    if (!hexadecimal(identity.id, 32) || identity.tag != "window-stash-" + identity.id)
+        throw std::invalid_argument("Invalid stash ownership identity");
+    lua_getfield(state, index, "pid");
+    if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) < 1
+        || lua_tointeger(state, -1) > std::numeric_limits<pid_t>::max())
+        throw std::invalid_argument("Invalid window PID");
+    identity.pid = lua_tointeger(state, -1);
+    lua_pop(state, 1);
+    for (const auto& window : Desktop::windowState()->windows()) {
+        if (sameWindow(identity, window.get(), true)) {
+            identity.window = window;
+            return identity;
+        }
+    }
+    throw std::invalid_argument("The interaction window is no longer owned and stashed");
+}
+
+void interactionDetails(lua_State* state, const std::string& owner) {
+    lua_newtable(state);
+    const bool matches = interaction && (owner.empty() || interaction->owner == owner);
+    booleanField(state, "active", matches);
+    booleanField(state, "keyboard", false);
+    if (matches) {
+        field(state, "owner", interaction->owner);
+        field(state, "id", interaction->identity.id);
+        field(state, "reason", "active");
+        field(state, "fps", interaction->fps);
+        field(state, "heldButtons", interaction->buttons.size());
+        field(state, "motionEvents", interaction->motionEvents);
+        field(state, "buttonEvents", interaction->buttonEvents);
+        field(state, "axisEvents", interaction->axisEvents);
+        numberField(state, "lastAxisDelta", interaction->lastAxisDelta);
+        field(state, "lastAxisDiscrete", interaction->lastAxisDiscrete);
+        field(state, "lastAxisSource", interaction->lastAxisSource);
+        lua_newtable(state);
+        numberField(state, "x", interaction->lastLocal.x);
+        numberField(state, "y", interaction->lastLocal.y);
+        lua_setfield(state, -2, "lastLocal");
+        lua_newtable(state);
+        numberField(state, "x", interaction->lastGlobal.x);
+        numberField(state, "y", interaction->lastGlobal.y);
+        lua_setfield(state, -2, "lastGlobal");
+        lua_newtable(state);
+        numberField(state, "x", interaction->rect.x);
+        numberField(state, "y", interaction->rect.y);
+        numberField(state, "width", interaction->rect.w);
+        numberField(state, "height", interaction->rect.h);
+        lua_setfield(state, -2, "rect");
+    } else {
+        field(state, "owner", owner);
+        field(state, "id", "");
+        field(state, "reason", "inactive");
+        field(state, "heldButtons", 0);
+        for (auto it = endedInteractions.rbegin(); it != endedInteractions.rend(); ++it) {
+            if ((!owner.empty() && it->owner == owner) || (owner.empty() && it == endedInteractions.rbegin())) {
+                field(state, "owner", it->owner);
+                field(state, "id", it->id);
+                field(state, "reason", it->reason);
+                break;
+            }
+        }
+    }
+}
+
+int interactionStatus(lua_State* state) {
+    try {
+        const auto owner = lua_isnoneornil(state, 1) ? std::string{} : stringAt(state, 1);
+        if (!owner.empty() && !hexadecimal(owner, 32))
+            throw std::invalid_argument("Invalid interaction owner");
+        synchronize();
+        interactionDetails(state, owner);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
+
+int interactionUpdate(lua_State* state) {
+    try {
+        if (lua_type(state, 1) != LUA_TTABLE)
+            throw std::invalid_argument("Expected an interaction lease table");
+        const auto owner = stringField(state, 1, "owner");
+        if (!hexadecimal(owner, 32))
+            throw std::invalid_argument("Invalid interaction owner");
+        synchronize();
+        for (const auto& ended : endedInteractions) {
+            if (ended.owner == owner) {
+                interactionDetails(state, owner);
+                return 1;
+            }
+        }
+        if (interaction && interaction->owner != owner)
+            throw std::invalid_argument("Another preview is already receiving input");
+        lua_getfield(state, 1, "keyboard");
+        if (!lua_isnil(state, -1) && lua_type(state, -1) != LUA_TBOOLEAN)
+            throw std::invalid_argument("Expected a keyboard flag");
+        const bool keyboard = lua_toboolean(state, -1);
+        lua_pop(state, 1);
+        if (keyboard)
+            throw std::invalid_argument("Keyboard interaction is not available in this bridge build");
+        lua_getfield(state, 1, "window");
+        auto identity = readIdentity(state, -1);
+        lua_pop(state, 1);
+        if (interaction && interaction->identity.id != identity.id)
+            throw std::invalid_argument("Release the current window before switching interaction targets");
+        const auto name = stringField(state, 1, "monitor");
+        PHLMONITOR monitor;
+        for (const auto& candidate : State::monitorState()->monitors())
+            if (candidate->m_name == name)
+                monitor = candidate;
+        if (!monitor || !monitor->m_dpmsStatus || g_pSessionLockManager->isSessionLocked())
+            throw std::invalid_argument("The interaction display is unavailable");
+        lua_getfield(state, 1, "rect");
+        const auto rect = readRect(state, -1);
+        lua_pop(state, 1);
+        if (rect.intersection(CBox{monitor->m_position, monitor->m_size}).empty())
+            throw std::invalid_argument("The interaction rectangle is outside its display");
+        std::vector<CBox> excluded;
+        lua_getfield(state, 1, "excludeRects");
+        if (!lua_isnil(state, -1)) {
+            if (lua_type(state, -1) != LUA_TTABLE || lua_rawlen(state, -1) > 16)
+                throw std::invalid_argument("Invalid interaction exclusions");
+            for (size_t i = 1; i <= lua_rawlen(state, -1); ++i) {
+                lua_rawgeti(state, -1, i);
+                excluded.push_back(readRect(state, -1));
+                lua_pop(state, 1);
+            }
+        }
+        lua_pop(state, 1);
+        lua_getfield(state, 1, "fps");
+        if (!lua_isinteger(state, -1) || (lua_tointeger(state, -1) != 30 && lua_tointeger(state, -1) != 60))
+            throw std::invalid_argument("Interaction FPS must be 30 or 60");
+        const int fps = lua_tointeger(state, -1);
+        lua_pop(state, 1);
+        if (!interaction)
+            interaction.emplace();
+        interaction->owner = owner;
+        interaction->identity = std::move(identity);
+        interaction->rect = rect;
+        interaction->excludeRects = std::move(excluded);
+        interaction->monitor = monitor;
+        interaction->fps = fps;
+        interaction->expires = Clock::now() + LEASE_TIME;
+        synchronize();
+        interactionDetails(state, owner);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
+
+int interactionRelease(lua_State* state) {
+    try {
+        const auto owner = stringAt(state, 1);
+        if (!hexadecimal(owner, 32))
+            throw std::invalid_argument("Invalid interaction owner");
+        if (interaction && interaction->owner == owner)
+            endInteraction("released");
+        else if (std::none_of(endedInteractions.begin(), endedInteractions.end(), [&](const auto& ended) { return ended.owner == owner; }))
+            rememberEnd(owner, "", "released");
+        synchronize();
+        lua_pushboolean(state, true);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
 
 int status(lua_State* state) {
     synchronize();
@@ -199,7 +668,7 @@ int status(lua_State* state) {
     field(state, "owners", owners.size());
     field(state, "windows", active.size());
     field(state, "leaseTimeout", LEASE_TIME.count());
-    field(state, "frameInterval", FRAME_TIME.count());
+    field(state, "frameInterval", frameInterval.count());
     field(state, "frames", frames);
     field(state, "preventedSuspends", preventedSuspends);
     lua_newtable(state);
@@ -209,6 +678,13 @@ int status(lua_State* state) {
         lua_rawseti(state, -2, ordinal++);
     }
     lua_setfield(state, -2, "windowIds");
+    interactionDetails(state);
+    lua_setfield(state, -2, "interaction");
+    lua_newtable(state);
+    booleanField(state, "pointer", true);
+    booleanField(state, "keyboard", false);
+    field(state, "interactionProtocol", 1);
+    lua_setfield(state, -2, "capabilities");
     return 1;
 }
 
@@ -321,8 +797,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
         throw std::runtime_error("Could not install the scoped preview suspend hook");
     if (!HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "update", update)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "release", release)
-        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "status", status))
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "status", status)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_update", interactionUpdate)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_release", interactionRelease)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus))
         throw std::runtime_error("Could not register the preview lease API");
+    mouseMoveListener = Event::bus()->m_events.input.mouse.move.listen(mouseMove);
+    mouseButtonListener = Event::bus()->m_events.input.mouse.button.listen(mouseButton);
+    mouseAxisListener = Event::bus()->m_events.input.mouse.axis.listen(mouseAxis);
+    lockListener = g_pSessionLockManager->m_events.lock.listen([] { endInteraction("locked", false); });
+    monitorListener = Event::bus()->m_events.monitor.layoutChanged.listen([] { endInteraction("display-changed"); });
+    workspaceListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE) { endInteraction("workspace-changed"); });
     frameTimer = makeShared<CEventLoopTimer>(std::nullopt,
         [](SP<CEventLoopTimer>, void*) { frame(); }, nullptr);
     g_pEventLoopManager->addTimer(frameTimer);
@@ -330,6 +815,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    endInteraction("unloaded");
+    mouseMoveListener.reset();
+    mouseButtonListener.reset();
+    mouseAxisListener.reset();
+    lockListener.reset();
+    monitorListener.reset();
+    workspaceListener.reset();
     owners.clear();
     synchronize();
     if (frameTimer) {

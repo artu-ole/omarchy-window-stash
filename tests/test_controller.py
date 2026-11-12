@@ -1025,6 +1025,7 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
+            floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
 
     def test_floating_previews_default_without_changing_existing_presentation_or_hover_settings(self):
