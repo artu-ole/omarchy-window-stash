@@ -3,11 +3,14 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/managers/XWaylandManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
@@ -15,6 +18,7 @@
 #include <hyprland/src/protocols/XDGShell.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 extern "C" {
 #include <lua.h>
@@ -28,6 +32,7 @@ extern "C" {
 #include <deque>
 #include <limits>
 #include <optional>
+#include <any>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -79,6 +84,15 @@ struct Interaction {
     double lastAxisDelta = 0;
     int32_t lastAxisDiscrete = 0;
     int lastAxisSource = 0;
+    bool keyboard = false;
+    bool keyboardFocused = false;
+    PHLWINDOWREF previousWindow;
+    WP<CWLSurfaceResource> previousSurface;
+    WP<CWLSurfaceResource> keyboardSurface;
+    std::set<uint32_t> keys;
+    uint64_t keyEvents = 0;
+    xkb_keysym_t exitSymbol = XKB_KEY_NoSymbol;
+    uint32_t exitModifiers = 0;
 };
 struct EndedInteraction {
     std::string owner;
@@ -88,6 +102,13 @@ struct EndedInteraction {
 
 HANDLE handle = nullptr;
 CFunctionHook* suspendHook = nullptr;
+CFunctionHook* focusWindowHook = nullptr;
+CFunctionHook* focusSurfaceHook = nullptr;
+CFunctionHook* keyboardSendHook = nullptr;
+CFunctionHook* keybindHook = nullptr;
+bool keyboardSupported = false;
+bool changingKeyboardFocus = false;
+std::string keyboardError;
 SP<CEventLoopTimer> frameTimer;
 std::unordered_map<std::string, Lease> owners;
 std::unordered_map<CWindow*, Identity> active;
@@ -98,10 +119,19 @@ std::optional<Interaction> interaction;
 std::deque<EndedInteraction> endedInteractions;
 std::set<uint32_t> releasedButtons;
 CHyprSignalListener mouseMoveListener, mouseButtonListener, mouseAxisListener, lockListener, monitorListener, workspaceListener;
+CHyprSignalListener keyboardFocusListener, keyboardEventListener;
+struct ReleasedKey {
+    Identity identity;
+    WP<CWLSurfaceResource> surface;
+};
+std::unordered_map<uint32_t, ReleasedKey> releasedKeys;
+std::optional<ReleasedKey> releaseTarget;
 
 bool validateInteraction();
 void endInteraction(const std::string& reason, bool refocus = true);
 void interactionDetails(lua_State* state, const std::string& owner = "");
+void restoreKeyboard(Interaction& previous, bool refocus);
+void acquireKeyboard();
 
 bool hexadecimal(const std::string& text, size_t length) {
     return text.size() == length && text.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
@@ -156,6 +186,163 @@ uint32_t eventTime() {
     return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
 }
 
+PHLWINDOW keyboardWindow() {
+    if (!interaction || !interaction->keyboardFocused)
+        return nullptr;
+    const auto window = interaction->identity.window.lock();
+    return window && sameWindow(interaction->identity, window.get(), true) ? window : nullptr;
+}
+
+PHLWINDOW focusedWindow(Desktop::CFocusState* state) {
+    // Normal focusWindow would expose the hidden workspace. Keep compositor
+    // window commands aligned with the real keyboard target using the public
+    // focus getters, while the normal visible workspace remains untouched.
+    if (releaseTarget) {
+        const auto window = releaseTarget->identity.window.lock();
+        return window && sameWindow(releaseTarget->identity, window.get(), false) ? window : nullptr;
+    }
+    if (const auto window = keyboardWindow())
+        return window;
+    using Original = PHLWINDOW (*)(Desktop::CFocusState*);
+    return reinterpret_cast<Original>(focusWindowHook->m_original)(state);
+}
+
+SP<CWLSurfaceResource> focusedSurface(Desktop::CFocusState* state) {
+    if (releaseTarget)
+        return releaseTarget->surface.lock();
+    if (const auto window = keyboardWindow()) {
+        const auto focused = g_pSeatManager->m_state.keyboardFocus.lock();
+        const auto root = window->wlSurface()->resource();
+        return focused && focused->client() == root->client() ? focused : root;
+    }
+    using Original = SP<CWLSurfaceResource> (*)(Desktop::CFocusState*);
+    return reinterpret_cast<Original>(focusSurfaceHook->m_original)(state);
+}
+
+void keyboardSend(CSeatManager* seat, uint32_t time, uint32_t key, wl_keyboard_key_state state) {
+    using Original = void (*)(CSeatManager*, uint32_t, uint32_t, wl_keyboard_key_state);
+    if (state == WL_KEYBOARD_KEY_STATE_RELEASED && releasedKeys.erase(key))
+        return; // InputManager has still consumed its matching physical release.
+    if (const auto window = keyboardWindow()) {
+        const auto focus = seat->m_state.keyboardFocus.lock();
+        if (focus && focus->client() == window->wlSurface()->resource()->client()) {
+            if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
+                interaction->keys.insert(key);
+            else
+                interaction->keys.erase(key);
+            ++interaction->keyEvents;
+        }
+    }
+    reinterpret_cast<Original>(keyboardSendHook->m_original)(seat, time, key, state);
+}
+
+bool keybindEvent(CKeybindManager* manager, std::any data, SP<IKeyboard> keyboard) {
+    // A deferred physical release belongs to the same original application,
+    // even if an exit already restored ordinary keyboard focus. This also keeps
+    // release-triggered WM bindings from acting on an unrelated visible app.
+    const auto event = std::any_cast<IKeyboard::SKeyEvent>(&data);
+    if (event && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && interaction && validateInteraction()
+        && interaction->exitSymbol != XKB_KEY_NoSymbol && keyboard && keyboard->m_xkbState) {
+        const auto symbol = xkb_state_key_get_one_sym(keyboard->m_xkbState, event->keycode + 8);
+        const auto modifiers = g_pInputManager->getModsFromAllKBs() & 77U;
+        if (xkb_keysym_to_lower(symbol) == xkb_keysym_to_lower(interaction->exitSymbol) && modifiers == interaction->exitModifiers) {
+            // Consume only this session's explicit exit press. InputManager did
+            // not record it, so its later release cannot leak to another app.
+            endInteraction("shortcut");
+            return false;
+        }
+    }
+    if (event && event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+        const auto previous = releasedKeys.find(event->keycode);
+        if (previous != releasedKeys.end())
+            releaseTarget = previous->second;
+    }
+    using Original = bool (*)(CKeybindManager*, std::any, SP<IKeyboard>);
+    const bool result = reinterpret_cast<Original>(keybindHook->m_original)(manager, std::move(data), keyboard);
+    releaseTarget.reset();
+    return result;
+}
+
+void acquireKeyboard() {
+    if (!interaction || !interaction->keyboard || interaction->keyboardFocused || !keyboardSupported)
+        return;
+    const auto window = interaction->identity.window.lock();
+    if (!window || !sameWindow(interaction->identity, window.get(), true) || !g_pSeatManager->m_keyboard)
+        return;
+    if (g_pSessionLockManager->isSessionLocked() || !g_pInputManager->m_exclusiveLSes.empty())
+        return;
+    const auto root = window->wlSurface()->resource();
+    interaction->previousWindow = Desktop::focusState()->window();
+    interaction->previousSurface = g_pSeatManager->m_state.keyboardFocus;
+    interaction->keyboardSurface = root;
+    interaction->keyboardFocused = true;
+    changingKeyboardFocus = true;
+    if (const auto previous = interaction->previousWindow.lock(); previous && previous != window && previous->wlSurface())
+        g_pXWaylandManager->activateSurface(previous->wlSurface()->resource(), false);
+    Desktop::focusState()->rawSurfaceFocus(root, window);
+    changingKeyboardFocus = false;
+    if (g_pSeatManager->m_state.keyboardFocus != root)
+        interaction->keyboardFocused = false;
+}
+
+void restoreKeyboard(Interaction& previous, bool refocus) {
+    if (!previous.keyboardFocused || !g_pSeatManager)
+        return;
+    changingKeyboardFocus = true;
+    const auto root = previous.keyboardSurface.lock();
+    const auto focused = g_pSeatManager->m_state.keyboardFocus.lock();
+    const bool ownsFocus = root && focused && focused->client() == root->client();
+    if (ownsFocus && keyboardSendHook) {
+        using Original = void (*)(CSeatManager*, uint32_t, uint32_t, wl_keyboard_key_state);
+        for (const auto key : previous.keys) {
+            reinterpret_cast<Original>(keyboardSendHook->m_original)(g_pSeatManager.get(), eventTime(), key, WL_KEYBOARD_KEY_STATE_RELEASED);
+            releasedKeys[key] = {previous.identity, root};
+        }
+        g_pSeatManager->sendKeyboardMods(0, 0, 0, 0);
+    }
+    if (root)
+        g_pXWaylandManager->activateSurface(root, false);
+    if (ownsFocus) {
+        if (g_pSessionLockManager->isSessionLocked()) {
+            // Leave an already focused lock surface untouched; never enter a
+            // hidden application in order to clean up its input while locked.
+            g_pSeatManager->setKeyboardFocus(nullptr);
+        } else if (refocus) {
+            const auto original = previous.previousWindow.lock();
+            const auto surface = previous.previousSurface.lock();
+            if (original && original->m_isMapped && original->m_workspace && original->m_workspace->isVisible())
+                Desktop::focusState()->rawWindowFocus(original, Desktop::FOCUS_REASON_OTHER, surface);
+            else if (surface && surface->m_hlSurface && surface->m_hlSurface->view() && surface->m_hlSurface->view()->visible())
+                Desktop::focusState()->rawSurfaceFocus(surface);
+            else
+                Desktop::focusState()->rawWindowFocus(nullptr, Desktop::FOCUS_REASON_OTHER);
+        }
+    }
+    changingKeyboardFocus = false;
+}
+
+void keyboardFocusChanged() {
+    if (changingKeyboardFocus || !interaction || !interaction->keyboardFocused)
+        return;
+    const auto root = interaction->keyboardSurface.lock();
+    const auto focus = g_pSeatManager->m_state.keyboardFocus.lock();
+    if (root && focus && root->client() == focus->client())
+        return;
+    // An external focus change owns the seat now. It already received Wayland's
+    // enter/held-key state; keep normal release bookkeeping for that transition.
+    interaction->keyboardFocused = false;
+    interaction->keys.clear();
+    if (root)
+        g_pXWaylandManager->activateSurface(root, false);
+}
+
+void keyboardEvent(const IKeyboard::SKeyEvent& event, Event::SCallbackInfo&) {
+    if (event.state == WL_KEYBOARD_KEY_STATE_PRESSED)
+        releasedKeys.erase(event.keycode);
+    if (interaction)
+        validateInteraction();
+}
+
 void rememberEnd(const std::string& owner, const std::string& id, const std::string& reason) {
     std::erase_if(endedInteractions, [&](const auto& ended) { return ended.owner == owner; });
     endedInteractions.push_back({owner, id, reason});
@@ -169,14 +356,19 @@ void endInteraction(const std::string& reason, bool refocus) {
     auto previous = std::move(*interaction);
     interaction.reset();
     rememberEnd(previous.owner, previous.identity.id, reason);
+    restoreKeyboard(previous, refocus);
     if (g_pSeatManager) {
         const auto grabbed = previous.grab.lock();
         if (grabbed && !previous.buttons.empty()) {
             // Release to the exact grab surface, never to a replacement client.
-            g_pSeatManager->setPointerFocus(grabbed, previous.lastLocal);
-            for (const auto button : previous.buttons)
-                g_pSeatManager->sendPointerButton(eventTime(), button, WL_POINTER_BUTTON_STATE_RELEASED);
-            g_pSeatManager->sendPointerFrame();
+            // A lockscreen that already owns focus must never be displaced.
+            if (!g_pSessionLockManager->isSessionLocked())
+                g_pSeatManager->setPointerFocus(grabbed, previous.lastLocal);
+            if (g_pSeatManager->m_state.pointerFocus == grabbed) {
+                for (const auto button : previous.buttons)
+                    g_pSeatManager->sendPointerButton(eventTime(), button, WL_POINTER_BUTTON_STATE_RELEASED);
+                g_pSeatManager->sendPointerFrame();
+            }
         }
     }
     releasedButtons.insert(previous.buttons.begin(), previous.buttons.end());
@@ -199,6 +391,8 @@ bool validateInteraction() {
         reason = "surface-unavailable";
     else if (g_pSessionLockManager->isSessionLocked())
         reason = "locked";
+    else if (!g_pInputManager->m_exclusiveLSes.empty())
+        reason = "exclusive-overlay";
     else if (!monitor || !State::monitorState()->contains(monitor) || !monitor->m_dpmsStatus)
         reason = "display-unavailable";
     else if (g_pInputManager->isConstrained())
@@ -210,13 +404,17 @@ bool validateInteraction() {
     return true;
 }
 
-bool contentHit(const Vector2D& global) {
-    if (!interaction || !interaction->rect.containsPoint(global))
+bool managementHit(const Vector2D& global) {
+    if (!interaction)
         return false;
     for (const auto& excluded : interaction->excludeRects)
         if (excluded.containsPoint(global))
-            return false;
-    return true;
+            return true;
+    return false;
+}
+
+bool contentHit(const Vector2D& global) {
+    return interaction && interaction->rect.containsPoint(global) && !managementHit(global);
 }
 
 struct InputPoint {
@@ -292,7 +490,10 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
         return;
     const auto position = g_pInputManager->getMouseCoordsInternal();
     if (!contentHit(position) && interaction->buttons.empty()) {
-        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED)
+        // These rectangles belong to our own management controls. Their Qt
+        // press/release sequence must complete before the selected action ends
+        // interaction; ending on press would change the button under the click.
+        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED && !managementHit(position))
             endInteraction("outside-click");
         return;
     }
@@ -309,6 +510,8 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
             interaction->grabOffset = point.root - point.local;
         }
         interaction->buttons.insert(event.button);
+        if (interaction->keyboard && !interaction->keyboardFocused)
+            acquireKeyboard();
     } else if (!interaction->buttons.contains(event.button)) {
         // A press that entered through another surface cannot be retargeted.
         return;
@@ -506,7 +709,10 @@ void interactionDetails(lua_State* state, const std::string& owner) {
     lua_newtable(state);
     const bool matches = interaction && (owner.empty() || interaction->owner == owner);
     booleanField(state, "active", matches);
-    booleanField(state, "keyboard", false);
+    booleanField(state, "keyboard", matches && interaction->keyboard);
+    booleanField(state, "keyboardFocused", matches && interaction->keyboardFocused);
+    field(state, "heldKeys", matches ? interaction->keys.size() : 0);
+    field(state, "keyEvents", matches ? interaction->keyEvents : 0);
     if (matches) {
         field(state, "owner", interaction->owner);
         field(state, "id", interaction->identity.id);
@@ -585,13 +791,15 @@ int interactionUpdate(lua_State* state) {
             throw std::invalid_argument("Expected a keyboard flag");
         const bool keyboard = lua_toboolean(state, -1);
         lua_pop(state, 1);
-        if (keyboard)
-            throw std::invalid_argument("Keyboard interaction is not available in this bridge build");
+        if (keyboard && !keyboardSupported)
+            throw std::invalid_argument("Keyboard interaction is unavailable: " + keyboardError);
         lua_getfield(state, 1, "window");
         auto identity = readIdentity(state, -1);
         lua_pop(state, 1);
         if (interaction && interaction->identity.id != identity.id)
             throw std::invalid_argument("Release the current window before switching interaction targets");
+        if (interaction && interaction->keyboard != keyboard)
+            throw std::invalid_argument("Release the current interaction before changing keyboard mode");
         const auto name = stringField(state, 1, "monitor");
         PHLMONITOR monitor;
         for (const auto& candidate : State::monitorState()->monitors())
@@ -621,6 +829,25 @@ int interactionUpdate(lua_State* state) {
             throw std::invalid_argument("Interaction FPS must be 30 or 60");
         const int fps = lua_tointeger(state, -1);
         lua_pop(state, 1);
+        xkb_keysym_t exitSymbol = XKB_KEY_NoSymbol;
+        uint32_t exitModifiers = 0;
+        lua_getfield(state, 1, "exitShortcut");
+        if (!lua_isnil(state, -1)) {
+            if (!keybindHook)
+                throw std::invalid_argument("The native exit shortcut is unavailable: " + keyboardError);
+            if (lua_type(state, -1) != LUA_TTABLE)
+                throw std::invalid_argument("Expected an exit shortcut table");
+            const auto key = stringField(state, -1, "key");
+            exitSymbol = xkb_keysym_from_name(key.c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
+            if (exitSymbol == XKB_KEY_NoSymbol || (exitSymbol >= XKB_KEY_Shift_L && exitSymbol <= XKB_KEY_Hyper_R))
+                throw std::invalid_argument("Invalid exit shortcut key");
+            lua_getfield(state, -1, "modmask");
+            if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) < 0 || (lua_tointeger(state, -1) & ~77LL))
+                throw std::invalid_argument("Invalid exit shortcut modifiers");
+            exitModifiers = lua_tointeger(state, -1);
+            lua_pop(state, 1);
+        }
+        lua_pop(state, 1);
         if (!interaction)
             interaction.emplace();
         interaction->owner = owner;
@@ -629,6 +856,9 @@ int interactionUpdate(lua_State* state) {
         interaction->excludeRects = std::move(excluded);
         interaction->monitor = monitor;
         interaction->fps = fps;
+        interaction->keyboard = keyboard;
+        interaction->exitSymbol = exitSymbol;
+        interaction->exitModifiers = exitModifiers;
         interaction->expires = Clock::now() + LEASE_TIME;
         synchronize();
         interactionDetails(state, owner);
@@ -682,7 +912,9 @@ int status(lua_State* state) {
     lua_setfield(state, -2, "interaction");
     lua_newtable(state);
     booleanField(state, "pointer", true);
-    booleanField(state, "keyboard", false);
+    booleanField(state, "keyboard", keyboardSupported);
+    booleanField(state, "exitShortcut", keybindHook != nullptr);
+    field(state, "keyboardError", keyboardError);
     field(state, "interactionProtocol", 1);
     lua_setfield(state, -2, "capabilities");
     return 1;
@@ -769,6 +1001,47 @@ int release(lua_State* state) {
         return 2;
     }
 }
+
+CFunctionHook* optionalHook(const std::string& name, const std::string& demangledPrefix, const void* replacement) {
+    const auto functions = HyprlandAPI::findFunctionsByName(handle, name);
+    const SFunctionMatch* target = nullptr;
+    for (const auto& function : functions) {
+        if (function.demangled.starts_with(demangledPrefix)) {
+            if (target)
+                throw std::runtime_error("Ambiguous keyboard focus function: " + name);
+            target = &function;
+        }
+    }
+    if (!target)
+        throw std::runtime_error("Missing keyboard focus function: " + name);
+    auto* hook = HyprlandAPI::createFunctionHook(handle, target->address, replacement);
+    if (!hook || !hook->hook())
+        throw std::runtime_error("Could not install keyboard focus function: " + name);
+    return hook;
+}
+
+void setupKeyboard() {
+    try {
+        // The active-session exit chord is useful in mouse-only mode too.
+        keybindHook = optionalHook("onKeyEvent", "CKeybindManager::onKeyEvent(", reinterpret_cast<const void*>(&keybindEvent));
+    } catch (const std::exception& error) {
+        keyboardError = error.what();
+        return;
+    }
+    try {
+        focusWindowHook = optionalHook("window", "Desktop::CFocusState::window()", reinterpret_cast<const void*>(&focusedWindow));
+        focusSurfaceHook = optionalHook("surface", "Desktop::CFocusState::surface()", reinterpret_cast<const void*>(&focusedSurface));
+        keyboardSendHook = optionalHook("sendKeyboardKey", "CSeatManager::sendKeyboardKey(", reinterpret_cast<const void*>(&keyboardSend));
+        keyboardSupported = true;
+    } catch (const std::exception& error) {
+        keyboardError = error.what();
+        for (auto** hook : {&keyboardSendHook, &focusSurfaceHook, &focusWindowHook}) {
+            if (*hook)
+                HyprlandAPI::removeFunctionHook(handle, *hook);
+            *hook = nullptr;
+        }
+    }
+}
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -805,6 +1078,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
     mouseMoveListener = Event::bus()->m_events.input.mouse.move.listen(mouseMove);
     mouseButtonListener = Event::bus()->m_events.input.mouse.button.listen(mouseButton);
     mouseAxisListener = Event::bus()->m_events.input.mouse.axis.listen(mouseAxis);
+    setupKeyboard();
+    keyboardFocusListener = g_pSeatManager->m_events.keyboardFocusChange.listen(keyboardFocusChanged);
+    keyboardEventListener = Event::bus()->m_events.input.keyboard.key.listen(keyboardEvent);
     lockListener = g_pSessionLockManager->m_events.lock.listen([] { endInteraction("locked", false); });
     monitorListener = Event::bus()->m_events.monitor.layoutChanged.listen([] { endInteraction("display-changed"); });
     workspaceListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE) { endInteraction("workspace-changed"); });
@@ -819,6 +1095,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     mouseMoveListener.reset();
     mouseButtonListener.reset();
     mouseAxisListener.reset();
+    keyboardFocusListener.reset();
+    keyboardEventListener.reset();
     lockListener.reset();
     monitorListener.reset();
     workspaceListener.reset();

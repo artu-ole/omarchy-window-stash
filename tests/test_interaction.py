@@ -1,5 +1,7 @@
 """Only explicit, current preview targets can acquire native input routing."""
 import copy
+import contextlib
+import io
 import json
 from pathlib import Path
 import shutil
@@ -10,8 +12,9 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'controller'))
-from interaction import InteractionBridge, InteractionKeeper, monitor_contains, request, run_loop, status_json
-from stash import DEFAULTS, PLUGIN, SPECIAL, Stash, atomic_json, lua
+from interaction import InteractionBridge, InteractionKeeper, configure_exit_shortcut, exit_shortcut, monitor_contains, request, run_loop, status_json
+from stash import DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, PLUGIN, SPECIAL, Stash, atomic_json, lua, main as controller_main
+from lifecycle import valid_preferences
 
 IDENT = 'a'*32
 OTHER = 'b'*32
@@ -33,12 +36,14 @@ class FakeHypr:
         self.clients = [dict(address=saved['address'],pid=saved['pid'],stableId=saved['stableId'],
                              mapped=True,tags=[saved['tag']],workspace=dict(name=SPECIAL))]
         self.monitors = [dict(name='HEADLESS-1',x=0,y=0,width=1280,height=800,scale=1,transform=0,dpmsStatus=True)]
+        self.binds = []
         self.reads = []
 
     def read(self, subject):
         self.reads.append(subject)
         if subject == 'clients':return copy.deepcopy(self.clients)
         if subject == 'monitors':return copy.deepcopy(self.monitors)
+        if subject == 'binds':return copy.deepcopy(self.binds)
         raise AssertionError('Unexpected compositor read '+subject)
 
 
@@ -95,7 +100,8 @@ class InteractionTests(unittest.TestCase):
 
     def test_defaults_are_explicit_opt_in_and_invalid_values_fall_back(self):
         expected = dict(floatingPreviewInteraction='off',floatingPreviewActivation='explicit',
-                        floatingPreviewKeyboard='mouse',floatingPreviewInteractionFps='60',floatingPreviewControls='hover')
+                        floatingPreviewKeyboard='mouse',floatingPreviewInteractionFps='60',floatingPreviewControls='hover',
+                        floatingPreviewExitShortcut='CTRL + ALT + Escape')
         self.assertEqual({key:DEFAULTS[key] for key in expected},expected)
         self.settings(**{key:True for key in expected})
         self.assertEqual({key:self.stash.settings()[key] for key in expected},expected)
@@ -126,7 +132,7 @@ class InteractionTests(unittest.TestCase):
         self.assertEqual(self.keeper.sync(target())['state'],'active')
         update = self.bridge.calls[-1]
         self.assertEqual(update[2],dict(id=IDENT,address='0x123',pid=42,stable_id='18000001',tag='window-stash-'+IDENT))
-        self.assertEqual(update[3],target())
+        self.assertEqual(update[3],dict(target(),exitShortcut=dict(modmask=12,key='Escape')))
         self.assertEqual([call[0] for call in self.bridge.calls],['ensure','update'])
         self.assertEqual(self.stash.settings()['livePreviewCompatibility'],'standard')
 
@@ -180,6 +186,105 @@ class InteractionTests(unittest.TestCase):
         self.settings(floatingPreviewKeyboard='click')
         self.keeper.sync(target(keyboard=True))
         self.assertTrue(self.bridge.calls[-1][3]['keyboard'])
+
+    def test_workspace_scope_uses_fresh_target_monitor_and_releases_when_source_becomes_ineligible(self):
+        self.saved[0]['origin'] = dict(id=3,name='3');self.save()
+        self.hypr.monitors[0]['activeWorkspace'] = dict(id=4,name='4')
+        # Global scope can interact with an owned source from another workspace.
+        self.assertEqual(self.keeper.sync(target())['state'],'active')
+        owner = self.keeper.owner
+        self.settings(scope='workspace')
+        self.assertEqual(self.keeper.sync(target())['state'],'ended')
+        self.assertEqual(self.bridge.calls[-1],('release',owner))
+        # A fresh activation on its source workspace is eligible. Do not infer
+        # that workspace from the focused output or a stale frontend snapshot.
+        self.hypr.monitors[0]['activeWorkspace'] = dict(id=3,name='3')
+        self.assertEqual(self.keeper.sync(target(serial=2))['state'],'active')
+        self.hypr.monitors[0]['activeWorkspace'] = dict(id=5,name='5')
+        self.assertEqual(self.keeper.sync(target(serial=2))['state'],'ended')
+        calls = copy.deepcopy(self.bridge.calls)
+        self.assertEqual(self.keeper.sync(target(serial=3))['state'],'ended')
+        self.assertEqual(self.bridge.calls,calls,'A stale target reacquired a source hidden by workspace scope')
+
+    def test_workspace_scope_unknown_output_workspace_or_legacy_missing_origin_never_acquires(self):
+        self.settings(scope='workspace')
+        for active in (None,{},dict(id=True),dict(id='3'),dict(id=3)):
+            with self.subTest(active=active):
+                self.keeper.activation = None
+                self.hypr.monitors[0]['activeWorkspace'] = active
+                self.assertEqual(self.keeper.sync(target())['state'],'ended')
+        self.assertEqual(self.bridge.calls,[])
+
+    def test_exit_shortcut_parser_is_canonical_disableable_and_collision_checked_in_every_submap(self):
+        self.assertEqual(exit_shortcut('alt+control+esc'),('CTRL + ALT + Escape',dict(modmask=12,key='Escape')))
+        self.assertEqual(exit_shortcut(''),('',None))
+        self.assertEqual(exit_shortcut('super+shift+a')[1],dict(modmask=65,key='A'))
+        for submap in ('','preview-mode','reset'):
+            with self.subTest(submap=submap),self.assertRaisesRegex(ValueError,'already assigned'):
+                exit_shortcut('CTRL + ALT + Escape',[dict(key='Escape',modmask=12,submap=submap)])
+        self.assertEqual(exit_shortcut('CTRL + ALT + Escape',[dict(key='Escape',modmask=12,enabled=False)])[1],
+                         dict(modmask=12,key='Escape'))
+        for bad in (True,None,'CTRL + CTRL + Escape','CTRL + ALT + Escape\n','SUPER + $(anything)'):
+            with self.subTest(value=bad),self.assertRaises(ValueError):exit_shortcut(bad)
+
+    def test_session_exit_configuration_preserves_other_settings_global_actions_and_private_ledger(self):
+        data = dict(bar=dict(keep=7),plugins=[dict(id='other.plugin',custom='keep'),
+                    dict(id=PLUGIN,presentation='previews',floatingPreviewInteraction='on',minimizeShortcut='SUPER + A')])
+        self.stash.config.write_text(json.dumps(data));self.stash.config.chmod(0o640)
+        ledger = self.stash.path.read_bytes()
+        result = configure_exit_shortcut(self.stash.config,'alt+f10',self.hypr)
+        self.assertEqual(result,dict(ok=True,action='interaction-exit-shortcut',key='floatingPreviewExitShortcut',binding='ALT + F10'))
+        data['plugins'][1]['floatingPreviewExitShortcut'] = 'ALT + F10'
+        self.assertEqual(json.loads(self.stash.config.read_text()),data)
+        self.assertEqual(self.stash.config.stat().st_mode & 0o777,0o640)
+        self.assertEqual(self.stash.path.read_bytes(),ledger)
+        self.assertEqual(self.hypr.reads,['binds'])
+        self.assertEqual(self.bridge.calls,[])
+        configure_exit_shortcut(self.stash.config,'',self.hypr)
+        self.assertEqual(self.hypr.reads,['binds'],'Disabling a local shortcut should not inspect or modify global bindings')
+        self.assertEqual(self.stash.settings()['floatingPreviewExitShortcut'],'')
+
+    def test_exit_shortcut_conflicts_change_neither_settings_nor_native_input_and_recheck_after_build(self):
+        self.hypr.binds = [dict(key='Escape',modmask=12,description='A desktop action')]
+        before = self.stash.config.read_bytes()
+        with self.assertRaisesRegex(ValueError,'already assigned'):
+            configure_exit_shortcut(self.stash.config,'CTRL + ALT + Escape',self.hypr)
+        self.assertEqual(self.stash.config.read_bytes(),before)
+        self.hypr.binds = []
+        self.bridge.on_ensure = lambda:self.hypr.binds.append(dict(key='Escape',modmask=12,submap='after-native-load'))
+        with self.assertRaisesRegex(ValueError,'already assigned'):self.keeper.sync(target())
+        self.assertFalse(self.keeper.acquired)
+        self.assertFalse(any(call[0] == 'update' for call in self.bridge.calls))
+
+    def test_exit_shortcut_is_worker_owned_and_recompiled_only_for_new_session_or_changed_setting(self):
+        self.keeper.sync(target())
+        self.assertEqual(self.bridge.calls[-1][3]['exitShortcut'],dict(modmask=12,key='Escape'))
+        reads = self.hypr.reads.count('binds')
+        self.keeper.sync(target())
+        self.assertEqual(self.hypr.reads.count('binds'),reads)
+        self.settings(floatingPreviewExitShortcut='ALT + F10')
+        self.keeper.sync(target())
+        self.assertEqual(self.hypr.reads.count('binds'),reads+1)
+        self.assertEqual(self.bridge.calls[-1][3]['exitShortcut'],dict(modmask=8,key='F10'))
+        self.settings(floatingPreviewExitShortcut='')
+        self.keeper.sync(target())
+        self.assertIsNone(self.bridge.calls[-1][3]['exitShortcut'])
+        self.assertEqual(self.hypr.reads.count('binds'),reads+1)
+        with self.assertRaises(ValueError):request(dict(target(),exitShortcut=dict(modmask=0,key='a')))
+
+    def test_local_exit_chord_round_trips_checkpoint_validation_without_becoming_a_global_action(self):
+        value = valid_preferences(dict(floatingPreviewExitShortcut='control+alt+esc',minimizeShortcut='ALT + F9'))
+        self.assertEqual(value,dict(floatingPreviewExitShortcut='CTRL + ALT + Escape',minimizeShortcut='ALT + F9'))
+        self.assertEqual(valid_preferences(dict(floatingPreviewExitShortcut='')),dict(floatingPreviewExitShortcut=''))
+        self.assertNotIn('floatingPreviewExitShortcut',valid_preferences(dict(floatingPreviewExitShortcut=True)))
+        self.assertEqual(LOCAL_SHORTCUT_DEFAULTS,dict(floatingPreviewExitShortcut='CTRL + ALT + Escape'))
+
+    def test_controller_exit_shortcut_command_returns_standard_field_acknowledgement(self):
+        output = io.StringIO()
+        with patch('stash.Stash',return_value=self.stash),contextlib.redirect_stdout(output):
+            self.assertEqual(controller_main(['interaction-exit-shortcut','alt+F10']),0)
+        value = json.loads(output.getvalue())
+        self.assertEqual((value['key'],value['binding']),('floatingPreviewExitShortcut','ALT + F10'))
 
     def test_build_revalidates_identity_geometry_and_enablement_before_acquiring(self):
         for mutation in (lambda:self.hypr.clients.clear(),lambda:self.hypr.monitors.clear(),

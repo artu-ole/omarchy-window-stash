@@ -53,7 +53,8 @@ class ResetSettingsTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.config = self.root/'shell.json'
         entry = {key: next(value for value in reversed(list(stash.CHOICES[key])) if value != default)
-                 for key, default in stash.DEFAULTS.items() if key not in shortcuts.DEFAULT_SHORTCUTS}
+                 for key, default in stash.DEFAULTS.items() if key in stash.CHOICES}
+        entry.update({key:'ALT + F11' for key in stash.LOCAL_SHORTCUT_DEFAULTS})
         entry.update(id=shortcuts.PLUGIN, enabled=False, hostMetadata={'keep': True},
                      minimizeShortcut='ALT + F8', restoreLastShortcut='ALT + F9', restoreOldestShortcut='ALT + F10')
         self.original = {'bar': {'position': 'top'}, 'plugins': [

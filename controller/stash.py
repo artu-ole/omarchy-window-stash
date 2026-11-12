@@ -24,6 +24,7 @@ PLUGIN = "community.window-stash"
 SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
+LOCAL_SHORTCUT_DEFAULTS = {"floatingPreviewExitShortcut": "CTRL + ALT + Escape"}
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
                 floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
@@ -31,6 +32,7 @@ DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="cur
                 floatingPreviewInteraction="off", floatingPreviewActivation="explicit", floatingPreviewKeyboard="mouse",
                 floatingPreviewInteractionFps="60", floatingPreviewControls="hover")
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
+DEFAULTS.update(LOCAL_SHORTCUT_DEFAULTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=("global", "workspace"),
                restoreDestination=("current", "original"), grouping=("window", "app"),
                iconShape=("auto", "circle", "square", "rounded", "squircle"),
@@ -244,8 +246,14 @@ class Stash:
         config = read_json(self.config, {})
         entry = next((p for p in config.get("plugins", []) if p.get("id") == PLUGIN), {})
         result={k: entry.get(k) if (not isinstance(CHOICES[k], range) or type(entry.get(k)) is int)
-                and entry.get(k) in CHOICES[k] else v for k, v in DEFAULTS.items() if k not in shortcuts.DEFAULT_SHORTCUTS}
+                and entry.get(k) in CHOICES[k] else v for k, v in DEFAULTS.items()
+                if k not in shortcuts.DEFAULT_SHORTCUTS and k not in LOCAL_SHORTCUT_DEFAULTS}
         result.update(shortcuts.settings(entry))
+        for key, default in LOCAL_SHORTCUT_DEFAULTS.items():
+            try:
+                result[key] = shortcuts.normalize(entry.get(key, default))
+            except ValueError:
+                result[key] = default
         return result
 
     def snapshot(self):
@@ -575,7 +583,7 @@ end''' % (lua("address:"+address), lua(destination), lua(column_width), lua(widt
         self.reconcile(clients)
         return dict(ok=True, windows=sorted(self.state["windows"], key=lambda r:r["order"], reverse=True),
                     monitors=monitors, workspaces=workspaces, settings=self.settings(),
-                    shortcutDefaults=dict(shortcuts.DEFAULT_SHORTCUTS),
+                    shortcutDefaults=dict(shortcuts.DEFAULT_SHORTCUTS, **LOCAL_SHORTCUT_DEFAULTS),
                     statePath=str(self.path), positions=read_json(self.positions, {}))
 
     def restore_last(self, to=None, monitor=None, workspace=None):
@@ -755,6 +763,8 @@ def main(argv=None):
     shortcut=sub.add_parser("shortcut",help="Set or disable one managed keyboard shortcut")
     shortcut.add_argument("key",choices=tuple(shortcuts.DEFAULT_SHORTCUTS))
     shortcut.add_argument("binding")
+    interaction_shortcut = sub.add_parser("interaction-exit-shortcut", help="Set or disable the interactive-preview exit shortcut")
+    interaction_shortcut.add_argument("binding")
     sub.add_parser("shortcuts-sync",help="Synchronize managed shortcuts with saved settings")
     reset = sub.add_parser("reset-settings",help="Reset all plugin preferences and shortcuts")
     reset.add_argument("--confirm",action="store_true",help="Confirm resetting all Window Stash settings")
@@ -781,6 +791,10 @@ def main(argv=None):
             print(json.dumps(result))
             return 0
         stash = Stash()
+        if args.command == "interaction-exit-shortcut":
+            from interaction import configure_exit_shortcut
+            print(json.dumps(configure_exit_shortcut(stash.config, args.binding, stash.hypr)))
+            return 0
         if args.command in ("shortcut","shortcuts-sync"):
             result=shortcuts.configure(stash.config,args.key,args.binding) if args.command=="shortcut" else shortcuts.sync(stash.config)
             print(json.dumps(result))

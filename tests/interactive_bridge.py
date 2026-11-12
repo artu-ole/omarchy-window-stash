@@ -34,13 +34,15 @@ def native_status(owner):
     return InteractionBridge(h).interaction_status(owner)
 
 
-def begin(owner, record, monitor, rect, excludes=None, keyboard=False):
+def begin(owner, record, monitor, rect, excludes=None, keyboard=False, exit_shortcut=None):
     identity = preview_records([record], h.read('clients'), [record['id']])[0]
     fields = ['owner='+lua(owner), 'window={'+','.join(key+'='+lua(value) for key, value in identity.items())+'}',
               'monitor='+lua(monitor), 'rect={'+','.join(key+'='+lua(value) for key, value in rect.items())+'}',
               'keyboard='+lua(keyboard), 'fps=60']
     if excludes:
         fields.append('excludeRects={'+','.join('{'+','.join(key+'='+lua(value) for key, value in item.items())+'}' for item in excludes)+'}')
+    if exit_shortcut is not None:
+        fields.append('exitShortcut={'+','.join(key+'='+lua(value) for key, value in exit_shortcut.items())+'}')
     h.eval('local result,err='+API+'.interaction_update({'+','.join(fields)+'});assert(result,err);assert(result.active,result.reason)')
 
 

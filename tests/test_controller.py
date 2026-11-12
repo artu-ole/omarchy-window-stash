@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
-from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
+from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
 import shortcuts
 
 
@@ -493,9 +493,9 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         snapshot = self.stash.listing()
         self.assertEqual(snapshot["settings"]["minimizeShortcut"], "CTRL + F8")
         self.assertEqual(snapshot["settings"]["restoreLastShortcut"], "ALT + F9")
-        self.assertEqual(snapshot["shortcutDefaults"], shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual(snapshot["shortcutDefaults"], dict(shortcuts.DEFAULT_SHORTCUTS,**LOCAL_SHORTCUT_DEFAULTS))
         snapshot["shortcutDefaults"]["minimizeShortcut"] = ""
-        self.assertEqual(self.stash.listing()["shortcutDefaults"], shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual(self.stash.listing()["shortcutDefaults"], dict(shortcuts.DEFAULT_SHORTCUTS,**LOCAL_SHORTCUT_DEFAULTS))
 
     def test_external_focus_restores_owned_parked_window_and_geometry(self):
         self.hypr.clients[0]["floating"] = True
@@ -1026,6 +1026,7 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
             floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",
+            floatingPreviewExitShortcut="CTRL + ALT + Escape",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
 
     def test_floating_previews_default_without_changing_existing_presentation_or_hover_settings(self):

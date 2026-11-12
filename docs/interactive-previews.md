@@ -29,6 +29,15 @@ and lease expiry. Native code builds without warnings against the running header
 253 Python tests pass, including 17 interaction-worker regressions. Axis focus
 changes are framed before scroll events so GTK receives complete scroll sequences.
 
+Completed keyboard proof: explicit content clicks acquire focus; entry typing,
+selection, native copy/paste and ordinary Escape work while the source stays hidden.
+Held keys are released once on exit, outside clicks restore visible keyboard focus,
+and an unqualified window-manager close action targets the hidden source without
+closing the visible control application. The configurable Ctrl+Alt+Escape exit
+works in mouse and keyboard sessions without leaking its press or release. Local
+exit preferences survive checkpoints and reset; no global binding is registered.
+261 Python tests pass, including 25 interaction-worker regressions.
+
 ## Architecture
 
 QML owns the miniature and its controls. It publishes the exact image rectangle in

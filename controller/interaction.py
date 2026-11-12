@@ -12,11 +12,44 @@ import uuid
 sys.dont_write_bytecode = True
 from preview import API, PreviewBridge, PreviewStopped, preview_records
 from stash import Stash, lua
+import shortcuts
 
 MAX_REQUEST = 8192
 MAX_EXCLUDES = 16
 RENEW_SECONDS = .5
 RESTART_REQUIRED = 'Restart Hyprland to load interactive Window Stash previews'
+EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
+
+
+def exit_shortcut(value, bindings=()):
+    """Validate a session-only chord without creating global shortcut handles."""
+    chord = shortcuts.normalize(value)
+    if not chord:
+        return chord, None
+    parts = chord.split(' + ')
+    modifiers = sum(shortcuts.MODIFIERS[part] for part in parts[:-1])
+    for binding in bindings:
+        if not isinstance(binding, dict) or binding.get('enabled') is False or binding.get('disabled') is True:
+            continue
+        if binding.get('modmask') == modifiers and str(binding.get('key', '')).lower() == parts[-1].lower():
+            # Session input routing has no submap. Reserve all compositor
+            # bindings, including non-default submaps and our global actions.
+            raise ValueError('Interactive preview exit shortcut '+chord
+                             +' is already assigned to another desktop action. Choose another shortcut or disable it.')
+    return chord, dict(modmask=modifiers, key=parts[-1])
+
+
+def configure_exit_shortcut(config, value, hypr):
+    chord = shortcuts.normalize(value)
+    if chord:
+        exit_shortcut(chord, hypr.read('binds'))
+    # Share the settings lock and conservative atomic merge used for ordinary
+    # shortcut edits, while leaving every global binding and config untouched.
+    with shortcuts._locked(config):
+        data, entry = shortcuts._read(config)
+        entry[EXIT_SHORTCUT_KEY] = chord
+        shortcuts._atomic_json(config, data)
+    return dict(ok=True, action='interaction-exit-shortcut', key=EXIT_SHORTCUT_KEY, binding=chord)
 
 
 def rectangle(value):
@@ -110,9 +143,13 @@ class InteractionBridge(PreviewBridge):
     def interaction_update(self, owner, source, target):
         identity = '{'+','.join(key+'='+lua(value) for key, value in source.items())+'}'
         excluded = '{'+','.join(lua_rectangle(rect) for rect in target['excludeRects'])+'}'
+        exit_binding = target.get('exitShortcut')
+        exit_value = ('{modmask='+lua(exit_binding['modmask'])+',key='+lua(exit_binding['key'])+'}'
+                      if exit_binding else 'nil')
         script = (self.interaction_probe+'local result,err='+API+'.interaction_update({owner='+lua(owner)
             + ',window='+identity+',monitor='+lua(target['monitor'])+',rect='+lua_rectangle(target['rect'])
             + ',excludeRects='+excluded+',keyboard='+lua(target['keyboard'])+',fps='+lua(target['fps'])
+            + ',exitShortcut='+exit_value
             + '}); assert(result,err); '+status_json('result'))
         return self._status(self.hypr.call('repl', script))
 
@@ -140,6 +177,8 @@ class InteractionKeeper:
         self.activation = None
         self.target = None
         self.terminal = None
+        self.exit_chord = None
+        self.exit_binding = None
 
     def _source(self, target):
         with self.stash.locked():
@@ -151,10 +190,16 @@ class InteractionKeeper:
         monitors = [monitor for monitor in self.stash.hypr.read('monitors') if monitor.get('name') == target['monitor']]
         if len(sources) != 1 or len(monitors) != 1 or monitors[0].get('dpmsStatus') is False:
             return None
+        if settings['scope'] == 'workspace':
+            origin = next((record.get('origin') for record in saved if record.get('id') == target['id']), None)
+            active = monitors[0].get('activeWorkspace')
+            if (not isinstance(origin, dict) or not isinstance(active, dict) or type(active.get('id')) is not int
+                    or origin.get('id') != active['id']):
+                return None
         if not all(monitor_contains(monitors[0], rect) for rect in [target['rect'], *target['excludeRects']]):
             return None
         parameters = dict(target, keyboard=target['keyboard'] and settings['floatingPreviewKeyboard'] == 'click',
-                          fps=int(settings['floatingPreviewInteractionFps']))
+                          fps=int(settings['floatingPreviewInteractionFps']), exitShortcut=settings[EXIT_SHORTCUT_KEY])
         return sources[0], parameters
 
     def sync(self, value):
@@ -192,8 +237,14 @@ class InteractionKeeper:
             if source is None:
                 self.terminal = dict(state='ended', id=target['id'], serial=target['serial'], reason='Preview changed while interaction was starting')
                 return self.terminal
+        identity, parameters = source
+        chord = parameters.pop('exitShortcut')
+        if not self.acquired or chord != self.exit_chord:
+            _, self.exit_binding = exit_shortcut(chord, self.stash.hypr.read('binds') if chord else [])
+            self.exit_chord = chord
+        parameters['exitShortcut'] = self.exit_binding
         self.acquired = True  # Also release an acquisition that fails halfway.
-        status = self.bridge.interaction_update(self.owner, *source)
+        status = self.bridge.interaction_update(self.owner, identity, parameters)
         self._verify_status(status, target)
         result = dict(state='active' if status['active'] else 'ended', id=target['id'], serial=target['serial'],
                       reason=status.get('reason', ''), status=status)
