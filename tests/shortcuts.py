@@ -180,7 +180,9 @@ def main():
         saved(session, KEYS[2], oldest)
         session.click(reveal(session, KEYS[2], 'defaultRect'))
         saved(session, KEYS[2], DEFAULT_SHORTCUTS[KEYS[2]])
-        assert not any(b.get('enabled') and b.get('description') == OLDEST_DESCRIPTION for b in owned())
+        assert [(b['modmask'], str(b['key']).lower()) for b in owned()
+                if b.get('enabled') and b.get('description') == OLDEST_DESCRIPTION] == [(72, 'z')], \
+            'Default FIFO action did not activate Super+Alt+Z'
         edit(session, KEYS[2], oldest)
         saved(session, KEYS[2], oldest)
         session.click(reveal(session, KEYS[2], 'clearRect'))
