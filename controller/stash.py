@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -161,6 +162,47 @@ class Hyprland:
         self.eval(owned_window_guard(record, parked)
                   + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
 
+    def park_owned(self, record, parked=False):
+        width, height = map(lua, record["size"])
+        resize = "hl.dispatch(hl.dsp.window.resize({window = w, x = " + width + ", y = " + height + ", relative = false}))\n"
+        # Keep the complete transition in one compositor transaction. Floating
+        # before moving prevents the private workspace's tiler from configuring
+        # this client or its already parked neighbors to a different geometry.
+        # The saved floating flag remains the original restoration state.
+        self.eval(owned_window_guard(record, parked)
+                  + 'if not w.floating then hl.dispatch(hl.dsp.window.float({window = w, action = "on"})) end\n'
+                  + 'if not w.floating then error("The window could not be parked as floating") end\n'
+                  + resize
+                  + "hl.dispatch(hl.dsp.window.move({window = w, workspace = " + lua(SPECIAL) + ", follow = false}))\n"
+                  + owned_window_guard(record, parked=True)
+                  + 'if not w.floating then error("The private workspace refused floating parking") end\n'
+                  + resize)
+
+    def scrolling_width(self, record):
+        output = self.call("repl", owned_window_guard(record)
+            + 'local layout=w.layout; if layout and layout.name=="scrolling" and layout.column then return layout.column.width end; return 0')
+        try:
+            width = float(output)
+        except (TypeError, ValueError):
+            return None
+        return width if math.isfinite(width) and 0 < width <= 1 else None
+
+    def release_external(self, record, workspace, native_floating=False):
+        # A user/switcher may move the client directly out of our workspace.
+        # Undo only temporary parking state in its chosen destination, without
+        # changing focus, geometry, pinning or fullscreen preferences there.
+        guard = owned_window_guard(record, parked=workspace["name"])
+        code = guard
+        if not record["floating"]:
+            if native_floating:
+                code += 'hl.dispatch(hl.dsp.window.tag({window=w, tag="+omarchy-mode-floated"}))\n'
+            desired = lua(native_floating)
+            code += ('if w.floating ~= ' + desired + ' then hl.dispatch(hl.dsp.window.float({window=w, action='
+                     + lua("on" if native_floating else "off") + '})) end\n'
+                     + guard
+                     + 'if w.floating ~= ' + desired + ' then error("A window rule prevented release of parking state") end\n')
+        self.eval(code + 'hl.dispatch(hl.dsp.window.tag({window=w, tag=' + lua("-"+record["tag"]) + '}))')
+
     def close_stashed(self, record):
         self.dispatch_owned("window.close", record, parked=True)
 
@@ -229,6 +271,7 @@ class Stash:
                             or migrated["workspace"]["name"] != SPECIAL):
                         raise RuntimeError("Legacy stashed window did not reach the private workspace")
                     c = migrated
+                    r["phase"] = "stashed"
                 except Exception as error:
                     r["phase"] = "restoring"
                     r["lastError"] = str(error)
@@ -236,9 +279,27 @@ class Stash:
                     raise
             parked = c["workspace"]["name"] == SPECIAL
             if parked and tagged:
-                r["phase"] = "stashed"
+                if not c["floating"] and r["phase"] != "restoring":
+                    try:
+                        c = self.park(r, parked=True)
+                    except Exception as error:
+                        r["phase"] = "restoring"
+                        r["lastError"] = str(error)
+                        # Leave the recovery controls available. Retrying this
+                        # normalization before restore would trap a client when
+                        # a private-workspace rule keeps refusing the change.
+                if r["phase"] != "restoring":
+                    r["phase"] = "stashed"
             elif r["phase"] == "restoring" and tagged:
                 pass  # Preserve metadata after a partial geometry failure for retry.
+            elif r["phase"] == "stashed" and tagged:
+                try:
+                    self.hypr.release_external(r, c["workspace"],
+                        self.native_floating_workspace(self.workspace_selector(c["workspace"])))
+                    continue
+                except Exception as error:
+                    r["phase"] = "restoring"
+                    r["lastError"] = str(error)
             else:
                 continue
             r.update(title=c["title"], app=c["class"])
@@ -246,6 +307,17 @@ class Stash:
         self.state["windows"] = kept
         if old != json.dumps(self.state, sort_keys=True):
             self.save()
+
+    def park(self, record, parked=False):
+        self.hypr.park_owned(record, parked=parked)
+        after = self.hypr.client(record["address"])
+        if not self.matches(record, after) or record["tag"] not in after.get("tags", []):
+            raise RuntimeError("Window identity changed while minimizing")
+        if after["workspace"]["name"] != SPECIAL:
+            raise RuntimeError("The window did not reach the stash")
+        if not after["floating"] or after["size"] != record["size"]:
+            raise RuntimeError("The stashed window did not retain its saved size")
+        return after
 
     def invoke_context(self, monitor_name=None, workspace=None):
         monitors = self.hypr.read("monitors")
@@ -290,16 +362,16 @@ class Stash:
                     raise RuntimeError("Window identity changed while minimizing")
                 record.update(size=base["size"], relativePosition=[base["at"][0]-monitor["x"],base["at"][1]-monitor["y"]])
                 self.save()
+            if not record["floating"]:
+                column_width = self.hypr.scrolling_width(record)
+                if column_width is not None:
+                    record["scrollingWidth"] = column_width
+                    self.save()
             if record["pinned"]:
                 self.hypr.dispatch_owned("window.pin", record, action="toggle")
             if len(active.get("grouped", [])) > 1:
                 self.hypr.dispatch_owned("window.move", record, out_of_group=True)
-            self.hypr.dispatch_owned("window.move", record, workspace=SPECIAL, follow=False)
-            after = self.hypr.client(active["address"])
-            if not self.matches(record, after) or record["tag"] not in after.get("tags", []):
-                raise RuntimeError("Window identity changed while minimizing")
-            if after["workspace"]["name"] != SPECIAL:
-                raise RuntimeError("The window did not reach the stash")
+            self.park(record)
             record["phase"] = "stashed"
             self.save()
             # Avoid leaving keyboard focus on the parked client.
@@ -442,6 +514,10 @@ class Stash:
     def append_scrolling(self, address, destination, width, expected=None):
         # Query Lua layout state rather than infer order from off-screen coordinates.
         # Focus the terminal column first, then reinsert this exact window after it.
+        column_width = (expected or {}).get("scrollingWidth")
+        if (type(column_width) not in (int, float) or not math.isfinite(column_width)
+                or not 0 < column_width <= 1):
+            column_width = None
         code = '''local w = hl.get_window(%s)
 local ws = hl.get_workspace(%s)
 if w and ws and ws.tiled_layout == "scrolling" then
@@ -463,14 +539,30 @@ if w and ws and ws.tiled_layout == "scrolling" then
   -- Start wide so the scrolling resize cannot clip growth at the viewport edge.
   -- Absolute client sizing then accounts for this column's gaps and borders.
   local columnWidth = w.layout.column.width
+  local savedColumnWidth = %s
   local initialWidth = w.size.x
   hl.dispatch(hl.dsp.layout("colresize 1"))
   if w.size.x == initialWidth then
-    -- A vertical tape or forced single-column fullscreen may keep X unchanged.
+    -- Pixel width cannot recover a vertical tape's primary-axis fraction or
+    -- the hidden fraction of a forced full-screen singleton. Keep the exact
+    -- original fraction, without an ineffective resize corrupting it again.
+    if savedColumnWidth then
+      hl.dispatch(hl.dsp.layout("colresize " .. tostring(savedColumnWidth)))
+      return
+    end
+    -- Older records have no fraction. A forced singleton is safely full-width;
+    -- otherwise preserve the previous fallback for vertical tape layouts.
+    local singleColumn = true
+    for _, candidate in pairs(hl.get_workspace_windows(ws)) do
+      if not candidate.floating and candidate.layout and candidate.layout.column
+          and candidate.layout.column.index ~= w.layout.column.index then singleColumn = false; break end
+    end
+    local ok, forceSingle = pcall(hl.get_config, "scrolling.fullscreen_on_one_column")
+    if singleColumn and ok and (forceSingle == true or forceSingle == 1) then return end
     hl.dispatch(hl.dsp.layout("colresize " .. tostring(columnWidth)))
   end
   hl.dispatch(hl.dsp.window.resize({window=w, x=math.min(%s, w.size.x), y=w.size.y, relative=false}))
-end''' % (lua("address:"+address), lua(destination), lua(width))
+end''' % (lua("address:"+address), lua(destination), lua(column_width), lua(width))
         self.hypr.eval((owned_window_guard(expected) if expected else "") + code)
 
     def listing(self):

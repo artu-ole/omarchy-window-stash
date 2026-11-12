@@ -142,6 +142,10 @@ the captured window's proportions and changes only the miniature; saved restorat
 geometry stays unchanged. Position and width persist separately from floating icons.
 Lock placement to prevent movement and resizing. Free sizing hides the scale dropdown.
 
+Sources retain their saved dimensions while hidden. Tiled windows float inside the
+private stash and rejoin the tiling layout on restore, preserving scrolling width.
+Stashing another window or starting live updates does not reshape existing sources.
+
 | Key | Default | Values / meaning |
 |---|---|---|
 | `floatingPreviewSizing` | `free` | `free`: resize directly; `preset`: use the scale dropdown |

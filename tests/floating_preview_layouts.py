@@ -15,11 +15,12 @@ from hover_previews import spawn_color
 from live import command, configure, h, shell, wait
 from live_compatibility import ready as enhanced_ready
 from native_session import NativeSession
+from preview import PreviewBridge
 from stash import SPECIAL
 
 
 RESTORATION_FIELDS = ('size', 'relativePosition', 'floating', 'origin', 'monitor', 'monitorName', 'slot',
-                      'pinned', 'fullscreen', 'fullscreenClient')
+                      'pinned', 'fullscreen', 'fullscreenClient', 'scrollingWidth')
 
 
 def layout(workspace):
@@ -82,18 +83,21 @@ def captured(session, record):
             return None
         source = value['image']['sourceSize']
         client = h.client(record['address'])
-        if not client or client['floating'] or client['workspace']['name'] != SPECIAL:
+        if not client or not client['floating'] or client['workspace']['name'] != SPECIAL:
+            return None
+        if any(abs(actual-saved) > 1 for actual, saved in zip(client['size'], record['size'])):
             return None
         actual = client['size'][0]/client['size'][1]
         return value if abs(source['width']/source['height']-actual) <= max(.01, actual*.01) else None
     try:
-        value = wait(fits, 'Tiled preview did not adapt to its actual parked surface geometry', timeout=12)
+        value = wait(fits, 'Tiled preview did not retain its original dimensions while parked floating', timeout=12)
     except AssertionError:
         print('Tiled capture diagnostics:', {'record': record['id'], 'savedSize': record['size'],
               'client': source_state(record), 'card': card(session, record), 'preview': previews(session)}, flush=True)
         raise
     assert_borderless_fit(value)
     bounded(session, value)
+    assert not ledger(record)['floating'], 'Floating parking changed the saved tiled restoration state'
     return value
 
 
@@ -151,15 +155,21 @@ def dwindle(session):
     initial = captured(session, first)
     initial_ratio = initial['image']['sourceSize']['width']/initial['image']['sourceSize']['height']
     saved_ratio = first['size'][0]/first['size'][1]
-    assert abs(initial_ratio-saved_ratio) > .1, ('Dwindle fixture did not exercise original-versus-parked aspect differences', first['size'], initial['image']['sourceSize'])
-    resize_only_miniature(session, first)
+    assert abs(initial_ratio-saved_ratio) <= max(.01, saved_ratio*.01), \
+        ('Parking a tiled window changed its original preview aspect', first['size'], initial['image']['sourceSize'])
+    resized = resize_only_miniature(session, first)
+    first_source = source_state(first)
     first_metadata = ledger(first)
     second = park(session, second_address)
     first_after, second_after = captured(session, first), captured(session, second)
     changed_ratio = first_after['image']['sourceSize']['width']/first_after['image']['sourceSize']['height']
-    assert abs(changed_ratio-initial_ratio) > .1, ('Adding a tiled stash neighbor did not exercise parked-source reflow', initial_ratio, changed_ratio)
-    assert ledger(first) == first_metadata, 'Updating the actual source aspect rewrote original restoration geometry'
-    print('PASS dwindle miniatures fit actual captured surfaces and adapt when another stashed tile changes the private layout', flush=True)
+    assert abs(changed_ratio-initial_ratio) <= max(.01, initial_ratio*.01), \
+        ('Stashing another window reshaped an existing preview source', initial_ratio, changed_ratio)
+    assert all(abs(first_after[name]-resized[name]) <= 1 for name in ('width', 'height')), \
+        ('Stashing another window resized the existing miniature', resized['rect'], first_after['rect'])
+    assert source_state(first) == first_source, 'A new stashed neighbor moved or resized the parked source'
+    assert ledger(first) == first_metadata, 'Floating parking rewrote original restoration geometry'
+    print('PASS tiled sources park floating at their saved dimensions; adding another stash preserves existing source and miniature proportions', flush=True)
 
     destination = session.workspace+1
     configure('scope', 'global')
@@ -222,6 +232,9 @@ def main(scrolling_only=False):
     original_layout = layout(original_workspace)
     rule_key = '__window_stash_preview_layouts_'+str(os.getpid())
     with NativeSession() as session:
+        # A first native-plugin load reloads compositor configuration. Finish
+        # that before installing runtime-only rules for the owned workspaces.
+        PreviewBridge(h).ensure()
         h.eval('_G.'+rule_key+'={}')
         try:
             for workspace, mode in ((session.workspace, 'dwindle'), (session.workspace+1, 'dwindle'), (session.workspace+2, 'scrolling')):
