@@ -470,7 +470,8 @@ class Stash:
         if not record:
             return {"ok": True, "action": "noop", "reason": "Window is no longer stashed"}
         expected = dict(expected or record)
-        if not self.matches(expected, self.hypr.client(record["address"])):
+        current = self.hypr.client(record["address"])
+        if not self.matches(expected, current):
             self.reconcile(self.hypr.read("clients"))
             return {"ok": True, "action": "noop", "id": ident, "reason": "Window identity changed"}
         def dispatch(dispatcher, **args):
@@ -481,9 +482,22 @@ class Stash:
         native_floating = self.native_floating_workspace(destination)
         floating = record["floating"] or native_floating
         target = "address:"+record["address"]
+        fullscreen = [current.get("fullscreen", 0), current.get("fullscreenClient", 0)]
+        if any(fullscreen):
+            # An interactive source can request fullscreen while hidden. Clear
+            # it before float/resize/layout dispatchers, then honor that newer
+            # request after restoring the ordinary window. Retain it separately
+            # so a partial failure does not lose it or alter the original snapshot.
+            record["restoreFullscreen"] = fullscreen
+        desired_fullscreen = record.get("restoreFullscreen")
+        if (not isinstance(desired_fullscreen, list) or len(desired_fullscreen) != 2
+                or any(type(value) is not int or not 0 <= value <= 3 for value in desired_fullscreen)):
+            desired_fullscreen = [record["fullscreen"], record["fullscreenClient"]]
         record["phase"] = "restoring"
         self.save()
         try:
+            if any(fullscreen):
+                dispatch("window.fullscreen_state", window=target, internal=0, client=0, action="set")
             dispatch("focus", monitor=dest_monitor["name"])
             dispatch("focus", workspace=destination)
             dispatch("window.move", window=target, workspace=destination, follow=False)
@@ -505,9 +519,9 @@ class Stash:
                 raise RuntimeError("Window identity changed during restoration")
             if bool(pin_state.get("pinned")) != record["pinned"]:
                 dispatch("window.pin", window=target, action="toggle")
-            if record["fullscreen"] or record["fullscreenClient"]:
-                dispatch("window.fullscreen_state", window=target, internal=record["fullscreen"],
-                                   client=record["fullscreenClient"], action="set")
+            if any(desired_fullscreen):
+                dispatch("window.fullscreen_state", window=target, internal=desired_fullscreen[0],
+                                   client=desired_fullscreen[1], action="set")
             after = self.hypr.client(record["address"])
             if not self.matches(expected, after) or expected["tag"] not in after.get("tags", []):
                 raise RuntimeError("Window identity changed during restoration")

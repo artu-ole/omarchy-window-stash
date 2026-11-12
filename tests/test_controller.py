@@ -1463,6 +1463,44 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         self.assertEqual(self.hypr.clients[0]["fullscreen"],2)
         self.assertTrue(self.hypr.clients[0]["pinned"])
 
+    def test_fullscreen_requested_while_hidden_is_cleared_for_restore_then_reapplied(self):
+        for floating, internal, client_mode in ((False,2,2),(True,1,0),(True,0,2)):
+            with self.subTest(floating=floating,internal=internal,client=client_mode):
+                hypr,stash=self.race_fixture("restore-live-fullscreen-"+str(floating)+str(internal)+str(client_mode))
+                hypr.clients[0]["floating"]=floating
+                ident=stash.minimize()["id"]
+                hypr.clients[0].update(fullscreen=internal,fullscreenClient=client_mode)
+                dispatch=hypr.dispatch
+                def reject_fullscreen_geometry(name,**args):
+                    source=hypr.client("0x1")
+                    if name in ("window.float","window.resize") and (source["fullscreen"] or source["fullscreenClient"]):
+                        raise RuntimeError("Window is fullscreen")
+                    return dispatch(name,**args)
+                hypr.dispatch=reject_fullscreen_geometry
+                self.assertEqual(stash.restore(ident)["action"],"restored")
+                source=hypr.client("0x1")
+                self.assertEqual((source["fullscreen"],source["fullscreenClient"]),(internal,client_mode))
+                self.assertEqual(source["floating"],floating)
+                self.assertEqual(stash.state["windows"],[])
+
+    def test_partial_fullscreen_restore_retains_new_request_without_changing_original_snapshot(self):
+        self.hypr.clients[0]["floating"]=True
+        ident=self.stash.minimize()["id"]
+        original=copy.deepcopy(self.stash.state["windows"][0])
+        self.hypr.clients[0].update(fullscreen=2,fullscreenClient=1)
+        self.hypr.fail="window.resize"
+        with self.assertRaisesRegex(RuntimeError,"Injected IPC failure"):
+            self.stash.restore(ident)
+        pending=self.stash.state["windows"][0]
+        self.assertEqual(pending["restoreFullscreen"],[2,1])
+        for field in ("fullscreen","fullscreenClient","size","relativePosition","floating","origin"):
+            self.assertEqual(pending[field],original[field])
+        self.assertEqual((self.hypr.clients[0]["fullscreen"],self.hypr.clients[0]["fullscreenClient"]),(0,0))
+        self.hypr.fail=None
+        self.assertEqual(self.stash.restore(ident)["action"],"restored")
+        self.assertEqual((self.hypr.clients[0]["fullscreen"],self.hypr.clients[0]["fullscreenClient"]),(2,1))
+        self.assertEqual(self.stash.state["windows"],[])
+
     def test_external_restore_prunes_metadata(self):
         self.stash.minimize()
         self.hypr.clients[0]["workspace"]=dict(id=4,name="4")
