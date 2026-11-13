@@ -26,6 +26,8 @@ SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
 FULLSCREEN_CLEANUP_PENDING = 'Window Stash preview fullscreen cleanup is pending'
+PREVIEW_MAX_DIMENSION = 8192
+PREVIEW_MAX_PIXELS = 16_777_216
 LOCAL_SHORTCUT_DEFAULTS = {"floatingPreviewExitShortcut": "CTRL + ALT + Escape"}
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
@@ -137,6 +139,39 @@ def restored_geometry(record, monitor):
             max(area[1], min(y, area[1] + area[3] - height)), width, height]
 
 
+def preview_aspect(value):
+    if type(value) not in (int, float) or not math.isfinite(value) or not .02 <= value <= 50:
+        raise ValueError('Preview aspect must be a finite number between 0.02 and 50')
+    return float(value)
+
+
+def preview_source_size(size, aspect, axis):
+    aspect = preview_aspect(aspect)
+    if axis not in ('width', 'height'):
+        raise ValueError('Preview resize axis must be width or height')
+    if (not isinstance(size, (list, tuple)) or len(size) != 2
+            or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in size)):
+        raise ValueError('The preview source has invalid dimensions')
+    width, height = map(float, size)
+    if axis == 'width':
+        width = height * aspect
+    else:
+        height = width / aspect
+    scale = min(1, PREVIEW_MAX_DIMENSION / max(width, height),
+                math.sqrt(PREVIEW_MAX_PIXELS / (width * height)))
+    width, height = max(1, round(width * scale)), max(1, round(height * scale))
+    if width * height > PREVIEW_MAX_PIXELS:
+        if width >= height:
+            width = max(1, PREVIEW_MAX_PIXELS // height)
+        else:
+            height = max(1, PREVIEW_MAX_PIXELS // width)
+    return [width, height]
+
+
+def preview_geometry_owner(ident):
+    return uuid.uuid5(uuid.NAMESPACE_URL, PLUGIN + ':preview-aspect:' + ident).hex
+
+
 def eligible(records, workspace, scope):
     return sorted((r for r in records if scope == "global" or r["origin"]["id"] == workspace),
                   key=lambda r: r["order"], reverse=True)
@@ -185,7 +220,21 @@ class Hyprland:
                             +'assert(type(api.fullscreen_cleanup_pending)=="function",'
                             +lua('Reload preview support in Window Stash Settings before restoring fullscreen previews')+')\nend\n')
         self.eval(prefix+capability_guard+'local cleared,err=api.clear_fullscreen('+payload+'); assert(cleared~=nil,err)')
-        query = (prefix+'if type(api.fullscreen_cleanup_pending)=="function" then\n'
+        Hyprland.wait_preview_fullscreen(self, record)
+
+    def wait_preview_fullscreen(self, record):
+        """Wait for an existing exit resize without changing client fullscreen."""
+        identity = dict(id=record['id'], address=record['address'], pid=record['pid'],
+                        stable_id=record['stableId'], tag=record['tag'])
+        payload = '{'+','.join(key+'='+lua(value) for key, value in identity.items())+'}'
+        prefix = ('local api=hl.plugin and hl.plugin.window_stash_preview\n'
+                  +'if not api then return end\n')
+        query = (prefix+'local info=type(api.status)=="function" and api.status() or nil\n'
+                 +'if type(info)=="table" and type(info.capabilities)=="table" '
+                 +'and info.capabilities.constrainedFullscreen==true then\n'
+                 +'assert(type(api.fullscreen_cleanup_pending)=="function",'
+                 +lua('Reload preview support in Window Stash Settings before resizing fullscreen previews')+')\nend\n'
+                 +'if type(api.fullscreen_cleanup_pending)=="function" then\n'
                  +'local pending,err=api.fullscreen_cleanup_pending('+payload+')\n'
                  +'assert(type(pending)=="boolean",err or "Could not read preview fullscreen cleanup state")\n'
                  +'assert(not pending,'+lua(FULLSCREEN_CLEANUP_PENDING)+')\nend')
@@ -200,6 +249,97 @@ class Hyprland:
                 if time.monotonic() >= deadline:
                     raise RuntimeError('Preview fullscreen is still finishing. The window remains stashed; try Restore again.') from error
                 time.sleep(.05)
+
+    def preview_geometry(self, record, size=None, expected_size=None, resizing=False):
+        """Read or resize one private source in a single guarded transaction."""
+        payload = '{'+','.join(key+'='+lua(value) for key, value in dict(
+            id=record['id'], address=record['address'], pid=record['pid'],
+            stable_id=record['stableId'], tag=record['tag']).items())+'}'
+        owner = lua(preview_geometry_owner(record['id']))
+        renewals = getattr(self, '_preview_lease_renewals', None)
+        if renewals is None:
+            renewals = self._preview_lease_renewals = {}
+        renew_lease = time.monotonic() - renewals.get(record['id'], float('-inf')) >= .4
+        code = (owned_window_guard(record, parked=True)
+                +'assert(w.mapped==true,"The preview source is no longer mapped")\n'
+                +'assert(w.floating==true,"The preview source is not parked as floating")\n'
+                +'assert(w.fullscreen==0,"Restore desktop fullscreen before resizing a preview")\n'
+                +'local api=hl.plugin and hl.plugin.window_stash_preview\n'
+                +'local info=api and type(api.status)=="function" and api.status() or nil\n')
+        if size is not None or resizing:
+            code += ('assert(not (type(info)=="table" and (info.inputActive==true '
+                     +'or (type(info.interaction)=="table" and info.interaction.active==true))),'
+                     +'"Stop preview interaction before resizing")\n'
+                     +'assert(not (type(info)=="table" and info.reloadPending==true),'
+                     +'"Preview support is being reloaded; try again shortly")\n'
+                     +'if api and type(api.fullscreen_cleanup_pending)=="function" then\n'
+                     +'local pending,err=api.fullscreen_cleanup_pending('+payload+'); assert(type(pending)=="boolean",err)\n'
+                     +'assert(not pending,'+lua(FULLSCREEN_CLEANUP_PENDING)+')\nend\n')
+        if size is not None:
+            if expected_size is not None:
+                code += ('assert(w.size.x=='+lua(expected_size[0])+' and w.size.y=='+lua(expected_size[1])+','
+                         +'"The preview source changed size; retry the resize")\n')
+            code += ('if w.size.x~='+lua(size[0])+' or w.size.y~='+lua(size[1])+' then\n'
+                     +'hl.dispatch(hl.dsp.window.resize({window=w,x='+lua(size[0])+',y='+lua(size[1])+',relative=false}))\nend\n'
+                     +owned_window_guard(record, parked=True)
+                     +'assert(w.mapped==true and w.floating==true and w.fullscreen==0,'
+                     +'"The preview source changed during resizing")\n')
+        code += (r'''local function quote(value) return '"'..tostring(value or ""):gsub('[%z\1-\31\\"]',function(c) return string.format('\\u%04x',string.byte(c)) end)..'"' end
+local geometry=nil
+if api and type(api.source_geometry)=="function" then
+ local err; geometry,err=api.source_geometry('''+payload+r'''); assert(type(geometry)=="table",err or "Could not read source geometry")
+elseif type(info)=="table" and type(info.capabilities)=="table" and info.capabilities.sourceGeometry==true then
+ error("Reload preview support in Window Stash Settings before resizing previews")
+end
+local width,height=w.size.x,w.size.y
+local fields={}
+for _,key in ipairs({"width","height","configuredWidth","configuredHeight","surfaceWidth","surfaceHeight"}) do
+ local value=geometry and geometry[key] or 0
+ assert(type(value)=="number" and value==value and value>=0 and value<=1000000,"Invalid native source geometry")
+ fields[#fields+1]=quote(key)..":"..tostring(value)
+end
+local ready=geometry and geometry.ready==true or false
+local reason=geometry and tostring(geometry.reason or "") or "native-source-geometry-unavailable"
+if ready and (math.abs(geometry.width-width)>.51 or math.abs(geometry.height-height)>.51) then
+ ready=false; reason="source-geometry-changed"
+end
+local pending=reason=="configure-pending" or reason=="frame-pending" or reason=="animation-pending" or reason=="surface-unavailable"
+local leaseWanted='''+lua(size is not None or resizing or record.get('previewResized') is True)+r'''
+local renewed=false
+if api and type(api.release)=="function" and (ready or not geometry or not pending) then
+ api.release('''+owner+r''')
+elseif geometry and pending and leaseWanted and '''+lua(renew_lease)+r''' then
+ assert(type(api.update)=="function" and type(api.release)=="function","Reload preview support before resizing previews")
+ local lease,err=api.update({owner='''+owner+r''',windows={'''+payload+r'''}})
+ assert(type(lease)=="table" and lease.accepted==1,err or "The preview source changed before rendering could resume")
+ renewed=true
+end
+return '{"size":['..tostring(width)..','..tostring(height)..'],"ready":'..tostring(ready)
+ ..',"nativeRequired":'..tostring(geometry==nil)..',"reason":'..quote(reason)
+ ..',"nativeAvailable":'..tostring(api~=nil)
+ ..',"leaseRenewed":'..tostring(renewed)
+ ..',"nativeGeometry":{'..table.concat(fields,",")..',"ready":'..tostring(ready)..',"reason":'..quote(reason)..'}}'
+''')
+        result = json.loads(self.call('repl', code))
+        values = result.get('size')
+        if (not isinstance(values, list) or len(values) != 2
+                or any(type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 1_000_000 for value in values)
+                or type(result.get('ready')) is not bool or type(result.get('nativeRequired')) is not bool
+                or not isinstance(result.get('reason'), str) or len(result['reason']) > 512):
+            raise RuntimeError('Could not read preview source geometry')
+        result['aspect'] = values[0] / values[1]
+        if result.pop('leaseRenewed', False):
+            renewals[record['id']] = time.monotonic()
+        elif result['ready'] or result['nativeRequired'] or result['reason'] not in (
+                'configure-pending', 'frame-pending', 'animation-pending', 'surface-unavailable'):
+            renewals.pop(record['id'], None)
+        return result
+
+    def release_preview_geometry(self, ident):
+        getattr(self, '_preview_lease_renewals', {}).pop(ident, None)
+        self.eval('local api=hl.plugin and hl.plugin.window_stash_preview; '
+                  +'if api and type(api.release)=="function" then api.release('
+                  +lua(preview_geometry_owner(ident))+') end')
 
     def park_owned(self, record, parked=False):
         width, height = map(lua, record["size"])
@@ -297,6 +437,91 @@ class Stash:
     def matches(self, record, client):
         return (client and record["address"] == client["address"] and record["pid"] == client["pid"]
                 and (not record.get("stableId") or record["stableId"] == client.get("stableId")))
+
+    def _preview_record(self, ident):
+        record = next((value for value in self.state['windows'] if value['id'] == ident), None)
+        if record is None or record.get('phase') != 'stashed':
+            raise RuntimeError('The preview window is no longer stashed')
+        current = self.hypr.client(record['address'])
+        if (not self.matches(record, current) or record['tag'] not in current.get('tags', [])
+                or current.get('workspace', {}).get('name') != SPECIAL or current.get('mapped') is not True):
+            raise RuntimeError('The preview window identity changed or left the stash')
+        if current.get('floating') is not True or current.get('fullscreen', 0) != 0:
+            raise RuntimeError('The preview source must be parked floating without desktop fullscreen')
+        stable = record.get('stableId') or current.get('stableId')
+        if not stable:
+            raise RuntimeError('The preview source has no stable window identity')
+        return record, dict(record, stableId=stable)
+
+    def preview_geometry(self, ident):
+        with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
+            try:
+                with self.locked():
+                    _, identity = self._preview_record(ident)
+                    return dict(self.hypr.preview_geometry(identity), ok=True, id=ident)
+            except Exception:
+                self._release_preview_geometry(ident)
+                raise
+
+    def _release_preview_geometry(self, ident):
+        release = getattr(self.hypr, 'release_preview_geometry', None)
+        if release is not None:
+            try:
+                release(ident)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                pass  # The native 2.5-second lease still bounds cancellation.
+
+    def preview_aspect(self, ident, aspect, axis, settle=False):
+        aspect = preview_aspect(aspect)
+        if axis not in ('width', 'height'):
+            raise ValueError('Preview resize axis must be width or height')
+        with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
+            try:
+                with self.locked():
+                    record, identity = self._preview_record(ident)
+                    self.hypr.wait_preview_fullscreen(identity)
+                    before = self.hypr.preview_geometry(identity, resizing=True)
+                    needs_support = isinstance(self.hypr, Hyprland) and before.get('nativeAvailable') is False
+                    if not needs_support:
+                        return self._resize_preview_locked(record, identity, before, aspect, axis, settle)
+                # First use can build native support. Do not hold the ledger
+                # during compilation; revalidate the exact source afterwards.
+                native_error = ''
+                try:
+                    from preview import PreviewBridge
+                    PreviewBridge(self.hypr).ensure()
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    native_error = str(error)[-512:]
+                with self.locked():
+                    record, identity = self._preview_record(ident)
+                    self.hypr.wait_preview_fullscreen(identity)
+                    before = self.hypr.preview_geometry(identity, resizing=True)
+                    result = self._resize_preview_locked(record, identity, before, aspect, axis, settle)
+                    if native_error and result['nativeRequired']:
+                        result['nativeError'] = native_error
+                    return result
+            except Exception:
+                self._release_preview_geometry(ident)
+                raise
+
+    def _resize_preview_locked(self, record, identity, before, aspect, axis, settle):
+        # The mutation repeats every preflight guard atomically.
+        requested = preview_source_size(before['size'], aspect, axis)
+        changed = requested != before['size']
+        if changed:
+            record['previewResized'] = True
+            identity['previewResized'] = True
+            self.save()
+            result = self.hypr.preview_geometry(identity, requested, expected_size=before['size'])
+        else:
+            result = before
+        if settle and not result['nativeRequired']:
+            deadline = time.monotonic() + 2.5
+            while not result['ready'] and time.monotonic() < deadline:
+                time.sleep(.05)
+                result = self.hypr.preview_geometry(identity)
+        return dict(result, ok=True, id=record['id'], requestedAspect=aspect,
+                    requestedSize=requested, changed=changed)
 
     def reconcile(self, clients):
         live = {c["address"]: c for c in clients}
@@ -844,6 +1069,14 @@ def main(argv=None):
     preview_pos.add_argument("x", type=int)
     preview_pos.add_argument("y", type=int)
     preview_pos.add_argument("width", type=int)
+    preview_pos.add_argument("--aspect", type=float)
+    source_aspect = sub.add_parser("preview-aspect", help="Change a private preview source's aspect ratio")
+    source_aspect.add_argument("id")
+    source_aspect.add_argument("aspect", type=float)
+    source_aspect.add_argument("--axis", choices=("width", "height"), required=True)
+    source_aspect.add_argument("--settle", action="store_true")
+    source_geometry = sub.add_parser("preview-geometry", help="Read exact preview source resize readiness")
+    source_geometry.add_argument("id")
     rebase = sub.add_parser("rebase")
     rebase.add_argument("old", type=int)
     rebase.add_argument("new", type=int)
@@ -862,6 +1095,11 @@ def main(argv=None):
             return 0
         if args.command in ("shortcut","shortcuts-sync"):
             result=shortcuts.configure(stash.config,args.key,args.binding) if args.command=="shortcut" else shortcuts.sync(stash.config)
+            print(json.dumps(result))
+            return 0
+        if args.command in ('preview-aspect', 'preview-geometry'):
+            result = (stash.preview_aspect(args.id, args.aspect, args.axis, args.settle)
+                      if args.command == 'preview-aspect' else stash.preview_geometry(args.id))
             print(json.dumps(result))
             return 0
         with stash.locked():
@@ -899,7 +1137,10 @@ def main(argv=None):
                         and 1 <= args.width <= 1_000_000):
                     raise ValueError("Preview coordinates must be within ±1000000 and width within 1–1000000 pixels")
                 positions=read_json(stash.positions,{})
-                positions.setdefault(args.monitor,{})[args.key]=[args.x,args.y,args.width]
+                point = [args.x,args.y,args.width]
+                if args.aspect is not None:
+                    point.append(preview_aspect(args.aspect))
+                positions.setdefault(args.monitor,{})[args.key]=point
                 atomic_json(stash.positions,positions)
                 result=dict(ok=True)
             else: result=stash.listing()
