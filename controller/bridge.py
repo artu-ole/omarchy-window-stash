@@ -41,6 +41,7 @@ local i=type(s.interaction)=='table' and s.interaction or {}
 local fields={available=true,protocol=s.protocol,version=s.version,hyprlandHash=s.hyprlandHash,
  fingerprint=s.fingerprint,modulePath=s.modulePath,owners=s.owners,windows=s.windows,
  reloadProtocol=s.reloadProtocol,reloadPending=s.reloadPending,reloadReady=s.reloadReady,pendingButtons=s.pendingButtons,pendingKeys=s.pendingKeys,
+ pendingFullscreen=s.pendingFullscreen,
  hasPrepare=type(api.prepare_reload)=='function',hasCancel=type(api.cancel_reload)=='function',
  hasInteraction=type(api.interaction_update)=='function',inputActive=i.active==true,
  heldButtons=i.heldButtons or 0,heldKeys=i.heldKeys or 0}
@@ -64,7 +65,7 @@ def decode_status(raw):
     required = ('owners', 'windows', 'hasPrepare', 'hasCancel', 'hasInteraction', 'inputActive')
     if any(name not in value for name in required):
         raise RuntimeError('Native preview support returned incomplete reload state')
-    for name in ('owners', 'windows', 'pendingButtons', 'pendingKeys', 'heldButtons', 'heldKeys'):
+    for name in ('owners', 'windows', 'pendingButtons', 'pendingKeys', 'pendingFullscreen', 'heldButtons', 'heldKeys'):
         if name in value and (type(value[name]) is not int or not 0 <= value[name] <= 100000):
             raise RuntimeError('Native preview support returned invalid lease counters')
     for name in ('hasPrepare', 'hasCancel', 'hasInteraction', 'inputActive', 'reloadPending', 'reloadReady'):
@@ -224,7 +225,11 @@ class BridgeManager:
             if idle:
                 return
             if time.monotonic() >= deadline:
-                raise RuntimeError('Preview support is still in use. Release held keys and mouse buttons, then try again.')
+                if value.get('pendingButtons', 0) or value.get('pendingKeys', 0):
+                    raise RuntimeError('Preview support is still in use. Release held keys and mouse buttons, then try again.')
+                if value.get('pendingFullscreen', 0):
+                    raise RuntimeError('An application has not finished leaving preview fullscreen. The loaded bridge was preserved; try again after it responds.')
+                raise RuntimeError('Preview support is still being used by another preview. Close other preview instances, then try again.')
             time.sleep(.05)
 
     def verify(self, built):

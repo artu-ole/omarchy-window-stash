@@ -205,6 +205,13 @@ class BridgeUpgradeTests(unittest.TestCase):
             self.manager.reload()
         self.assertEqual(self.hypr.value['version'], self.manager.expected)
 
+    def test_unacknowledged_fullscreen_cleanup_preserves_native_with_specific_error(self):
+        self.hypr.after_prepare = lambda: self.hypr.value.update(reloadReady=False, pendingFullscreen=1)
+        with patch('bridge.time.monotonic', side_effect=[0, 6]), self.assertRaisesRegex(RuntimeError, 'leaving preview fullscreen'):
+            self.manager.reload()
+        self.assertFalse(self.hypr.value['reloadPending'])
+        self.assertTrue(all(call[0] != 'plugin' for call in self.mutations()))
+
     def test_unsupported_legacy_input_never_builds_or_unloads(self):
         self.hypr.value = native('1.29.1', cooperative=False, hasInteraction=True)
         self.assertFalse(self.manager.status()['canReload'])
