@@ -74,6 +74,14 @@ struct Identity {
     uint64_t stable = 0;
     PHLWINDOWREF window;
 };
+struct SourceGeometry {
+    bool ready = false;
+    bool xwayland = false;
+    Vector2D size{};
+    Vector2D configured{};
+    Vector2D surface{};
+    std::string reason;
+};
 struct Lease {
     Clock::time_point expires;
     std::vector<Identity> windows;
@@ -1721,6 +1729,111 @@ Identity readIdentity(lua_State* state, int table) {
     throw std::invalid_argument("The interaction window is no longer owned and stashed");
 }
 
+SourceGeometry sourceGeometryDetails(const Identity& identity) {
+    SourceGeometry result;
+    const auto window = identity.window.lock();
+    if (!window || !sameWindow(identity, window.get(), true)) {
+        result.reason = "window-unavailable";
+        return result;
+    }
+    result.xwayland = window->m_isX11;
+    if (reloadPending)
+        result.reason = "support-reloading";
+    else if (window->m_ruleApplicator->noScreenShare().valueOrDefault())
+        result.reason = "capture-unavailable";
+    else if (!window->m_isFloating)
+        result.reason = "source-not-floating";
+    else if (Fullscreen::controller()->getFullscreenModes(window).internal != Fullscreen::FSMODE_NONE)
+        result.reason = "source-fullscreen";
+    else if (std::any_of(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+        return item.second.resize != FullscreenResize::None && sameWindow(item.second.identity, window.get(), true);
+    }))
+        result.reason = "fullscreen-cleanup";
+    if (!result.reason.empty())
+        return result;
+
+    const auto root = window->wlSurface() ? window->wlSurface()->resource() : nullptr;
+    if (!root || !root->m_mapped || !root->m_current.texture) {
+        result.reason = "surface-unavailable";
+        return result;
+    }
+    const auto validSize = [](const Vector2D& size) {
+        return std::isfinite(size.x) && std::isfinite(size.y)
+            && size.x >= 1 && size.y >= 1 && size.x <= 32768 && size.y <= 32768;
+    };
+    const auto matches = [](const Vector2D& first, const Vector2D& second) {
+        return std::abs(first.x - second.x) < 0.01 && std::abs(first.y - second.y) < 0.01;
+    };
+    const auto goal = window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+    result.surface = root->m_current.size;
+    result.configured = window->getReportedSize();
+    if (result.xwayland) {
+        // XWayland has no XDG configure acknowledgements. Its committed buffer
+        // geometry must independently agree with the requested logical size;
+        // m_reportedSize alone is updated even by an old-size surface commit.
+        const auto scale = window->m_X11SurfaceScaledBy;
+        if (!std::isfinite(scale) || scale <= 0) {
+            result.reason = "invalid-source-scale";
+            return result;
+        }
+        result.surface /= scale;
+        result.configured /= scale;
+        result.size = result.surface;
+    } else if (window->m_xdgSurface) {
+        // onAck updates pending surface state. getReportedSize() reads the
+        // acknowledged size only after that state has passed commit/fence
+        // processing, alongside XDG's committed window geometry.
+        const auto geometry = window->m_xdgSurface->m_current.geometry;
+        result.size = geometry.size() == Vector2D{} ? result.surface : geometry.size();
+        if (validSize(result.size) && geometry.size() != Vector2D{}) {
+            const auto bounds = root->extends();
+            const auto position = geometry.pos(), extent = bounds.pos();
+            const auto extentSize = bounds.size();
+            if (position.x < extent.x - 0.01 || position.y < extent.y - 0.01
+                || position.x + result.size.x > extent.x + extentSize.x + 0.01
+                || position.y + result.size.y > extent.y + extentSize.y + 0.01) {
+                result.reason = "frame-pending";
+                return result;
+            }
+        }
+    } else {
+        result.reason = "unsupported-source";
+        return result;
+    }
+    if (!validSize(goal) || !validSize(result.size) || !validSize(result.surface) || !validSize(result.configured))
+        result.reason = "invalid-source-geometry";
+    else if (!matches(result.configured, goal))
+        result.reason = "configure-pending";
+    else if (!matches(result.size, goal))
+        result.reason = "frame-pending";
+    else if (!matches(window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT), goal))
+        result.reason = "animation-pending";
+    else
+        result.ready = true;
+    return result;
+}
+
+int sourceGeometry(lua_State* state) {
+    try {
+        const auto geometry = sourceGeometryDetails(readIdentity(state, 1));
+        lua_newtable(state);
+        booleanField(state, "ready", geometry.ready);
+        booleanField(state, "xwayland", geometry.xwayland);
+        numberField(state, "width", geometry.size.x);
+        numberField(state, "height", geometry.size.y);
+        numberField(state, "configuredWidth", geometry.configured.x);
+        numberField(state, "configuredHeight", geometry.configured.y);
+        numberField(state, "surfaceWidth", geometry.surface.x);
+        numberField(state, "surfaceHeight", geometry.surface.y);
+        field(state, "reason", geometry.reason);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
+
 void interactionDetails(lua_State* state, const std::string& owner) {
     lua_newtable(state);
     const bool matches = interaction && (owner.empty() || interaction->owner == owner);
@@ -2130,6 +2243,7 @@ int status(lua_State* state) {
     booleanField(state, "popups", popupsSupported);
     booleanField(state, "handoff", handoffSupported);
     booleanField(state, "constrainedFullscreen", constrainedFullscreenSupported);
+    booleanField(state, "sourceGeometry", true);
     field(state, "fullscreenError", fullscreenError);
     field(state, "fullscreenProtocol", 1);
     field(state, "keyboardError", keyboardError);
@@ -2423,6 +2537,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_update", interactionUpdate)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_release", interactionRelease)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "clear_fullscreen", clearFullscreen)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "source_geometry", sourceGeometry)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "fullscreen_cleanup_pending", fullscreenCleanupPending)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_handoff", interactionHandoff))
