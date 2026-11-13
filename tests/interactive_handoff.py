@@ -149,6 +149,7 @@ def main(handoff_only=False):
             print('PASS modal fallback restores only the exact source and transient to current/original destinations, preserving unrelated stashes', flush=True)
 
             configure('restoreDestination', 'current')
+            configure('floatingPreviewFullscreen', 'desktop')
             start(session, record)
             source_point(session, record, 900, 46)
             wait(lambda: h.client(address)['workspace']['name'] != SPECIAL and h.client(address)['fullscreen'] == 2,
@@ -157,6 +158,7 @@ def main(handoff_only=False):
             monitor.check();monitor_records(witness)
             wait(lambda: not any(item['id'] == record['id'] for item in command('list')['windows']),
                  'Fullscreen fallback retained a partially restored ledger record')
+            configure('floatingPreviewFullscreen', 'preview')
             h.dispatch('window.fullscreen_state', window='address:'+address, internal=0, client=0, action='set')
             record = park(session, address)
             ready(session, record)

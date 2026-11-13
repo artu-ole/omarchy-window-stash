@@ -29,8 +29,22 @@ def activate(application):
     window.set_default_size(1000, 700)
     root_keys = Gtk.EventControllerKey()
     root_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-    root_keys.connect('key-pressed', lambda controller, keyval, keycode, modifiers:
-                      (emit('root-key', name=Gdk.keyval_name(keyval), keycode=keycode), False)[1])
+    def root_key_pressed(controller, keyval, keycode, modifiers):
+        name = Gdk.keyval_name(keyval)
+        emit('root-key', name=name, keycode=keycode)
+        if name == 'F11':
+            emit('fullscreen-toggle', active=window.is_fullscreen())
+            window.unfullscreen() if window.is_fullscreen() else window.fullscreen()
+            return True
+        if name == 'Escape' and window.is_fullscreen():
+            emit('fullscreen-exit')
+            window.unfullscreen()
+            return True
+        return False
+
+    root_keys.connect('key-pressed', root_key_pressed)
+    window.connect('notify::fullscreened', lambda widget, _property:
+                   emit('fullscreen-state', active=widget.is_fullscreen(), width=widget.get_width(), height=widget.get_height()))
     window.add_controller(root_keys)
     css = Gtk.CssProvider()
     css.load_from_string('.stash-popup contents { background: #e64678; } .stash-popup button { background: #eb5a32; color: white; }')
