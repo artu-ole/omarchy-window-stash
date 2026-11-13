@@ -1,5 +1,44 @@
 # Validation
 
+## v1.33.0 — staged preview minimization — 13 November 2026
+
+Floating previews fold into icons when minimized under the pointer. Icon
+activation returns to the remembered preview; newest/FIFO shortcuts unfold one
+stage before full restoration without changing record order. App covers and
+individual expanded thumbnails retain their grouping semantics. No new preference
+or native bridge version is introduced.
+
+The complete check passes **388 Python tests**, **16 Node suites**, **sixteen
+offscreen Qt suites**, **119 Python syntax checks**, manifest validation and
+warning-free QML lint. Backend coverage includes atomic exact-identity group
+updates, active-input rejection, strict folded flags, unchanged snapshots and
+positions, ordinary full restoration, staged selection and managed binding
+migration. Input/render helpers revalidate under the final acquisition lock;
+folding during a native build or before acquisition cannot revive hidden input.
+
+Qt coverage verifies separated preview/icon groups, icon appearance and physics,
+independent saved positions, exact hover and clipped-tile targeting, capture
+suspension, fold/unfold motion and settled-frame input gating. A zero-sized
+startup layer cannot clamp or overwrite saved icon positions; configured layer
+dimensions restore them exactly.
+
+The isolated compositor exercises real managed shortcuts with fresh cursor
+coordinates, preserving the focused window behind a hovered preview. It verifies
+capture/render/input shutdown, terminal-icon minimize handling, icon dragging,
+custom aspect/position preservation, private shell replacement and repeated
+preview/icon/full-window cycles. Keyboard-active contained fullscreen folds only
+after acknowledged input release; held keys are released once. Native fullscreen
+and the immutable original window geometry survive folding.
+
+The full run also passes actual newest/FIFO keybindings, app-cover and exact-tile
+folding, mixed-stage grouping, context unfolding, middle-close, hover-miss
+minimization, full restoration in another presentation mode, and narrow/wide
+scrolling columns with their original pixel widths.
+
+Run `python3 tests/preview_folding.py --restart-shell --scrolling` in the explicit
+disposable compositor. Desktop automation uses the five-second announcement and
+pauses capture before terminating owned fixtures.
+
 ## v1.32.0 — Super-click preview interaction — 13 November 2026
 
 Super+left click on preview content enters interaction after release, without

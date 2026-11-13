@@ -44,6 +44,12 @@ working source geometry and contained fullscreen. Folded views stop capture,
 render requests and geometry polling; authoritative helpers reject stale requests
 under the same ledger lock as their final native acquisition.
 
+The controller exposes `preview-fold ID [ID ...]` and
+`preview-unfold ID [ID ...]`. Managed minimize/newest/FIFO bindings use
+`--shortcut` to forward intent through shell IPC before taking any ledger lock;
+minimize includes freshly queried cursor coordinates. IPC failure never falls
+back to minimizing an unrelated focused window.
+
 Icon activation clears the flag and returns the preview at its remembered size,
 position and aspect ratio. Newest/FIFO shortcut restoration uses `--stage`, so
 the first action unfolds and the next fully restores the same ordered record.
