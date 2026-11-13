@@ -7,6 +7,7 @@ import time
 
 from live import ROOT,h,command,shell,configure,wait
 from pointer import Pointer
+from bridge import BridgeManager
 from stash import Stash,atomic_json,read_json,monitor_identity
 
 
@@ -85,6 +86,38 @@ class NativeSession:
             print('Position diagnostics:',key,[x,y],self.icon(key if key!='dock:floating' else None),self.surface()['usableArea'],self.surface().get('motion',{}).get('dragWorld'),flush=True)
             raise
         self.resting()
+    def pause_captures(self):
+        """Release input and capture owners before destroying their sources.
+
+        Dismiss closes interaction controls and expanded groups, but persistent
+        preview cards can still own captures. Destroying a client in that state
+        can race Hyprland's capture protocol. Fail closed if release is delayed:
+        leave the fixtures alive rather than disconnecting the shell.
+        """
+        shell('dismiss')
+        configure('hoverPreview','off')
+        configure('presentation','dock')
+        bridge=BridgeManager(h)
+        def released():
+            state=shell('status')
+            interaction=state['previewInteraction']
+            if any(interaction.get(key) for key in ('request','pendingRequest','running','stopping')):
+                return False
+            compatibility=state['previewCompatibility']
+            if compatibility.get('requestedIds') or compatibility.get('running'):
+                return False
+            for surface in state['surfaces']:
+                hover=surface.get('preview',{})
+                images=[hover.get('image',{})]
+                images.extend(tile.get('image',{}) for tile in hover.get('tiles',[]))
+                images.extend(card.get('image',{}) for card in surface.get('floatingPreviews',{}).get('cards',[]))
+                if any(image.get('captureActive') for image in images):
+                    return False
+            native=bridge.native()
+            return not native.get('available') or (not native.get('inputActive') and not any(
+                native.get(key,0) for key in ('owners','windows','heldKeys','heldButtons',
+                                              'pendingKeys','pendingButtons','pendingFullscreen')))
+        wait(released,'Native fixture cleanup is waiting for input and capture owners; fixtures were left alive')
     def __exit__(self,kind,value,trace):
         try:
             # A protocol failure can disconnect a test pointer. Desktop state
@@ -93,7 +126,7 @@ class NativeSession:
                 self.pointer.button(False);self.pointer.button(False,273);self.pointer.button(False,274)
             except (OSError, RuntimeError):
                 pass
-            shell('dismiss')
+            self.pause_captures()
             for p in self.processes:
                 if p.poll() is None:p.terminate()
             for p in self.processes:
