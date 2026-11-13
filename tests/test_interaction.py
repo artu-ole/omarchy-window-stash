@@ -578,7 +578,7 @@ class InteractionTests(unittest.TestCase):
     def test_native_status_marshaling_is_json_with_control_chars_rectangles_and_counts(self):
         reason = 'outside "quoted" \\ slash\nnext\ttext\x00'
         source = ('local status={active=true,keyboard=false,keyboardFocused=true,restoreRequested=true,keyEvents=12,owner="'+IDENT+'",id="'+OTHER+'",reason='+lua(reason)
-                  + ',previewFullscreen=true,fullscreen="preview",activationOrigin="client-activate",clientActivationEvents=2,pointerActivationAcknowledgements=2,'
+                  + ',previewFullscreen=true,fullscreen="preview",activationOrigin="client-activate",clientActivationEvents=2,pointerActivationAcknowledgements=2,keyboardActivationAcknowledgements=1,'
                   + 'heldButtons={272,273},fps=60,rect={x=-200,y=50,width=300,height=200}}\n'
                   + 'print((function()\n'+status_json('status')+'\nend)())')
         result = subprocess.run(['lua','-'],input=source,text=True,capture_output=True)
@@ -590,6 +590,7 @@ class InteractionTests(unittest.TestCase):
         self.assertIs(value['previewFullscreen'],True);self.assertEqual(value['fullscreen'],'preview')
         self.assertEqual(value['activationOrigin'],'client-activate')
         self.assertEqual(value['clientActivationEvents'],2);self.assertEqual(value['pointerActivationAcknowledgements'],2)
+        self.assertEqual(value['keyboardActivationAcknowledgements'],1)
         self.assertEqual(value['pointerActivationRemainingMs'],0)
         self.assertEqual(value['reason'],reason);self.assertEqual(value['heldButtons'],2)
         self.assertEqual(value['rect'],dict(x=-200,y=50,width=300,height=200))
