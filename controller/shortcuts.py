@@ -19,6 +19,8 @@ DEFAULT_SHORTCUTS = {"minimizeShortcut": "SUPER + D", "restoreLastShortcut": "SU
                      "restoreOldestShortcut": "SUPER + ALT + Z"}
 MANAGER = "_community_window_stash_shortcuts"
 MANAGER_VERSION = 2
+OWNER_CHANGED = "Shortcut owner changed"
+RELOAD_RETRIES = 2
 ACTIONS = {"minimizeShortcut": ("minimize", "Window Stash: minimize focused window"),
            "restoreLastShortcut": ("restore-last", "Window Stash: restore last minimized"),
            "restoreOldestShortcut": ("restore-oldest", "Window Stash: restore oldest minimized")}
@@ -195,9 +197,22 @@ def _apply(values, runner, binary=None, owner=None):
     command = "{" + ",".join(_lua(argument) for argument in controller_command(binary)) + "}"
     token = "," + _owner(owner) if owner is not None else ""
     output = runner("eval", _module() + "assert(m.apply(" + lua_source(values) + "," + command + token
-                    + "), 'Shortcut owner changed')")
+                    + "), " + _lua(OWNER_CHANGED) + ")")
     if output != "ok":
         raise RuntimeError(output or "Could not apply keyboard shortcuts")
+
+
+def _reclaim_after_reload(owner, runner):
+    # Config reload replaces the Lua registry between separate IPC requests.
+    # Check and claim in one request so a newer nonempty owner is never stolen.
+    token = _owner(owner)
+    output = runner("repl", "local existing=" + MANAGER + "; "
+                    + "if existing and existing.owner~=nil then return false end; "
+                    + _module() + "local vacant=m.owner==nil; "
+                    + "if vacant then m.claim(" + token + ") end; return vacant")
+    if output not in ("true", "false"):
+        raise RuntimeError("Could not read Window Stash shortcut ownership")
+    return output == "true"
 
 
 def claim(owner, config_path=None, runner=None):
@@ -336,25 +351,32 @@ def sync(config_path=None, runner=None, binary=None, owner=None):
     path = _config_path(config_path)
     runner = runner or _run
     with _locked(path):
-        data, entry = _read(path)
-        disabled = data.get("disabledPlugins")
-        if isinstance(disabled, list) and PLUGIN in disabled:
-            # A service update queued before --prepare-remove may start after
-            # the host unloads it. Never recreate its handles during cleanup.
-            return _disable(runner, owner)
-        binds, owned = _runtime(runner)
-        values = settings(entry)
-        active = {key: "" for key in DEFAULT_SHORTCUTS}
-        conflicts = {}
-        for key, chord in values.items():
-            candidate = dict(active, **{key: chord})
+        for attempt in range(RELOAD_RETRIES + 1):
+            data, entry = _read(path)
+            disabled = data.get("disabledPlugins")
+            if isinstance(disabled, list) and PLUGIN in disabled:
+                # A service update queued before --prepare-remove may start after
+                # the host unloads it. Never recreate its handles during cleanup.
+                return _disable(runner, owner)
+            binds, owned = _runtime(runner)
+            values = settings(entry)
+            active = {key: "" for key in DEFAULT_SHORTCUTS}
+            conflicts = {}
+            for key, chord in values.items():
+                candidate = dict(active, **{key: chord})
+                try:
+                    validate(candidate, binds, owned)
+                except ValueError as error:
+                    conflicts[key] = str(error) + ". Choose another shortcut in Window Stash Settings."
+                else:
+                    active[key] = chord
             try:
-                validate(candidate, binds, owned)
-            except ValueError as error:
-                conflicts[key] = str(error) + ". Choose another shortcut in Window Stash Settings."
-            else:
-                active[key] = chord
-        _apply(active, runner, binary, owner)
+                _apply(active, runner, binary, owner)
+                break
+            except RuntimeError as error:
+                if (owner is None or OWNER_CHANGED not in str(error) or attempt == RELOAD_RETRIES
+                        or not _reclaim_after_reload(owner, runner)):
+                    raise
     return {"ok": True, "shortcuts": values, "activeShortcuts": active, "conflicts": conflicts}
 
 

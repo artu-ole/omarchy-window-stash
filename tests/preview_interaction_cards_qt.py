@@ -51,6 +51,7 @@ ShellRoot {
     property var previewInteractionRequest:null
     property var previewInteractionPendingRequest:null
     property bool previewInteractionStopping:false
+    property var lifecycleReady:undefined
     property bool deferStop:false
     property var previewInteractionStatus:({state:"idle"})
     property string previewInteractionError:""
@@ -114,6 +115,13 @@ ShellRoot {
       try {
         if(root.phase===0) {
           check(one() && one().interactionEnabled,"Interactive card was not constructed")
+          check(one().lifecycleAvailable,"A stub without lifecycle state lost compatibility")
+          var interact=find(window.contentItem,"floating-preview-interact")
+          fake.lifecycleReady=false
+          check(!one().lifecycleAvailable && !interact.enabled,"Lifecycle restart advertised a usable Interact control")
+          check(!one().beginNativeInteraction() && fake.begun===0,"Lifecycle restart accepted a new interaction")
+          fake.lifecycleReady=true
+          check(interact.enabled,"Lifecycle readiness did not re-enable Interact")
           check(!one().titleVisible && !one().frameVisible,"Interaction added permanent title/frame chrome")
           one().activatePrimary()
           check(fake.restored==="first" && fake.begun===0,"Explicit default stopped ordinary click-to-restore")

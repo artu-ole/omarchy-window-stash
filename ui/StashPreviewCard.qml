@@ -49,6 +49,7 @@ Item {
   readonly property var desktop:DesktopEntries.heuristicLookup(displayRecord ? String(displayRecord.app || "") : "")
   readonly property var dimensions:Geometry.dimensions(width,geometryRecord,{x:0,y:0,width:Math.max(1,width),height:Math.max(1,maximumHeight)},titleVisible,frameVisible)
   readonly property bool interactionEnabled:config.floatingPreviewInteraction==="on" && typeof stash.beginPreviewInteraction==="function"
+  readonly property bool lifecycleAvailable:typeof stash.lifecycleReady!=="boolean" || stash.lifecycleReady
   readonly property bool interactionOwned:typeof stash.endPreviewInteraction==="function" && !!stash.previewInteractionRequest
     && stash.previewInteractionRequest.monitor===screenName && stash.previewInteractionRequest.viewKey===(claimedInteractionKey || key)
   readonly property bool interactionQueued:typeof stash.previewInteractionPendingMatches==="function" && !!record
@@ -161,7 +162,7 @@ Item {
     return excluded
   }
   function beginNativeInteraction() {
-    if(interactionBusy || !interactionEnabled || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
+    if(interactionBusy || !interactionEnabled || !lifecycleAvailable || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
     claimedInteractionKey=key
     leasedRecord=record
     var accepted=stash.beginPreviewInteraction(record,screenName,key,nativeImageRect(),nativeExcludeRects())
@@ -347,11 +348,12 @@ Item {
       property bool activeAtPress:false
       x:2;y:2;size:interactionBar.buttonSize
       iconText:card.interactionBusy ? "■" : "▶"
-      tooltipText:card.interactionBusy ? "Stop interacting" : !card.interactionFullyVisible ? "Scroll this preview fully into view to interact"
+      tooltipText:card.interactionBusy ? "Stop interacting" : !card.lifecycleAvailable ? "Window Stash support is restarting…"
+        : !card.interactionFullyVisible ? "Scroll this preview fully into view to interact"
         : card.stash.previewInteractionError ? "Interact: "+card.stash.previewInteractionError : "Interact with this window"
       foreground:card.interactionBusy ? Commons.Color.accent : card.popupColors.text
       animations:card.animations;animationSpeed:card.animationSpeed
-      enabled:card.interactive && (card.interactionBusy || (card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))
+      enabled:card.interactive && (card.interactionBusy || (card.lifecycleAvailable && card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))
       onPressed:activeAtPress=card.interactionBusy
       onCanceled:activeAtPress=false
       onClicked: {
