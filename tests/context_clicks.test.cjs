@@ -124,8 +124,11 @@ geometryConfig.floatingPreviewLock='locked';assert.equal(canReset(group),false);
 geometryConfig.floatingPreviewSizing='preset';assert.equal(canReset(group),false);geometryConfig.floatingPreviewSizing='free'
 cover.displayRecord={id:'second'};assert.equal(canReset(group),false,'A stale cover lead cannot reset another source');cover.displayRecord={id:'first'}
 assert.equal(canReset({key:'window:first',windows:[{id:'first'}]}),false,'An expanded tile cannot reset its grouped cover')
-const ids=vm.runInNewContext(resetActionIds[1],{interactionAvailable:true,proportionsResetAvailable:true})
+const ids=vm.runInNewContext(resetActionIds[1],{interactionAvailable:true,proportionsResetAvailable:true,unfoldAvailable:false})
 assert.ok(ids.indexOf('reset-preview-proportions')>=0 && ids.indexOf('reset-preview-proportions')<ids.indexOf('close'))
+const foldedIds=vm.runInNewContext(resetActionIds[1],{interactionAvailable:false,proportionsResetAvailable:false,unfoldAvailable:true})
+assert.equal(foldedIds[0],'unfold-preview','A folded icon offers its preview before full restoration')
+assert.ok(foldedIds.includes('here') && foldedIds.includes('original') && !foldedIds.includes('interact'),'Explicit full restores remain available; folded sources cannot interact')
 let menuClosed=false,proportionsReset=0
 const deferred=[]
 const resetSurface={screen:{name:'test'},canResetPreviewProportions:canReset,resetPreviewProportions(id){

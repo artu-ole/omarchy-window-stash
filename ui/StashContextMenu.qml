@@ -26,11 +26,13 @@ Ui.BorderSurface {
   readonly property real padding:metrics.sm
   readonly property real margin:Math.min(metrics.sm,area.width/2,area.height/2)
   readonly property bool interactionAvailable:stash.snapshot.settings.presentation==="previews"
-    && stash.snapshot.settings.floatingPreviewInteraction==="on" && targets.length===1 && !targetBusy
+    && stash.snapshot.settings.floatingPreviewInteraction==="on" && targets.length===1 && targets[0].previewFolded!==true && !targetBusy
+  readonly property bool unfoldAvailable:stash.snapshot.settings.presentation==="previews"
+    && targets.length>0 && targets.every(function(window) {return window.previewFolded===true}) && !targetBusy
   readonly property bool proportionsResetAvailable:!targetBusy && typeof host.canResetPreviewProportions==="function" && host.canResetPreviewProportions(stash.contextGroup)
-  readonly property var buttons:[hereButton,originalButton].concat(interactionAvailable ? [interactButton] : [])
+  readonly property var buttons:(unfoldAvailable ? [unfoldButton] : []).concat([hereButton,originalButton]).concat(interactionAvailable ? [interactButton] : [])
     .concat(proportionsResetAvailable ? [proportionsResetButton] : []).concat([closeButton,allButton,closeAllButton,settingsButton])
-  readonly property var actionIds:["here","original"].concat(interactionAvailable ? ["interact"] : [])
+  readonly property var actionIds:(unfoldAvailable ? ["unfold-preview"] : []).concat(["here","original"]).concat(interactionAvailable ? ["interact"] : [])
     .concat(proportionsResetAvailable ? ["reset-preview-proportions"] : []).concat(["close","all","closeAll","settings"])
   property int currentIndex:0
   property int frames:0
@@ -163,6 +165,16 @@ Ui.BorderSurface {
         Layout.leftMargin:menu.metrics.controlPaddingX
         Layout.rightMargin:menu.metrics.controlPaddingX
         Layout.bottomMargin:menu.metrics.xxs
+      }
+      StashButton {
+        id:unfoldButton
+        visible:menu.unfoldAvailable
+        text:menu.targets.length>1 ? "Show previews" : "Show preview"
+        enabled:visible
+        animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===unfoldButton
+        onHovered:function(value) { if(value && enabled) menu.currentIndex=menu.buttons.indexOf(unfoldButton) }
+        onClicked:menu.stash.unfoldContextPreviews()
       }
       StashButton {
         id:hereButton
