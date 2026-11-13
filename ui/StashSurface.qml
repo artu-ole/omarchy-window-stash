@@ -982,7 +982,9 @@ PanelWindow {
     opacity:surface.dialogReveal
     scale:Motion.full(surface.animations) ? 0.97+surface.dialogReveal*0.03 : 1
     width:Math.max(0,Math.min(Style.space(560),surface.usableArea.width-outerPadding*2))
-    height:Math.max(0,Math.min(availableHeight,contents.implicitHeight+innerPadding*2+borderTop+borderBottom))
+    // The scroll viewport fills this card. Its layout height is an output,
+    // so size Settings from the form itself when opening or changing modes.
+    height:Math.max(0,Math.min(availableHeight,(settingsMode ? settingsBody.implicitHeight : contents.implicitHeight)+innerPadding*2+borderTop+borderBottom))
     x:surface.usableArea.x+(surface.usableArea.width-width)/2
     y:surface.usableArea.y+(surface.usableArea.height-height)/2
     radius: Style.cornerRadius
