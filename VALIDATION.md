@@ -21,10 +21,18 @@ historical source and upgrade it to the new bridge. A separate cooperative old
 version proves that held pointer/key sequences finish before unload and that
 rendering resumes after exact-version replacement. Failed builds retain the old
 module; failed loads recover a verified old artifact. Repeated reloads are no-ops.
+The production Settings test clicks Later and Reload, retains Settings during
+replacement, resumes actual live capture and preserves display geometry. Pointer,
+keyboard and rendering regressions pass after replacement. Scaled 640×480 and
+400×300 settings remain reachable. Settings sizing now avoids a cyclic preferred
+height, and opening/closing dialogs explicitly flushes their Wayland input mask.
 The original experimental interactive bridge is explicitly refused for unloading
 because pending physical-release filters cannot be observed. Its unchanged input
 API remains usable through the narrow transitional compatibility exception until
 the next normal login. No real compositor restart or unload is used for testing.
+Native UI checks use an independent headless output: the nested Cage Wayland
+output stalled frame callbacks during fixture changes and could not serve as
+reliable rendering evidence.
 
 ## v1.29.0 — interactive floating previews — 12 November 2026
 
