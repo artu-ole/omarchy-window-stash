@@ -231,6 +231,8 @@ class InteractionKeeper:
     def _validated_source(self, target, settings, saved):
         if settings['presentation'] != 'previews' or settings['floatingPreviewInteraction'] != 'on':
             return None
+        if any(record.get('id') == target['id'] and record.get('previewFolded') is True for record in saved):
+            return None
         sources = preview_records(saved, self.stash.hypr.read('clients'), [target['id']])
         monitors = [monitor for monitor in self.stash.hypr.read('monitors') if monitor.get('name') == target['monitor']]
         if len(sources) != 1 or len(monitors) != 1 or monitors[0].get('dpmsStatus') is False:
@@ -324,6 +326,7 @@ class InteractionKeeper:
                 self.terminal = dict(state='ended', id=target['id'], serial=target['serial'], reason='Preview changed while interaction was starting')
                 return self.terminal
         identity, parameters = source
+        verified_parameters = dict(parameters)
         if self.bound_source is not None and identity != self.bound_source:
             return self._finish(target, dict(active=False, reason='window-unavailable'))
         if self.acquired and self.keyboard_policy != parameters['keyboard']:
@@ -338,8 +341,18 @@ class InteractionKeeper:
         self.bound_source = dict(identity)
         self.keyboard_policy = parameters['keyboard']
         self.fullscreen_policy = parameters['fullscreen']
-        self.acquired = True  # Also release an acquisition that fails halfway.
-        status = self.bridge.interaction_update(self.owner, identity, parameters)
+        with self.bridge.operation() if isinstance(self.bridge, PreviewBridge) else contextlib.nullcontext(), self.stash.locked():
+            # Serialize the last authoritative check with fold commits. Builds
+            # remain outside the ledger lock; stale snapshots cannot reacquire
+            # input after the UI has switched this window to its folded icon.
+            fresh = self._validated_source(target, self.stash.settings(), list(self.stash.state['windows']))
+            if fresh is None or fresh[0] != identity or fresh[1] != verified_parameters:
+                self.close()
+                self.terminal = dict(state='ended', id=target['id'], serial=target['serial'],
+                                     reason='Preview changed before interaction was acquired')
+                return self.terminal
+            self.acquired = True  # Also release an acquisition that fails halfway.
+            status = self.bridge.interaction_update(self.owner, identity, parameters)
         self._verify_status(status, target)
         if not status['active']:
             return self._finish(target, status)

@@ -37,12 +37,13 @@ def request_ids(value):
     return sorted(set(value))
 
 
-def preview_records(records, clients, wanted):
+def preview_records(records, clients, wanted, exclude_folded=True):
     """Do not acquire a native lease from a stale UI snapshot alone."""
     result = []
     for record in records:
         ident = record.get('id')
         if (ident not in wanted or record.get('phase') != 'stashed'
+                or (exclude_folded and record.get('previewFolded') is True)
                 or record.get('tag') != PREFIX + ident):
             continue
         candidates = [client for client in clients if client.get('address') == record.get('address')]
@@ -179,21 +180,32 @@ class PreviewKeeper:
         self.owner = uuid.uuid4().hex
         self.acquired = False
 
+    def _matches_locked(self, wanted):
+        settings = self.stash.settings()
+        live_source = (settings['hoverPreview'] == 'live'
+                       or (settings['presentation'] == 'previews'
+                           and settings['floatingPreviewUpdate'] in ('hover', 'live')))
+        enabled = live_source and settings['livePreviewCompatibility'] == 'enhanced'
+        records = list(self.stash.state['windows']) if enabled else []
+        matches = preview_records(records, self.stash.hypr.read('clients'), wanted,
+                                  exclude_folded=settings['presentation'] == 'previews') if records and wanted else []
+        return enabled, matches
+
     def sync(self, wanted):
         wanted = request_ids(wanted)
         with self.stash.locked():
-            settings = self.stash.settings()
-            live_source = (settings['hoverPreview'] == 'live'
-                           or (settings['presentation'] == 'previews'
-                               and settings['floatingPreviewUpdate'] in ('hover', 'live')))
-            enabled = live_source and settings['livePreviewCompatibility'] == 'enhanced'
-            records = list(self.stash.state['windows']) if enabled else []
-        matches = preview_records(records, self.stash.hypr.read('clients'), wanted) if records and wanted else []
+            enabled, matches = self._matches_locked(wanted)
         if matches:
             self.bridge.ensure()
-            self.acquired = True
-            self.bridge.update(self.owner, matches)
-            return dict(state='ready', ids=[record['id'] for record in matches])
+            # Native preparation may compile/load for a while. Recheck folding,
+            # source identity and policy, then serialize the final update with
+            # fold commits so a stale helper cannot revive a hidden capture.
+            with self.bridge.operation() if isinstance(self.bridge, PreviewBridge) else contextlib.nullcontext(), self.stash.locked():
+                enabled, matches = self._matches_locked(wanted)
+                if matches:
+                    self.acquired = True
+                    self.bridge.update(self.owner, matches)
+                    return dict(state='ready', ids=[record['id'] for record in matches])
         self.close()
         return dict(state='idle' if enabled else 'disabled', ids=[])
 

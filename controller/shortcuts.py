@@ -18,7 +18,7 @@ PLUGIN = "community.window-stash"
 DEFAULT_SHORTCUTS = {"minimizeShortcut": "SUPER + D", "restoreLastShortcut": "SUPER + Z",
                      "restoreOldestShortcut": "SUPER + ALT + Z"}
 MANAGER = "_community_window_stash_shortcuts"
-MANAGER_VERSION = 2
+MANAGER_VERSION = 3
 OWNER_CHANGED = "Shortcut owner changed"
 RELOAD_RETRIES = 2
 ACTIONS = {"minimizeShortcut": ("minimize", "Window Stash: minimize focused window"),

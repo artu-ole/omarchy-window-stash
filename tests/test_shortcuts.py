@@ -467,7 +467,7 @@ local foreign=hl.bind('SUPER + A','foreign',{description='Other app'})
 local historical=hl.bind('SUPER + A','legacy',{description='Window Stash: old shortcut'})
 _community_window_stash_shortcuts={version=1,cache={legacy={handle=historical}}}
 local m=assert(loadfile(arg[1]))('runtime')
-assert(m.version==2 and not historical.enabled and foreign.enabled)
+assert(m.version==3 and not historical.enabled and foreign.enabled)
 assert(m.cache.legacy.handle==historical)
 local values={minimizeShortcut='SUPER + ALT + A',restoreLastShortcut='',restoreOldestShortcut=''}
 local argv={arg[3],arg[4],arg[5],arg[6]}
@@ -492,8 +492,42 @@ assert(not all[3].enabled and foreign.enabled and not historical.enabled)
         self.assertFalse(module.exists())
         executed=subprocess.run(commands.read_text(),shell=True,capture_output=True,text=True)
         self.assertEqual(executed.returncode,0,executed.stderr)
-        self.assertEqual(json.loads(executed.stdout),[payload,final_argument,'minimize'])
+        self.assertEqual(json.loads(executed.stdout),[payload,final_argument,'minimize','--shortcut'])
         self.assertFalse(marker.exists(),'A quoted controller argument was executed by the shell')
+
+    @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
+    def test_v2_handles_are_retained_disabled_and_each_new_route_enters_the_shell(self):
+        script = r'''
+local all = {}
+hl={dsp={exec_cmd=function(command) return command end}}
+function hl.bind(chord, command, options)
+ local handle={enabled=true,command=command,handler='__lua',arg=tostring(#all+1),
+   key=chord,modmask=64,description=options.description,submap=''}
+ function handle:set_enabled(value) self.enabled=value end
+ function handle:is_enabled() return self.enabled end
+ all[#all+1]=handle;return handle
+end
+local foreign=hl.bind('CTRL + F8','foreign',{description='Other app'})
+local historical=hl.bind('SUPER + A',"'/tmp/stash' minimize",{description='Window Stash: minimize focused window'})
+_community_window_stash_shortcuts={version=2,owner='old-generation',cache={old={handle=historical}},
+ apply=function() error('STALE_V2_FUNCTION') end}
+local m=assert(loadfile(arg[1]))('runtime')
+assert(m.version==3 and m.cache.old.handle==historical and not historical.enabled and foreign.enabled)
+m.claim('current-generation')
+local values={minimizeShortcut='SUPER + A',restoreLastShortcut='SUPER + Z',restoreOldestShortcut='SUPER + ALT + Z'}
+assert(m.apply(values,'/tmp/stash','current-generation'))
+assert(#all==5 and all[3].command=="'/tmp/stash' minimize --shortcut")
+assert(all[4].command=="'/tmp/stash' restore-last --shortcut" and all[5].command=="'/tmp/stash' restore-oldest --shortcut")
+assert(not historical.enabled and foreign.enabled)
+local count=#all
+assert(loadfile(arg[1]))('runtime')
+assert(m.apply(values,'/tmp/stash','current-generation') and #all==count)
+m.claim('successor')
+assert(not m.apply(values,'/tmp/stash','current-generation'))
+assert(all[3].enabled and foreign.enabled)
+'''
+        result = subprocess.run(['lua', '-', str(ROOT/'controller/shortcuts.lua')], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':
