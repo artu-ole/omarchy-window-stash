@@ -21,7 +21,7 @@ Item {
   property string lifecycleFailureDetail: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewResizeRate:"realtime", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -320,6 +320,10 @@ Item {
   }
   function previewGeometryCommand(args) {return args && ["preview-aspect","preview-geometry"].indexOf(args[0])>=0}
   function previewGeometryState(id) {return previewGeometryStates[id] || null}
+  function previewResizeCadence() {
+    var rate=snapshot.settings ? snapshot.settings.floatingPreviewResizeRate : "realtime"
+    return rate==="release" ? 0 : rate==="balanced" ? 60 : 16
+  }
   function previewGeometryVisible(id) {return Object.keys(previewGeometryWatchers).some(function(key) {return root.previewGeometryWatchers[key]===id})}
   function watchPreviewGeometry(key,id) {
     var next=Object.assign({},previewGeometryWatchers)
@@ -362,16 +366,27 @@ Item {
     var epoch=++previewGeometrySerial,states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts)
     states[id]={epoch:epoch,requestedAspect:aspect,axis:axis,ready:false,pending:true,nativeRequired:false,reason:"Updating preview proportions…",captureRevision:0}
     var args=["preview-aspect",id,String(aspect),"--axis",axis]
-    if(settle) args.push("--settle")
     drafts[id]=args
     queue=queue.filter(function(args) {return !root.previewGeometryCommand(args) || args[1]!==id})
     previewGeometryStates=states;previewGeometryDrafts=drafts
-    if(settle) flushPreviewGeometry();else previewGeometryFlush.restart()
+    if(settle) {
+      // Commit the final target immediately. Readiness polling stays async so
+      // a slow client cannot block another drag or unrelated window actions.
+      flushPreviewGeometry(id)
+      if(previewResizeCadence()===0 || Object.keys(previewGeometryDrafts).length===0) previewGeometryFlush.stop()
+      else if(!previewGeometryFlush.running) previewGeometryFlush.start()
+    } else if(previewResizeCadence()===0) previewGeometryFlush.stop()
+    else if(!previewGeometryFlush.running) previewGeometryFlush.start()
     return true
   }
-  function flushPreviewGeometry() {
-    var drafts=previewGeometryDrafts;previewGeometryDrafts={}
-    Object.keys(drafts).forEach(function(id) {if(root.previewGeometryStates[id]) root.enqueue(drafts[id])})
+  function flushPreviewGeometry(onlyId) {
+    var drafts=previewGeometryDrafts,remaining={},ready=[]
+    Object.keys(drafts).forEach(function(id) {
+      if(onlyId && id!==onlyId) remaining[id]=drafts[id]
+      else if(root.previewGeometryStates[id]) ready.push(drafts[id])
+    })
+    previewGeometryDrafts=remaining
+    ready.forEach(function(args) {root.enqueue(args)})
   }
   function pollPreviewGeometry() {
     Object.keys(previewGeometryStates).forEach(function(id) {
@@ -397,7 +412,8 @@ Item {
     }
     var states=Object.assign({},previewGeometryStates);states[id]=next;previewGeometryStates=states
   }
-  Timer {id:previewGeometryFlush;interval:60;onTriggered:root.flushPreviewGeometry()}
+  Timer {id:previewGeometryFlush;interval:Math.max(1,root.previewResizeCadence())
+    onTriggered:if(root.previewResizeCadence()>0) root.flushPreviewGeometry()}
   Timer {interval:150;repeat:true;running:Object.keys(root.previewGeometryStates).some(function(id) {return root.previewGeometryStates[id].pending && root.previewGeometryVisible(id)})
     onTriggered:root.pollPreviewGeometry()}
   function previewInteractionMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionRequest,id,monitor,key)}
@@ -1002,6 +1018,7 @@ Item {
     options.previewPlacement=["auto","above","below","left","right"]; options.previewTitles=["shown","hidden"]
     options.floatingPreviewSizing=["free","preset"]; options.floatingPreviewScale=options.sizePreset
     options.floatingPreviewUpdate=["still","hover","live"]; options.floatingPreviewTitles=["shown","hidden"]
+    options.floatingPreviewResizeRate=["realtime","balanced","release"]
     options.floatingPreviewFrame=["shown","hidden"]; options.floatingPreviewLock=["locked","unlocked"]
     options.floatingPreviewInteraction=["off","on"]; options.floatingPreviewActivation=["explicit","click"]
     options.floatingPreviewKeyboard=["mouse","click"]; options.floatingPreviewInteractionFps=["30","60"]

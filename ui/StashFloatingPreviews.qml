@@ -452,6 +452,7 @@ Item {
       readonly property var target:previews.layout.cards[key] || null
       property bool registered:false
       property var resizeOrigin:null
+      sourceResizeActive:resizing && !!resizeOrigin && ["left","right","top","bottom"].indexOf(resizeOrigin.edge)>=0
       property var shapeAnchor:null
       stash:previews.stash;config:previews.config;group:collection.dataByKey[groupKey] || ({key:groupKey,windows:[]})
       sourceSizes:previews.observedSizes

@@ -25,6 +25,7 @@ Item {
   property bool held:false
   property bool moving:false
   property bool resizing:false
+  property bool sourceResizeActive:false
   property bool expandedTile:false
   property bool folding:false
   property bool unfolding:false
@@ -75,7 +76,8 @@ Item {
   readonly property bool interactionFullyVisible:visibleForInteraction(interactionGeometryRevision)
   readonly property bool nativeHovered:interactionRequested && stash.pointerKnown && Geometry.contains(nativeImageRect(),stash.pointerPosition.x,stash.pointerPosition.y)
   readonly property bool hovered:hover.hovered || pointer.containsMouse || nativeHovered
-  readonly property bool live:interactionBusy || (config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
+  readonly property bool live:interactionBusy || (sourceResizeActive && config.floatingPreviewResizeRate!=="release")
+    || (config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
   readonly property bool canMove:interactive && movable && config.floatingPreviewLock!=="locked" && !retiring && !interactionBusy
   readonly property bool canResize:interactive && resizable && config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked" && !retiring && !interactionBusy
   readonly property Region inputRegion:Region { item:card; onChanged:card.inputChanged() }

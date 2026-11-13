@@ -134,9 +134,11 @@ ShellRoot {
           config=Object.assign({},previews.config);config.floatingPreviewTitles="hidden";previews.config=config
           one().x=200;one().y=180;previews.save(one());originalHeight=one().height
           one().resizing=true;one().resizePressed("right");one().resizeRequested(140,0,"right")
+          check(one().sourceResizeActive && image().mode==="live" && previews.config.floatingPreviewUpdate==="still","Responsive side drag did not temporarily update a Snapshot preview")
           near(one().height,originalHeight,"Horizontal edge changed the orthogonal dimension")
           check(one().aspectOverride>2 && fake.requests.length===1 && !fake.requests[0].settle,"Edge drag did not request live source reflow")
           one().resizing=false;one().resizeReleased()
+          check(!one().sourceResizeActive && image().mode==="still","Side release did not restore the saved Snapshot capture policy")
           check(fake.requests.length===2 && fake.requests[1].settle,"Edge release did not flush final native readiness")
           check(fake.saved[one().key].length===4,"Custom proportions were not persisted")
         } else if(root.phase===1) {
@@ -151,7 +153,9 @@ ShellRoot {
         } else if(root.phase===3) {
           check(one().geometryReady && image().restarts===1,"Matching fresh frame did not unlock input exactly once")
           requestsBeforeCorner=fake.requests.length
-          one().resizing=true;one().resizePressed("bottom-right");one().resizeRequested(40,20,"bottom-right");one().resizing=false;one().resizeReleased()
+          one().resizing=true;one().resizePressed("bottom-right");one().resizeRequested(40,20,"bottom-right")
+          check(!one().sourceResizeActive && image().mode==="still","Corner scaling unnecessarily enabled live source reflow")
+          one().resizing=false;one().resizeReleased()
           near(one().width/one().height,2.2,"Corner scaling lost custom proportions")
           check(fake.requests.length===requestsBeforeCorner,"Corner scaling resized the underlying application")
           previews.groups=[{key:"window:first",windows:[Object.assign({},root.first,{title:"Refreshed metadata"})]}]
@@ -204,6 +208,10 @@ ShellRoot {
           image().sourceSize=Qt.size(800,400);image().hasFrame=true
         } else if(root.phase===13) {
           check(one().record.id==="restashed" && one().geometryReady && one().aspectOverride===2,"Re-stash did not recover saved proportions and fresh-frame readiness")
+          var releaseConfig=Object.assign({},previews.config);releaseConfig.floatingPreviewResizeRate="release";previews.config=releaseConfig
+          one().resizing=true;one().resizePressed("right");one().resizeRequested(20,0,"right")
+          check(one().sourceResizeActive && image().mode==="still","On release forced Snapshot previews into continuous capture")
+          one().resizing=false;one().resizeReleased()
           console.log("PREVIEW_ASPECT_CARDS_QT_PASS");Qt.quit()
         }
         root.phase++
