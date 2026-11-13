@@ -108,6 +108,8 @@ struct Interaction {
     std::vector<Identity> pendingChildren;
     std::set<uint64_t> initialWindows;
     bool constrainFullscreen = true;
+    Clock::time_point pointerActivationDeadline{};
+    unsigned pointerActivationAllowance = 0;
 };
 struct ConstrainedFullscreen {
     Identity identity;
@@ -204,7 +206,7 @@ bool grabbedPopupOutside(const PHLWINDOW& window);
 bool sourceHasConstraint(const Identity& identity);
 PHLWINDOW keyboardWindow();
 bool contentHit(const Vector2D& global);
-bool clearConstrainedFullscreen(const std::string& id);
+bool clearConstrainedFullscreen(std::string id);
 void clearAllConstrainedFullscreen();
 void synchronizeConstrainedFullscreen();
 
@@ -313,7 +315,7 @@ void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mo
     g_pHyprRenderer->damageWindow(window, true);
 }
 
-bool clearConstrainedFullscreen(const std::string& id) {
+bool clearConstrainedFullscreen(std::string id) {
     fullscreenTransitions.erase(id);
     const auto found = fullscreenWindows.find(id);
     if (found == fullscreenWindows.end())
@@ -930,9 +932,18 @@ Config::Actions::ActionResult dispatchFocus(PHLWINDOW candidate) {
 void activateWindow(CWindow* window, bool force) {
     if (window) {
         const auto candidate = window->m_self.lock();
-        if (!force && interaction && interaction->constrainFullscreen && !endingInteraction
-            && sameWindow(interaction->identity, window, true) && consumeFullscreenTransition(candidate))
-            return;
+        if (!force && interaction && !endingInteraction && sameWindow(interaction->identity, window, true)) {
+            if (consumeFullscreenTransition(candidate))
+                return;
+            if (interaction->constrainFullscreen && !interaction->keyboard && interaction->pointerActivationAllowance
+                && interaction->pointerActivationDeadline > Clock::now()) {
+                // Mouse-only browser controls can request activation before
+                // their following fullscreen request. Acknowledge one trusted
+                // routed press without granting keyboard focus or promotion.
+                --interaction->pointerActivationAllowance;
+                return;
+            }
+        }
         if (guardActivation(candidate, force))
             return;
     }
@@ -1257,12 +1268,20 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
             interaction->grab = point.surface;
             interaction->grabOffset = point.root - point.local;
         }
-        interaction->buttons.insert(event.button);
+        const bool newPress = interaction->buttons.insert(event.button).second;
+        if (newPress && interaction->constrainFullscreen && !interaction->keyboard) {
+            interaction->pointerActivationAllowance = 1;
+            interaction->pointerActivationDeadline = Clock::now() + std::chrono::milliseconds(500);
+        }
     }
     g_pSeatManager->sendPointerButton(event.timeMs, event.button, event.state);
     g_pSeatManager->sendPointerFrame();
     if (event.state == WL_POINTER_BUTTON_STATE_RELEASED) {
-        interaction->buttons.erase(event.button);
+        const bool matchingRelease = interaction->buttons.erase(event.button) != 0;
+        if (matchingRelease && interaction->constrainFullscreen && !interaction->keyboard) {
+            interaction->pointerActivationAllowance = 1;
+            interaction->pointerActivationDeadline = Clock::now() + std::chrono::milliseconds(500);
+        }
         if (interaction->buttons.empty())
             interaction->grab.reset();
     }
