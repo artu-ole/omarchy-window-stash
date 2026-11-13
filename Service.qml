@@ -757,6 +757,19 @@ Item {
     closeDialog()
     enqueue(args)
   }
+  function restoreNativePreviewWindow(id) {
+    // Native guards stop passive PiP activation before it can expose SPECIAL.
+    // The event is an intent only; normal restore revalidates the exact ledger
+    // identity and ownership before changing any application window.
+    if(typeof id!=="string" || !/^[0-9a-f]{32}$/.test(id) || !lifecycleReady || stopping
+        || pendingCloseIds[id] || !snapshot.windows.some(function(window) {return window.id===id && window.phase==="stashed"})) return false
+    function sameRestore(args) {return args.length>1 && args[0]==="restore" && args[1]===id}
+    if((worker.running && sameRestore(runningArgs)) || queue.some(sameRestore)) return false
+    var name=focusedScreenName()
+    if(!screenMonitor(name)) return false
+    restorePreviewWindow(id,name)
+    return true
+  }
   function restorePreviewWindow(id,name) {
     if (!screenMonitor(name) || pendingCloseIds[id] || !snapshot.windows.some(function(w) { return w.id===id })) return
     if (dialogKind==="picker" && dialogScreen===name && dialogWindows.some(function(w) { return w.id===id })) {
@@ -937,6 +950,7 @@ Item {
     target: Hyprland
     function onRawEvent(event) {
       if (!event) return
+      if(event.name==="window-stash-restore") root.restoreNativePreviewWindow(String(event.data || ""))
       if (event.name==="activewindowv2" && root.snapshot.windows.length) externalActivationDelay.restart()
       if (event.name==="configreloaded") {
         shortcutSyncDelay.restart()
