@@ -78,6 +78,11 @@ struct Lease {
     Clock::time_point expires;
     std::vector<Identity> windows;
 };
+struct DesktopFullscreenRequest {
+    std::optional<Fullscreen::eFullscreenMode> internal;
+    std::optional<Fullscreen::eFullscreenMode> client;
+    std::optional<bool> layoutAware;
+};
 struct Interaction {
     std::string owner;
     Identity identity;
@@ -115,6 +120,7 @@ struct Interaction {
     uint64_t clientActivationEvents = 0;
     uint64_t pointerActivationAcknowledgements = 0;
     uint64_t fullscreenActivationAcknowledgements = 0;
+    std::optional<DesktopFullscreenRequest> desktopFullscreen;
 };
 struct ConstrainedFullscreen {
     Identity identity;
@@ -155,6 +161,7 @@ struct EndedInteraction {
     uint64_t clientActivationEvents = 0;
     uint64_t pointerActivationAcknowledgements = 0;
     uint64_t fullscreenActivationAcknowledgements = 0;
+    std::optional<DesktopFullscreenRequest> desktopFullscreen;
     Clock::time_point handoffDeadline;
 };
 
@@ -530,6 +537,32 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
         return sameWindow(item.second.identity, window.get(), true);
     }))
         return; // Do not turn an application's cleanup echo into real fullscreen.
+    if (window && interaction && !endingInteraction && !interaction->constrainFullscreen
+        && sameWindow(interaction->identity, window.get(), true)
+        && client.value_or(internal.value_or(Fullscreen::FSMODE_NONE)) != Fullscreen::FSMODE_NONE) {
+        // Restoring an already-fullscreen hidden browser would briefly send
+        // fullscreen=false for geometry, which cancels video DOM fullscreen.
+        // Restore its ordinary window first, then apply this exact request once
+        // the existing controller handoff verifies a public destination.
+        interaction->desktopFullscreen = DesktopFullscreenRequest{internal, client, layoutAware};
+        requestRestore("source-fullscreen");
+        return;
+    }
+    if (window) {
+        const auto pending = std::find_if(endedInteractions.begin(), endedInteractions.end(), [&](const auto& item) {
+            return item.restoreRequested && !item.handedOff && item.desktopFullscreen && item.handoffDeadline > Clock::now()
+                && sameWindow(item.source, window.get(), false);
+        });
+        if (pending != endedInteractions.end()) {
+            // Coalesce duplicate requests (including an app cancelling its own
+            // request) without exposing or resizing the private source. Explicit
+            // internal/client pairs belong to restoration/layout maintenance;
+            // they must not replace the app's saved fullscreen intent.
+            if (!internal.has_value() && client.has_value())
+                pending->desktopFullscreen = DesktopFullscreenRequest{internal, client, layoutAware};
+            return;
+        }
+    }
     if (window && !internal.has_value() && client == Fullscreen::FSMODE_MAXIMIZED && window->m_xdgSurface
         && window->m_xdgSurface->m_toplevel && window->m_xdgSurface->m_toplevel->m_state.requestsMaximize == true
         && (!interaction || !interaction->constrainFullscreen || !sameWindow(interaction->identity, window.get(), true))
@@ -850,6 +883,7 @@ void rememberEnd(const std::string& owner, const std::string& id, const std::str
         ended.clientActivationEvents = previous->clientActivationEvents;
         ended.pointerActivationAcknowledgements = previous->pointerActivationAcknowledgements;
         ended.fullscreenActivationAcknowledgements = previous->fullscreenActivationAcknowledgements;
+        ended.desktopFullscreen = previous->desktopFullscreen;
         ended.restoreRequested = restoreReason(reason);
         ended.handoffDeadline = Clock::now() + HANDOFF_TIME;
     }
@@ -1970,6 +2004,7 @@ int interactionHandoff(lua_State* state) {
         const auto destination = source->m_workspace;
         if (!destination || destination->m_isSpecialWorkspace || !destination->isVisible())
             throw std::invalid_argument("Restore the original window before completing its handoff");
+        const auto sourceIdentity = ended->source;
         const auto children = ended->children;
         size_t moved = 0;
         PHLWINDOW focused;
@@ -1992,8 +2027,17 @@ int interactionHandoff(lua_State* state) {
         // Workspace moves emit callbacks; find the owner again rather than
         // retaining an iterator across a reentrant release or new session.
         ended = std::find_if(endedInteractions.begin(), endedInteractions.end(), [&](const auto& item) { return item.owner == owner; });
-        if (ended != endedInteractions.end())
+        std::optional<DesktopFullscreenRequest> desktopFullscreen;
+        if (ended != endedInteractions.end() && !ended->handedOff) {
+            if (ended->handoffDeadline > Clock::now())
+                desktopFullscreen = std::move(ended->desktopFullscreen);
+            ended->desktopFullscreen.reset();
             ended->handedOff = true;
+        }
+        if (desktopFullscreen && sameWindow(sourceIdentity, source.get(), false)
+            && source->m_workspace && !source->m_workspace->m_isSpecialWorkspace && source->m_workspace->isVisible()
+            && desktopFullscreen->client.value_or(desktopFullscreen->internal.value_or(Fullscreen::FSMODE_NONE)) != Fullscreen::FSMODE_NONE)
+            Fullscreen::controller()->setFullscreenMode(source, desktopFullscreen->internal, desktopFullscreen->client, desktopFullscreen->layoutAware);
         if (focused)
             Desktop::focusState()->fullWindowFocus(focused, Desktop::FOCUS_REASON_OTHER);
         lua_newtable(state);
