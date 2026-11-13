@@ -323,7 +323,7 @@ void cancelFullscreenResize(const PHLWINDOW& window) {
 void synchronizeFullscreenResizes() {
     std::vector<std::string> ids;
     for (const auto& [id, value] : fullscreenTransitions)
-        if (value.resize != FullscreenResize::None && !value.waitingAck)
+        if (value.resize != FullscreenResize::None)
             ids.push_back(id);
     for (const auto& id : ids) {
         const auto found = fullscreenTransitions.find(id);
@@ -334,7 +334,15 @@ void synchronizeFullscreenResizes() {
         const auto clientSize = found->second.clientSize;
         const auto phase = found->second.resize;
         const auto window = identity.window.lock();
-        if (!window || !sameWindow(identity, window.get(), true) || !window->m_xdgSurface || !window->m_xdgSurface->m_toplevel)
+        if (!window || !sameWindow(identity, window.get(), false))
+            continue;
+        if (!sameWindow(identity, window.get(), true)) {
+            // A removed stash tag relinquishes ownership, but this exact
+            // original window must not retain our temporary client height.
+            cancelFullscreenResize(window);
+            continue;
+        }
+        if (found->second.waitingAck || !window->m_xdgSurface || !window->m_xdgSurface->m_toplevel)
             continue;
         if (window->sizeAnimation()->goal() != windowSize) {
             cancelFullscreenResize(window);
@@ -500,6 +508,21 @@ bool applyConstrainedFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreen
     return true;
 }
 
+bool consumePassiveMaximizeEcho(const PHLWINDOW& window) {
+    const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+        return item.second.client == Fullscreen::FSMODE_NONE && !item.second.maximizeFollowupHandled
+            && (item.second.waitingAck || item.second.resize != FullscreenResize::None || item.second.expires > Clock::now())
+            && sameWindow(item.second.identity, window.get(), true);
+    });
+    if (found == fullscreenTransitions.end())
+        return false;
+    // The app can leave passive picture-in-picture without an input helper.
+    // Keep its one following restore-maximized echo out of the real layout,
+    // just as the compositor suppresses that echo when leaving tiled fullscreen.
+    found->second.maximizeFollowupHandled = true;
+    return true;
+}
+
 void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW window,
                        std::optional<Fullscreen::eFullscreenMode> internal,
                        std::optional<Fullscreen::eFullscreenMode> client, std::optional<bool> layoutAware) {
@@ -507,6 +530,11 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
         return sameWindow(item.second.identity, window.get(), true);
     }))
         return; // Do not turn an application's cleanup echo into real fullscreen.
+    if (window && !internal.has_value() && client == Fullscreen::FSMODE_MAXIMIZED && window->m_xdgSurface
+        && window->m_xdgSurface->m_toplevel && window->m_xdgSurface->m_toplevel->m_state.requestsMaximize == true
+        && (!interaction || !interaction->constrainFullscreen || !sameWindow(interaction->identity, window.get(), true))
+        && consumePassiveMaximizeEcho(window))
+        return;
     if (window && !internal.has_value() && client == Fullscreen::FSMODE_NONE && window->m_xdgSurface
         && window->m_xdgSurface->m_toplevel && window->m_xdgSurface->m_toplevel->m_state.requestsMaximize == true
         && controller->getFullscreenModes(window).client == Fullscreen::FSMODE_MAXIMIZED) {
@@ -533,6 +561,11 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
         // fullscreen path and expose or resize an owned hidden source.
         return;
     }
+    if (window && !(interaction && !interaction->constrainFullscreen && sameWindow(interaction->identity, window.get(), true))
+        && std::any_of(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+            return item.second.resize != FullscreenResize::None && sameWindow(item.second.identity, window.get(), true);
+        }))
+        return; // A passive cleanup request must not acquire real layout fullscreen.
     using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, std::optional<Fullscreen::eFullscreenMode>,
                               std::optional<Fullscreen::eFullscreenMode>, std::optional<bool>);
     if (window)

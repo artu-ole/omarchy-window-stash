@@ -62,7 +62,9 @@ struct FullscreenTransition {
  unsigned activationAllowance = 1;
  bool waitingAck = false;
  FullscreenResize resize = FullscreenResize::None;
+ bool maximizeFollowupHandled = false;
 };
+using PHLWINDOW = std::shared_ptr<Window>;
 std::unordered_map<std::string,ConstrainedFullscreen> fullscreenWindows;
 std::unordered_map<std::string,FullscreenTransition> fullscreenTransitions;
 void* clientFullscreenFunction = reinterpret_cast<void*>(1);
@@ -165,8 +167,18 @@ int main() {
  assert(sizes.size() == 3 && sizes.back() == (Vector2D{1000,800}));
  assert(fullscreenTransitions.at("owned").resize == FullscreenResize::None);
  window->animation.size = {1000,700};
+ // Relinquishing a stash tag must restore the original client's height even
+ // when the last nudge configure has not yet been acknowledged.
+ fullscreenTransitions.at("owned").resize = FullscreenResize::Nudge;
+ fullscreenTransitions.at("owned").waitingAck = true;
+ window->parked = false;
+ synchronizeFullscreenResizes();
+ assert(sizes.size() == 4 && sizes.back() == (Vector2D{1000,700}));
+ assert(fullscreenTransitions.at("owned").resize == FullscreenResize::None);
+ window->parked = true;
  // A configure callback may release ownership reentrantly.
  fullscreenTransitions.at("owned").resize = FullscreenResize::Exit;
+ fullscreenTransitions.at("owned").waitingAck = false;
  onSize = [] { fullscreenTransitions.clear(); };
  synchronizeFullscreenResizes();
  assert(fullscreenTransitions.empty());
@@ -194,6 +206,37 @@ int main() {
 
 @unittest.skipUnless(shutil.which('c++'), 'Native memory regression requires a C++ compiler')
 class FullscreenNativeMemoryTests(unittest.TestCase):
+    def test_passive_exit_consumes_one_owned_maximize_echo_without_changing_client_state(self):
+        function = production_function('bool', 'consumePassiveMaximizeEcho')
+        caller = r'''
+int main() {
+ auto window = std::make_shared<Window>();
+ const std::string id = "owned";
+ fullscreenTransitions.emplace(id,FullscreenTransition{Identity{id,window},Fullscreen::FSMODE_NONE,Clock::now()+std::chrono::seconds(1)});
+ assert(!consumePassiveMaximizeEcho(std::make_shared<Window>()));
+ assert(consumePassiveMaximizeEcho(window));
+ assert(!consumePassiveMaximizeEcho(window));
+ assert(fullscreenTransitions.at(id).client == Fullscreen::FSMODE_NONE);
+ assert(window->client == Fullscreen::FSMODE_FULLSCREEN);
+ auto& value = fullscreenTransitions.at(id);
+ value.maximizeFollowupHandled = false;
+ value.expires = Clock::now()-std::chrono::seconds(1);
+ assert(!consumePassiveMaximizeEcho(window));
+ value.waitingAck = true;
+ assert(consumePassiveMaximizeEcho(window));
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='stash-fullscreen-echo-') as temporary:
+            source, binary = Path(temporary)/'test.cpp', Path(temporary)/'test'
+            source.write_text(PRELUDE+function+caller)
+            compiled = subprocess.run(['c++', '-std=c++20', '-O1', '-g', '-fsanitize=address',
+                                       '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+                                       str(source), '-o', str(binary)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10,
+                                    env=dict(os.environ, ASAN_OPTIONS='detect_leaks=0:halt_on_error=1'))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_client_height_cleanup_waits_for_each_ack_without_changing_window_geometry(self):
         function = production_function('void', 'synchronizeFullscreenResizes')
         with tempfile.TemporaryDirectory(prefix='stash-fullscreen-resize-') as temporary:
