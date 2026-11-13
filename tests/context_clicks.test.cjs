@@ -108,6 +108,36 @@ assert.equal(state.surfaces[0].keyboardFocus(),focusModes.None)
 assert.equal(resets,1,'Explicit Escape recovery must reset native held state too')
 assert.equal(state.surfaces[0].recoveryEnabled(),false)
 console.log('Pointer holds: press-before-dismiss ordering, prior focus only, multi-button release and explicit WindowShortcut Escape recovery passed')
+
+const canResetBody = surfaceSource.match(/function canResetPreviewProportions\(group\) \{([\s\S]*?)\n  \}/)
+const resetProportionsBody = service.match(/function resetPreviewProportionsContext\(\) \{([\s\S]*?)\n  \}/)
+const resetActionIds = source.match(/readonly property var actionIds:([\s\S]*?)\n  property int currentIndex/)
+assert.ok(canResetBody && resetProportionsBody && resetActionIds)
+const geometryConfig={presentation:'previews',floatingPreviewSizing:'free',floatingPreviewLock:'unlocked'}
+const cover={visible:true,retiring:false,aspectOverride:2,displayRecord:{id:'first'},canResize:false}
+const group={key:'app:browser',windows:[{id:'first'},{id:'second'}]}
+const geometryScope=vm.createContext({config:geometryConfig,floatingPreviews:{cardForKey:key=>key==='preview:app:browser' ? cover : null}})
+const canReset=vm.runInContext('(function(group){'+canResetBody[1]+'})',geometryScope)
+assert.equal(canReset(group),true,'Opening the menu blocks gestures without hiding the reset action')
+cover.aspectOverride=0;assert.equal(canReset(group),false,'Natural triples have no reset action');cover.aspectOverride=2
+geometryConfig.floatingPreviewLock='locked';assert.equal(canReset(group),false);geometryConfig.floatingPreviewLock='unlocked'
+geometryConfig.floatingPreviewSizing='preset';assert.equal(canReset(group),false);geometryConfig.floatingPreviewSizing='free'
+cover.displayRecord={id:'second'};assert.equal(canReset(group),false,'A stale cover lead cannot reset another source');cover.displayRecord={id:'first'}
+assert.equal(canReset({key:'window:first',windows:[{id:'first'}]}),false,'An expanded tile cannot reset its grouped cover')
+const ids=vm.runInNewContext(resetActionIds[1],{interactionAvailable:true,proportionsResetAvailable:true})
+assert.ok(ids.indexOf('reset-preview-proportions')>=0 && ids.indexOf('reset-preview-proportions')<ids.indexOf('close'))
+let menuClosed=false,proportionsReset=0
+const deferred=[]
+const resetSurface={screen:{name:'test'},canResetPreviewProportions:canReset,resetPreviewProportions(id){
+  assert.equal(menuClosed,true,'The context menu must release its gesture block before reset')
+  assert.equal(id,'first');proportionsReset++
+}}
+const resetScope=vm.createContext({contextGroup:group,contextScreen:'test',surfaces:[resetSurface],
+  closeContext(){menuClosed=true},Qt:{callLater:callback=>deferred.push(callback)}})
+vm.runInContext('(function(){'+resetProportionsBody[1]+'})',resetScope)()
+assert.equal(menuClosed,true);assert.equal(proportionsReset,0)
+deferred[0]();assert.equal(proportionsReset,1)
+console.log('Preview proportions context: exact custom cover, unlocked/free sizing, grouped lead identity and close-before-reset routing passed')
 const cleanupArray = observer.match(/Component.onDestruction:Quickshell.execDetached\((\[[\s\S]*?\])\)/)
 assert.ok(cleanupArray)
 const cleanup = vm.runInContext(cleanupArray[1],context)[2]

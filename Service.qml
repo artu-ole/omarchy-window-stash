@@ -6,6 +6,7 @@ import Quickshell.Io
 import "ui"
 import "ui/Model.js" as Model
 import "ui/PreviewVisibility.js" as PreviewVisibility
+import "ui/PreviewInteraction.js" as PreviewInteraction
 
 Item {
   id: root
@@ -17,9 +18,10 @@ Item {
   property bool stopping:false
   property bool lifecycleReady: false
   property string lifecycleError: ""
+  property string lifecycleFailureDetail: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -35,9 +37,26 @@ Item {
   readonly property bool pointerButtonHeld:Object.keys(pressedPointerButtons).length>0
   property bool pointerKnown:false
   property point pointerPosition:Qt.point(0,0)
+  property var bridgeSupportStatus:({state:"unknown"})
+  property string bridgeSupportError:""
+  property bool bridgeReloadBusy:false
+  property string bridgeReloadStage:""
+  property bool bridgeReloadComplete:false
+  property bool bridgeReloadFailed:false
+  property bool bridgeUpdateDeferred:false
+  property string bridgeUpdateNotified:""
+  property bool bridgeNotificationPending:false
+  property int bridgeSupportGeneration:0
+  readonly property bool bridgeUpdateRequired:bridgeSupportStatus.state==="update-required"
+  readonly property bool bridgeReloadBlocked:bridgeUpdateRequired && bridgeSupportStatus.canReload===false
+  readonly property bool bridgeSupportVisible:bridgeUpdateRequired || bridgeReloadBusy || bridgeSupportError!==""
+  readonly property string bridgeSupportText:bridgeSupportError || (bridgeReloadBusy
+    ? bridgeReloadStage==="building" ? "Building updated preview support…"
+      : bridgeReloadStage==="loading" ? "Loading updated preview support…" : "Finishing preview interaction…"
+    : "Updated preview support is available. Reload it to apply the update without closing your applications.")
   readonly property bool pointerTracking:root.surfaces.some(function(surface) {
     return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.floatingPreviewsExpanded || surface.contextMenuOpen
-  })
+  }) || !!previewInteractionRequest
   property var previewCompatibilityRequests: ({})
   property var previewCompatibilityStatus: ({state:"idle",ids:[]})
   property string previewCompatibilityError:""
@@ -55,7 +74,7 @@ Item {
   readonly property var previewCompatibilityIds: {
     var liveSource=snapshot.settings.hoverPreview==="live"
       || (snapshot.settings.presentation==="previews" && ["hover","live"].indexOf(snapshot.settings.floatingPreviewUpdate)>=0)
-    if (!captureAllowed || !liveSource || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
+    if (bridgeReloadBusy || !captureAllowed || !liveSource || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
     var ids=Object.keys(previewCompatibilityRequests).map(function(key) { return root.previewCompatibilityRequests[key] })
     return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort().slice(0,128)
   }
@@ -63,6 +82,25 @@ Item {
   readonly property PreviewKeeperHost previewCompatibilityWorker:previewKeeper.item as PreviewKeeperHost
   onPreviewCompatibilityStampChanged:if (previewCompatibilityWorker) previewCompatibilityWorker.send()
   property bool contextOpen:false
+  property var previewInteractionRequest:null
+  property var previewInteractionPendingRequest:null
+  property bool previewInteractionStopping:false
+  property string previewInteractionStopReason:""
+  property var previewInteractionStatus:({state:"idle"})
+  property string previewInteractionError:""
+  property int previewInteractionSerial:0
+  property var previewGeometryStates:({})
+  property var previewGeometryDrafts:({})
+  property var previewGeometryWatchers:({})
+  property int previewGeometrySerial:0
+  property int runningGeometryEpoch:0
+  property bool runningGeometryReplied:false
+  readonly property string previewInteractionStamp:JSON.stringify(PreviewInteraction.wire(previewInteractionRequest))
+  readonly property InteractionHost previewInteractionWorker:interactionKeeper.item as InteractionHost
+  onPreviewInteractionStampChanged:if(previewInteractionWorker) previewInteractionWorker.send()
+  onCaptureStateChanged:validatePreviewInteraction()
+  onCaptureClockChanged:validatePreviewInteraction()
+  onSnapshotChanged: {validatePreviewInteraction();prunePreviewGeometry()}
   property string contextScreen:""
   property int contextWorkspace:1
   property point contextPoint:Qt.point(0,0)
@@ -73,7 +111,8 @@ Item {
   property var runningArgs:[]
   property bool closeNotified:false
   readonly property var shortcutKeys:["minimizeShortcut","restoreLastShortcut","restoreOldestShortcut"]
-  readonly property bool shortcutsBusy:(worker.running && runningArgs[0]==="shortcut") || queue.some(function(args) { return args[0]==="shortcut" })
+  readonly property bool shortcutsBusy:(worker.running && ["shortcut","interaction-exit-shortcut"].indexOf(runningArgs[0])>=0)
+    || queue.some(function(args) { return ["shortcut","interaction-exit-shortcut"].indexOf(args[0])>=0 })
   readonly property string shortcutStamp:JSON.stringify(shortcutKeys.map(function(key) { return snapshot.settings[key] }))
   property var deferredSettings:[]
   property string shortcutSyncError:""
@@ -82,7 +121,7 @@ Item {
   property int resetSerial:0
   readonly property bool resetBusy:resetting || (worker.running && runningArgs[0]==="reset-settings")
     || queue.some(function(args) { return args[0]==="reset-settings" })
-  readonly property bool settingsBusy:resetBusy || shortcutsBusy
+  readonly property bool settingsBusy:resetBusy || shortcutsBusy || previewInteractionStopping || bridgeReloadBusy
   onShortcutStampChanged:shortcutSyncDelay.restart()
 
   signal pointerClicked(real x,real y,int button)
@@ -100,6 +139,7 @@ Item {
     if (value.owner && value.owner!==lifecycleOwner) return
     if (value.state==="error") {
       lifecycleError=value.error || "Window Stash lifecycle support is unavailable"
+      lifecycleFailureDetail=String(lifecycleError).slice(-1600)
       lastError=lifecycleError
       return
     }
@@ -112,7 +152,7 @@ Item {
     shortcutSyncError=Object.keys(value.conflicts || {}).map(function(key) { return value.conflicts[key] }).join("\n")
     if (shortcutSyncError) lastError=shortcutSyncError
     else if (lastError===previous) lastError=""
-    if (first) { root.refresh(); root.pump() }
+    if (first) { root.refresh(); root.pump(); root.checkBridgeSupport() }
   }
   Process {
     id:lifecycle
@@ -125,11 +165,12 @@ Item {
         catch (error) { root.lifecycleError="Could not read lifecycle support status"; root.lastError=root.lifecycleError }
       }
     }
-    stderr:StdioCollector {}
+    stderr:StdioCollector {id:lifecycleStderr}
     onExited:function(code) {
       root.lifecycleReady=false
       if (code!==0) {
-        root.lifecycleError="Window Stash lifecycle support stopped unexpectedly"
+        root.lifecycleFailureDetail=String(lifecycleStderr.text || root.lifecycleError || "").slice(-1600)
+        if(!root.lifecycleError) root.lifecycleError="Window Stash lifecycle support stopped unexpectedly"
         root.lastError=root.lifecycleError
       }
       if (!root.stopping) lifecycleRestart.restart()
@@ -145,7 +186,7 @@ Item {
   }
   StashClickObserver {
     id:clickObserver
-    watching:root.pointerButtonHeld || root.surfaces.some(function(s) { return s.floatingDockOpen || s.floatingPreviewsExpanded || s.contextMenuOpen || s.previewOpen })
+    watching:root.pointerButtonHeld || !!root.previewInteractionRequest || root.surfaces.some(function(s) { return s.floatingDockOpen || s.floatingPreviewsExpanded || s.contextMenuOpen || s.previewOpen })
     tracking:root.pointerTracking
     onMoved:function(x,y) { root.pointerPosition=Qt.point(x,y); root.pointerKnown=true; root.pointerMoved(x,y) }
     onClicked:function(x,y,button) {
@@ -243,7 +284,7 @@ Item {
           onRead:function(line) {
             try {
               var value=JSON.parse(line)
-              if (["idle","disabled","building","loading","ready","unavailable"].indexOf(value.state)<0) return
+              if (["idle","paused","disabled","building","loading","ready","unavailable"].indexOf(value.state)<0) return
               root.previewCompatibilityStatus=value
               if (value.error) root.previewCompatibilityError=String(value.error)
             } catch (error) { root.previewCompatibilityError="Could not read live preview support status" }
@@ -261,13 +302,260 @@ Item {
       }
   }
   function enqueue(args) {
+    if(previewInteractionRequest && ["restore","restore-last","restore-oldest","restore-all","minimize","activate","close","close-all","reset-settings","preview-aspect"].indexOf(args[0])>=0)
+      endPreviewInteraction("window-action")
     var next = queue.slice()
     next.push(args)
     queue = next
     pump()
   }
+  function previewGeometryCommand(args) {return args && ["preview-aspect","preview-geometry"].indexOf(args[0])>=0}
+  function previewGeometryState(id) {return previewGeometryStates[id] || null}
+  function previewGeometryVisible(id) {return Object.keys(previewGeometryWatchers).some(function(key) {return root.previewGeometryWatchers[key]===id})}
+  function watchPreviewGeometry(key,id) {
+    var next=Object.assign({},previewGeometryWatchers)
+    if(id) next[key]=id;else delete next[key]
+    previewGeometryWatchers=next
+    queue=queue.filter(function(args) {return args[0]!=="preview-geometry" || root.previewGeometryVisible(args[1])})
+  }
+  function verifyPreviewGeometry(id) {
+    if(previewGeometryStates[id] || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"})) return
+    var states=Object.assign({},previewGeometryStates)
+    states[id]={id:id,epoch:++previewGeometrySerial,ready:false,pending:true,nativeRequired:false,reason:"Checking preview proportions…",captureRevision:0}
+    previewGeometryStates=states
+    enqueue(["preview-geometry",id])
+  }
+  function retryPreviewGeometry() {
+    Object.keys(previewGeometryStates).forEach(function(id) {
+      var state=root.previewGeometryStates[id]
+      if(!state.nativeRequired || !root.previewGeometryVisible(id)) return
+      if(Number.isFinite(state.requestedAspect)) root.requestPreviewAspect(id,state.requestedAspect,state.axis || "width",true)
+      else {
+        var next=Object.assign({},root.previewGeometryStates);delete next[id];root.previewGeometryStates=next
+        root.verifyPreviewGeometry(id)
+      }
+    })
+  }
+  function prunePreviewGeometry() {
+    var states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts),changed=false
+    Object.keys(states).forEach(function(id) {
+      if(!root.snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"})) {
+        delete states[id];delete drafts[id];changed=true
+      }
+    })
+    if(changed) {previewGeometryStates=states;previewGeometryDrafts=drafts}
+  }
+  function requestPreviewAspect(id,aspect,axis,settle) {
+    aspect=Number(aspect)
+    if(typeof id!=="string" || !Number.isFinite(aspect) || aspect<.02 || aspect>50 || ["width","height"].indexOf(axis)<0
+        || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"}) || pendingCloseIds[id]) return false
+    if(previewInteractionRequest) endPreviewInteraction("preview-resize")
+    var epoch=++previewGeometrySerial,states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts)
+    states[id]={epoch:epoch,requestedAspect:aspect,axis:axis,ready:false,pending:true,nativeRequired:false,reason:"Updating preview proportions…",captureRevision:0}
+    var args=["preview-aspect",id,String(aspect),"--axis",axis]
+    if(settle) args.push("--settle")
+    drafts[id]=args
+    queue=queue.filter(function(args) {return !root.previewGeometryCommand(args) || args[1]!==id})
+    previewGeometryStates=states;previewGeometryDrafts=drafts
+    if(settle) flushPreviewGeometry();else previewGeometryFlush.restart()
+    return true
+  }
+  function flushPreviewGeometry() {
+    var drafts=previewGeometryDrafts;previewGeometryDrafts={}
+    Object.keys(drafts).forEach(function(id) {if(root.previewGeometryStates[id]) root.enqueue(drafts[id])})
+  }
+  function pollPreviewGeometry() {
+    Object.keys(previewGeometryStates).forEach(function(id) {
+      var state=root.previewGeometryStates[id]
+      if(!state.pending || state.nativeRequired || !root.previewGeometryVisible(id) || root.previewGeometryDrafts[id]
+          || (worker.running && root.previewGeometryCommand(root.runningArgs) && root.runningArgs[1]===id)
+          || root.queue.some(function(args) {return root.previewGeometryCommand(args) && args[1]===id})) return
+      root.enqueue(["preview-geometry",id])
+    })
+  }
+  function previewGeometryResult(result,args,epoch) {
+    var id=args[1],state=previewGeometryStates[id]
+    if(!state || state.epoch!==epoch) return
+    runningGeometryReplied=true
+    var next=Object.assign({},state);next.id=id
+    if(!result || result.ok===false || result.id!==id || typeof result.ready!=="boolean") {
+      next.pending=false;next.ready=false;next.reason=result && result.error ? String(result.error) : "Could not verify preview proportions"
+    } else {
+      next.aspect=Number(result.aspect);next.size=result.size;next.ready=result.ready
+      next.nativeRequired=result.nativeRequired===true;next.pending=!next.ready && !next.nativeRequired
+      next.reason=result.reason ? String(result.reason) : next.ready ? "" : "Waiting for the application to resize…"
+      if(next.ready) next.captureRevision=epoch
+    }
+    var states=Object.assign({},previewGeometryStates);states[id]=next;previewGeometryStates=states
+  }
+  Timer {id:previewGeometryFlush;interval:60;onTriggered:root.flushPreviewGeometry()}
+  Timer {interval:150;repeat:true;running:Object.keys(root.previewGeometryStates).some(function(id) {return root.previewGeometryStates[id].pending && root.previewGeometryVisible(id)})
+    onTriggered:root.pollPreviewGeometry()}
+  function previewInteractionMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionRequest,id,monitor,key)}
+  function previewInteractionPendingMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionPendingRequest,id,monitor,key)}
+  function validInteractionTarget(request) {
+    return !!request && lifecycleReady && !bridgeReloadBusy && PreviewInteraction.enabled(snapshot.settings) && captureAllowedFor(request.monitor)
+      && !pendingCloseIds[request.id] && (!previewGeometryStates[request.id] || previewGeometryStates[request.id].ready)
+      && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed"})
+      && snapshot.monitors.some(function(monitor) {return monitor.name===request.monitor})
+  }
+  function activatePreviewInteraction(request) {
+    if(!validInteractionTarget(request) || previewInteractionRequest || stopping) return false
+    previewInteractionError="";previewInteractionStopReason="";previewInteractionStopping=false
+    previewInteractionStatus={state:"starting",id:request.id,serial:request.serial}
+    previewInteractionRequest=request
+    interactionKeeper.active=true
+    return true
+  }
+  function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
+    if(!record || bridgeReloadBusy || pendingCloseIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
+        || !snapshot.windows.some(function(window) {return window.id===record.id && window.phase==="stashed"})) return false
+    var request=PreviewInteraction.request(previewInteractionSerial+1,record.id,monitor,key,rect,excludeRects,snapshot.settings)
+    if(!request) return false
+    closeContext();closeDialog()
+    previewInteractionSerial=request.serial
+    if(previewInteractionRequest) {
+      previewInteractionPendingRequest=request
+      endPreviewInteraction("replaced")
+      return true
+    }
+    return activatePreviewInteraction(request)
+  }
+  function updatePreviewInteraction(id,monitor,key,rect,excludeRects) {
+    if(previewInteractionPendingMatches(id,monitor,key)) {
+      previewInteractionPendingRequest=PreviewInteraction.request(previewInteractionPendingRequest.serial,id,monitor,key,rect,excludeRects,snapshot.settings)
+      return
+    }
+    if(!previewInteractionMatches(id,monitor,key)) return
+    if(previewInteractionStopping) return
+    var request=PreviewInteraction.request(previewInteractionRequest.serial,id,monitor,key,rect,excludeRects,snapshot.settings)
+    if(!request) {endPreviewInteraction("geometry-unavailable");return}
+    if(JSON.stringify(request)!==JSON.stringify(previewInteractionRequest)) previewInteractionRequest=request
+  }
+  function endPreviewInteraction(reason) {
+    if(reason!=="replaced") previewInteractionPendingRequest=null
+    if(!previewInteractionRequest) return
+    if(previewInteractionStopping) return
+    previewInteractionStopping=true;previewInteractionStopReason=reason || "stopped"
+    previewInteractionStatus={state:"stopping",id:previewInteractionRequest.id,serial:previewInteractionRequest.serial,reason:previewInteractionStopReason}
+    if(previewInteractionWorker) previewInteractionWorker.stop()
+    interactionStopDeadline.restart()
+  }
+  function finishPreviewInteraction(value) {
+    interactionStopDeadline.stop();interactionKillDeadline.stop();interactionExpiryDeadline.stop()
+    previewInteractionStatus=value
+    previewInteractionRequest=null;previewInteractionStopping=false;previewInteractionStopReason=""
+    interactionKeeper.active=false
+    Qt.callLater(function() {
+      var pending=root.previewInteractionPendingRequest
+      if(!pending || root.previewInteractionRequest || root.stopping) return
+      root.previewInteractionPendingRequest=null
+      root.activatePreviewInteraction(pending)
+    })
+    Qt.callLater(root.pump)
+    Qt.callLater(root.applyDeferredSettings)
+  }
+  function quarantinePreviewInteraction(reason) {
+    if(!previewInteractionRequest) return
+    previewInteractionStopping=true;previewInteractionStopReason=reason
+    previewInteractionStatus={state:"stopping",id:previewInteractionRequest.id,serial:previewInteractionRequest.serial,reason:reason}
+    interactionStopDeadline.stop();interactionKillDeadline.stop()
+    // An abnormal worker exit cannot acknowledge native cleanup. Its last
+    // renewal expires after 2500 ms; keep management frozen past that limit.
+    if(!interactionExpiryDeadline.running) interactionExpiryDeadline.restart()
+  }
+  function validatePreviewInteraction() {
+    if(previewInteractionPendingRequest && !validInteractionTarget(previewInteractionPendingRequest)) previewInteractionPendingRequest=null
+    var request=previewInteractionRequest
+    if(!request) return
+    if(!validInteractionTarget(request)) {
+      endPreviewInteraction("preview-unavailable");return
+    }
+    if(previewInteractionStopping) return
+    var next=PreviewInteraction.request(request.serial,request.id,request.monitor,request.viewKey,request.rect,request.excludeRects,snapshot.settings)
+    if(JSON.stringify(next)!==JSON.stringify(request)) previewInteractionRequest=next
+  }
+  function interactionMessage(value,serial) {
+    if(!previewInteractionRequest || previewInteractionRequest.serial!==serial) return
+    if(!value || ["starting","building","loading","active","ended","idle","unavailable"].indexOf(value.state)<0)
+      throw new Error("Invalid interactive preview status")
+    if(value.serial!==undefined && value.serial!==serial) return
+    if(value.state==="active" && value.id!==previewInteractionRequest.id) throw new Error("Interactive preview target changed")
+    if(value.error) previewInteractionError=String(value.error)
+    if(["ended","idle"].indexOf(value.state)>=0) {
+      // A native outside click permanently ends this activation. Clearing the
+      // owner, rather than merely renewing a stale rectangle, prevents re-entry.
+      finishPreviewInteraction(value)
+    } else if(value.state==="unavailable") quarantinePreviewInteraction("native-unavailable")
+    else if(!previewInteractionStopping) previewInteractionStatus=value
+  }
+  Timer {
+    id:interactionStopDeadline;interval:1500
+    onTriggered:if(root.previewInteractionRequest && root.previewInteractionStopping) {
+      if(root.previewInteractionWorker) root.previewInteractionWorker.terminate(15)
+      interactionKillDeadline.restart()
+    }
+  }
+  Timer {
+    id:interactionKillDeadline;interval:1000
+    onTriggered:if(root.previewInteractionRequest && root.previewInteractionStopping) {
+      if(root.previewInteractionWorker) root.previewInteractionWorker.terminate(9)
+      root.quarantinePreviewInteraction("release-timeout")
+    }
+  }
+  Timer {
+    id:interactionExpiryDeadline;interval:2800
+    onTriggered:if(root.previewInteractionRequest) root.finishPreviewInteraction({state:"ended",id:root.previewInteractionRequest.id,
+      serial:root.previewInteractionRequest.serial,reason:"native-lease-expired"})
+  }
+  Loader {
+    id:interactionKeeper
+    active:false
+    sourceComponent:InteractionHost {}
+  }
+  component InteractionHost:Item {
+    id:interactionHost
+    readonly property bool running:interactionProcess.running
+    property int serial:0
+    property bool stopSent:false
+    function send() {
+      if(!root.previewInteractionStopping && interactionProcess.running && root.previewInteractionRequest && serial===root.previewInteractionRequest.serial)
+        interactionProcess.write(root.previewInteractionStamp+"\n")
+    }
+    function stop() {
+      if(interactionProcess.running && !stopSent) {stopSent=true;interactionProcess.write("null\n")}
+    }
+    function terminate(signal) {if(interactionProcess.running) interactionProcess.signal(signal)}
+    Component.onCompleted:serial=root.previewInteractionRequest ? root.previewInteractionRequest.serial : 0
+    Process {
+      id:interactionProcess
+      command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/interaction.py").toString().replace(/^file:\/\//,""))]
+      stdinEnabled:true
+      running:true
+      onStarted: {if(root.previewInteractionStopping) interactionHost.stop();else interactionHost.send()}
+      stdout:SplitParser {
+        onRead:function(line) {
+          try {root.interactionMessage(JSON.parse(line),interactionHost.serial)}
+          catch(error) {
+            root.previewInteractionError="Could not read interactive preview status"
+            root.endPreviewInteraction("invalid-status")
+          }
+        }
+      }
+      stderr:StdioCollector {}
+      onExited:function(code) {
+        if(!root.previewInteractionRequest || root.previewInteractionRequest.serial!==interactionHost.serial) return
+        if(code===0) root.finishPreviewInteraction({state:"ended",id:root.previewInteractionRequest.id,serial:interactionHost.serial,
+          reason:root.previewInteractionStopReason || "worker-exited"})
+        else {
+          if(!root.previewInteractionError) root.previewInteractionError="Interactive preview support stopped unexpectedly"
+          root.quarantinePreviewInteraction("worker-failed")
+        }
+      }
+    }
+  }
   function pump() {
-    if (worker.running || !lifecycleReady) return
+    if (worker.running || !lifecycleReady || previewInteractionStopping || bridgeReloadBusy) return
     if (queue.length === 0) {
       if (pendingRefresh) { pendingRefresh = false; enqueue(["list"]) }
       return
@@ -276,8 +564,160 @@ Item {
     var args = next.shift()
     queue = next
     runningArgs=args; closeNotified=false
+    runningGeometryEpoch=previewGeometryCommand(args) && previewGeometryStates[args[1]] ? previewGeometryStates[args[1]].epoch : 0
+    runningGeometryReplied=false
     worker.command = controllerCommand.concat(args)
     worker.running = true
+  }
+  // Updating the native bridge is a separate, explicit action. Pause every
+  // helper before unloading so a live delegate cannot reacquire the old API.
+  function checkBridgeSupport() {
+    if(stopping || !lifecycleReady || bridgeReloadBusy || bridgeProbe.running) return
+    bridgeProbe.generation=bridgeSupportGeneration
+    bridgeProbe.running=true
+  }
+  function bridgeSupportMessage(value) {
+    if(!value || ["current","absent","update-required","error","busy"].indexOf(value.state)<0)
+      throw new Error("Invalid preview support status")
+    bridgeSupportStatus=value
+    if(value.state==="error") bridgeSupportError=String(value.error || "Could not check preview support")
+    if(value.state==="current" || value.state==="absent") {
+      bridgeUpdateDeferred=false
+      bridgeUpdateNotified=""
+      bridgeNotificationPending=false
+      if(value.state==="current") bridgeReloadFailed=false
+      if(!bridgeReloadBusy && !bridgeReloadFailed) bridgeSupportError=""
+    }
+    if(value.state==="update-required") {
+      if(value.canReload===false) bridgeSupportError=String(value.error || "This preview extension requires a one-time logout and login to apply the update. Running applications will close.")
+      else if(!bridgeReloadFailed && !bridgeReloadBusy) bridgeSupportError=""
+      var key=String(value.loadedVersion || "unknown")+":"+String(value.expectedVersion || "unknown")+":"+String(value.canReload!==false)
+      if(key!==bridgeUpdateNotified && !bridgeUpdateDeferred) {
+        bridgeUpdateNotified=key
+        bridgeNotificationPending=true
+        beginBridgeNotification()
+      }
+    }
+  }
+  function beginBridgeNotification() {
+    if(!bridgeNotificationPending || stopping || bridgeReloadBusy || !bridgeUpdateRequired || bridgeUpdateDeferred) return
+    if(bridgeNotification.running) {
+      if(bridgeNotification.supportsReload===bridgeReloadBlocked) bridgeNotification.signal(15)
+      return
+    }
+    bridgeNotification.supportsReload=!bridgeReloadBlocked
+    bridgeNotificationPending=false
+    bridgeNotification.running=true
+  }
+  function deferBridgeUpdate() {bridgeUpdateDeferred=true;bridgeNotificationPending=false}
+  function reloadPreviewSupport() {
+    if(stopping || bridgeReloadBusy || bridgeReloadBlocked || !lifecycleReady || resetBusy || shortcutsBusy) return false
+    bridgeSupportError="";bridgeReloadComplete=false;bridgeReloadFailed=false;bridgeReloadStage="stopping"
+    bridgeSupportGeneration++
+    bridgeReloadBusy=true;bridgeUpdateDeferred=false
+    bridgeNotificationPending=false
+    previewInteractionPendingRequest=null
+    endPreviewInteraction("bridge-update")
+    bridgeReloadWait.restart()
+    bridgeReloadWaitDeadline.restart()
+    return true
+  }
+  function beginBridgeReload() {
+    if(!bridgeReloadBusy || bridgeReload.running || previewInteractionRequest || previewInteractionStopping || worker.running) return
+    bridgeReloadWait.stop();bridgeReloadWaitDeadline.stop()
+    bridgeReloadStage="building"
+    bridgeReload.running=true
+    bridgeReloadDeadline.restart()
+  }
+  function bridgeReloadMessage(value) {
+    if(!bridgeReloadBusy || !value || ["building","stopping","loading","ready","error","cancelled"].indexOf(value.state)<0) return
+    bridgeReloadStage=value.state
+    if(value.state==="error" || value.state==="cancelled" || value.ok===false) {
+      bridgeReloadComplete=false
+      bridgeSupportError=String(value.error || "Could not reload preview support")
+    } else if(value.state==="ready" && value.ok===true) {
+      bridgeReloadComplete=true
+      bridgeSupportStatus=Object.assign({},value,{state:"current"})
+    }
+  }
+  function finishBridgeReload(code) {
+    if(!bridgeReloadBusy) return
+    bridgeReloadWait.stop();bridgeReloadWaitDeadline.stop();bridgeReloadDeadline.stop();bridgeReloadKillDeadline.stop()
+    if(code!==0 || !bridgeReloadComplete) {
+      bridgeReloadFailed=true
+      if(!bridgeSupportError) bridgeSupportError="Could not reload preview support. Try again, or log out and back in later."
+    } else {
+      bridgeSupportError="";bridgeUpdateNotified=""
+      previewCompatibilityError="";previewInteractionError=""
+      previewCompatibilityStatus={state:"idle",ids:[]}
+      if(typeof root.retryPreviewGeometry==="function") Qt.callLater(root.retryPreviewGeometry)
+    }
+    bridgeReloadBusy=false;bridgeReloadStage=""
+    Qt.callLater(root.checkBridgeSupport)
+    Qt.callLater(root.pump)
+    Qt.callLater(root.applyDeferredSettings)
+  }
+  Timer { id:bridgeReloadWait;interval:40;repeat:true;onTriggered:root.beginBridgeReload() }
+  Timer {
+    id:bridgeReloadWaitDeadline;interval:10000
+    onTriggered:if(root.bridgeReloadBusy && !bridgeReload.running) {
+      root.bridgeSupportError="Could not pause preview support while another window action is finishing. Try again when ready."
+      root.finishBridgeReload(1)
+    }
+  }
+  Timer {
+    id:bridgeReloadDeadline;interval:150000
+    onTriggered:if(bridgeReload.running) {
+      root.bridgeSupportError="Preview support reload timed out. Try again when ready."
+      bridgeReload.signal(15);bridgeReloadKillDeadline.restart()
+    }
+  }
+  Timer {id:bridgeReloadKillDeadline;interval:5000;onTriggered:if(bridgeReload.running) bridgeReload.signal(9)}
+  Timer { interval:30000;repeat:true;running:root.lifecycleReady && !root.stopping;onTriggered:root.checkBridgeSupport() }
+  Process {
+    id:bridgeProbe
+    property int generation:0
+    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/bridge.py").toString().replace(/^file:\/\//,"")),"status"]
+    stdout:StdioCollector {
+      onStreamFinished: {
+        if(root.bridgeReloadBusy || root.stopping || bridgeProbe.generation!==root.bridgeSupportGeneration) return
+        try {root.bridgeSupportMessage(JSON.parse(text))}
+        catch(error) {root.bridgeSupportError="Could not read preview support status"}
+      }
+    }
+    stderr:StdioCollector {}
+  }
+  Process {
+    id:bridgeReload
+    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/bridge.py").toString().replace(/^file:\/\//,"")),"reload","--watch-stdin"]
+    stdinEnabled:true
+    stdout:SplitParser {
+      onRead:function(line) {
+        try {root.bridgeReloadMessage(JSON.parse(line))}
+        catch(error) {root.bridgeSupportError="Could not read preview support reload status"}
+      }
+    }
+    stderr:StdioCollector {}
+    onExited:function(code) {Qt.callLater(function() {root.finishBridgeReload(code)})}
+  }
+  Process {
+    id:bridgeNotification
+    property bool supportsReload:true
+    command:["notify-send","--app-name=Window Stash","--wait","--expire-time=30000"]
+      .concat(supportsReload ? ["--action=reload=Reload preview support","--action=later=Later",
+      "Window Stash update ready","Reload preview support to apply the update without closing applications."]
+      : ["--action=later=Later","Preview support update requires session restart",
+        "Log out and back in when convenient to activate updated preview support. Running applications will close."])
+    stdout:StdioCollector {
+      onStreamFinished: {
+        if(root.stopping) return
+        if(!root.bridgeUpdateRequired) return
+        if(text.trim()==="reload" && !root.bridgeReloadBlocked) root.reloadPreviewSupport()
+        else if(text.trim()==="later") root.deferBridgeUpdate()
+      }
+    }
+    stderr:StdioCollector {}
+    onExited:Qt.callLater(root.beginBridgeNotification)
   }
   function screenMonitor(name) {
     for (var i = 0; i < snapshot.monitors.length; i++)
@@ -293,6 +733,7 @@ Item {
   function openContext(group,name,point) {
     var m=screenMonitor(name)
     if (!m || !group) return
+    endPreviewInteraction("menu")
     resetConfirmation=false
     contextScreen=name; contextWorkspace=invocationWorkspace(name)
     contextPoint=Qt.point(point.x,point.y)
@@ -334,6 +775,21 @@ Item {
     var windows=scopeWindows(contextScreen,contextWorkspace),name=contextScreen,workspace=contextWorkspace
     closeContext(); closeDialog(); closeWindows(windows,name,workspace)
   }
+  function interactContext() {
+    var windows=contextWindows(),name=contextScreen
+    closeContext();closeDialog()
+    if(windows.length!==1) return
+    var surface=surfaces.find(function(item) {return item.screen.name===name})
+    if(surface) Qt.callLater(function() {surface.activatePreviewInteraction(windows[0].id)})
+  }
+  function resetPreviewProportionsContext() {
+    var group=contextGroup,name=contextScreen
+    var surface=surfaces.find(function(item) {return item.screen.name===name})
+    if(!surface || !surface.canResetPreviewProportions(group)) return
+    var id=group.windows[0].id
+    closeContext()
+    Qt.callLater(function() {surface.resetPreviewProportions(id)})
+  }
   function restoreContext(destination) {
     var windows=contextWindows(),name=contextScreen,workspace=contextWorkspace,group=contextGroup
     closeContext()
@@ -352,6 +808,8 @@ Item {
     Quickshell.execDetached(["notify-send","--app-name=Window Stash","Could not close every stashed window",message])
   }
   function finishWorker(code) {
+    if(previewGeometryCommand(runningArgs) && !runningGeometryReplied)
+      previewGeometryResult({ok:false,error:"Could not finish resizing this preview"},runningArgs,runningGeometryEpoch)
     if (runningArgs[0]==="close") {
       var pending=Object.assign({},pendingCloseIds)
       for (var i=1;i<runningArgs.length && !String(runningArgs[i]).startsWith("--");i++) delete pending[runningArgs[i]]
@@ -361,7 +819,7 @@ Item {
         notifyCloseError(lastError)
       }
     }
-    if (runningArgs[0]==="shortcut") pendingRefresh=true
+    if (["shortcut","interaction-exit-shortcut"].indexOf(runningArgs[0])>=0) pendingRefresh=true
     if (runningArgs[0]==="reset-settings") {
       if (resetting && !lastError) lastError="Could not confirm the settings reset"
       resetting=false; pendingRefresh=true
@@ -369,6 +827,7 @@ Item {
     Qt.callLater(pump)
   }
   function openDialog(kind, name, windows, group) {
+    endPreviewInteraction("dialog")
     resetConfirmation=false
     closeContext()
     var m = screenMonitor(name)
@@ -380,6 +839,7 @@ Item {
     dialogQuery = ""
     dialogDestination = ""
     dialogKind = kind
+    if(kind==="settings") checkBridgeSupport()
   }
   function closeDialog() { resetConfirmation=false; dialogKind = ""; dialogGroup = null; dialogQuery = "" }
   function askResetSettings() {
@@ -402,6 +862,19 @@ Item {
     closeDialog()
     enqueue(args)
   }
+  function restoreNativePreviewWindow(id) {
+    // Native guards stop passive PiP activation before it can expose SPECIAL.
+    // The event is an intent only; normal restore revalidates the exact ledger
+    // identity and ownership before changing any application window.
+    if(typeof id!=="string" || !/^[0-9a-f]{32}$/.test(id) || !lifecycleReady || stopping
+        || pendingCloseIds[id] || !snapshot.windows.some(function(window) {return window.id===id && window.phase==="stashed"})) return false
+    function sameRestore(args) {return args.length>1 && args[0]==="restore" && args[1]===id}
+    if((worker.running && sameRestore(runningArgs)) || queue.some(sameRestore)) return false
+    var name=focusedScreen()
+    if(!screenMonitor(name)) return false
+    restorePreviewWindow(id,name)
+    return true
+  }
   function restorePreviewWindow(id,name) {
     if (!screenMonitor(name) || pendingCloseIds[id] || !snapshot.windows.some(function(w) { return w.id===id })) return
     if (dialogKind==="picker" && dialogScreen===name && dialogWindows.some(function(w) { return w.id===id })) {
@@ -420,8 +893,18 @@ Item {
   }
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
-    if (resetBusy || resetConfirmation) return
+    if (resetBusy || resetConfirmation || bridgeReloadBusy) return
+    if(previewInteractionRequest) {
+      deferredSettings=deferredSettings.concat([[key,value]])
+      endPreviewInteraction("settings")
+      return
+    }
     shortcutSyncError=""
+    if (key==="floatingPreviewExitShortcut") {
+      lastError=""
+      enqueue(["interaction-exit-shortcut",String(value)])
+      return
+    }
     if (shortcutKeys.indexOf(key)>=0) {
       lastError=""
       enqueue(["shortcut",key,String(value)])
@@ -439,6 +922,9 @@ Item {
     options.floatingPreviewSizing=["free","preset"]; options.floatingPreviewScale=options.sizePreset
     options.floatingPreviewUpdate=["still","hover","live"]; options.floatingPreviewTitles=["shown","hidden"]
     options.floatingPreviewFrame=["shown","hidden"]; options.floatingPreviewLock=["locked","unlocked"]
+    options.floatingPreviewInteraction=["off","on"]; options.floatingPreviewActivation=["explicit","click"]
+    options.floatingPreviewKeyboard=["mouse","click"]; options.floatingPreviewInteractionFps=["30","60"]
+    options.floatingPreviewControls=["hover","always"]; options.floatingPreviewFullscreen=["preview","desktop"]
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
     if (numericLimits[key] !== undefined) {
       if (!/^(0|[1-9][0-9]{0,3})$/.test(String(value)) || Number(value) > numericLimits[key]) {
@@ -462,7 +948,7 @@ Item {
     refresh()
   }
   function applyDeferredSettings() {
-    if (settingsBusy || resetConfirmation || !deferredSettings.length) return
+    if (settingsBusy || previewInteractionRequest || resetConfirmation || !deferredSettings.length) return
     var edits=deferredSettings.slice(); deferredSettings=[]
     edits.forEach(function(edit) { root.setting(edit[0],edit[1]) })
   }
@@ -474,8 +960,10 @@ Item {
     var owner=key.indexOf("dock:static:")===0 ? Model.staticDockMonitorKey(monitor) : Model.monitorKey(monitor)
     enqueue(["position", owner, key, String(Math.round(x)), String(Math.round(y))])
   }
-  function recordPreviewPosition(monitor,key,x,y,width) {
-    enqueue(["preview-position",Model.staticDockMonitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))])
+  function recordPreviewPosition(monitor,key,x,y,width,aspect) {
+    var args=["preview-position",Model.staticDockMonitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))]
+    if(Number.isFinite(aspect) && aspect>=.02 && aspect<=50) args.push("--aspect",String(aspect))
+    enqueue(args)
   }
   function allWindows(name) { openDialog("picker", name, snapshot.windows, null) }
   function focusedScreen() {
@@ -514,6 +1002,7 @@ Item {
       onStreamFinished: {
         try {
           var result = JSON.parse(text)
+          if(root.previewGeometryCommand(root.runningArgs)) {root.previewGeometryResult(result,root.runningArgs,root.runningGeometryEpoch);return}
           if (result.windows) { root.snapshot = result; Qt.callLater(root.applyDeferredSettings) }
           if (result.action==="close" && result.restored>0) { root.closeContext(); root.closeDialog() }
           if (result.ok === false) {
@@ -531,7 +1020,7 @@ Item {
               root.shortcutSyncError=""
             }
             root.pendingRefresh = true
-            if (root.runningArgs[0]==="shortcut" && result.key!==undefined && result.binding!==undefined) {
+            if (["shortcut","interaction-exit-shortcut"].indexOf(root.runningArgs[0])>=0 && result.key!==undefined && result.binding!==undefined) {
               var next=Object.assign({},root.snapshot), settings=Object.assign({},root.snapshot.settings)
               settings[result.key]=result.binding; next.settings=settings; root.snapshot=next
               root.checkpointPreferences()
@@ -548,6 +1037,9 @@ Item {
           }
           if (root.runningArgs[0]==="close") root.pendingRefresh=true
         } catch (error) {
+          if(root.previewGeometryCommand(root.runningArgs)) {
+            root.previewGeometryResult({ok:false,error:"Could not read preview geometry"},root.runningArgs,root.runningGeometryEpoch);return
+          }
           root.lastError = "Could not read controller response: " + String(error)
           if (root.runningArgs[0]==="close") root.notifyCloseError(root.lastError)
         }
@@ -569,11 +1061,13 @@ Item {
     target: Hyprland
     function onRawEvent(event) {
       if (!event) return
+      if(event.name==="window-stash-restore") root.restoreNativePreviewWindow(String(event.data || ""))
       if (event.name==="activewindowv2" && root.snapshot.windows.length) externalActivationDelay.restart()
       if (event.name==="configreloaded") {
         shortcutSyncDelay.restart()
         root.pointerKnown=false; root.resetPointerHold()
       }
+      if (event.name==="monitorremoved") root.endPreviewInteraction("monitor-removed")
       if (root.contextOpen && (event.name==="workspace" || event.name==="workspacev2" || event.name==="monitorremoved")) root.closeContext()
       if (event.name === "changeworkspaceid") {
         var parts = String(event.data || "").split(",")
@@ -584,7 +1078,7 @@ Item {
   }
   Connections {
     target: Quickshell
-    function onScreensChanged() { root.closeContext(); root.closeDialog(); root.refresh() }
+    function onScreensChanged() { root.endPreviewInteraction("screens-changed"); root.closeContext(); root.closeDialog(); root.refresh() }
   }
   Variants {
     model: Quickshell.screens
@@ -594,10 +1088,15 @@ Item {
     target: "window-stash"
     function status(): string {
       return JSON.stringify({loaded: true, windows: root.snapshot.windows.length,
-        lifecycle:{ready:root.lifecycleReady,owner:root.lifecycleOwner,error:root.lifecycleError,warnings:root.lifecycleWarnings},activeShortcuts:root.activeShortcuts,
+        lifecycle:{ready:root.lifecycleReady,owner:root.lifecycleOwner,error:root.lifecycleError,detail:root.lifecycleFailureDetail,warnings:root.lifecycleWarnings},activeShortcuts:root.activeShortcuts,
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
+        bridgeSupport:{status:root.bridgeSupportStatus,error:root.bridgeSupportError,busy:root.bridgeReloadBusy,stage:root.bridgeReloadStage,
+          deferred:root.bridgeUpdateDeferred,checking:bridgeProbe.running},
+        previewInteraction:{request:root.previewInteractionRequest,pendingRequest:root.previewInteractionPendingRequest,stopping:root.previewInteractionStopping,
+          status:root.previewInteractionStatus,error:root.previewInteractionError,running:!!root.previewInteractionWorker && root.previewInteractionWorker.running},
+        previewGeometry:root.previewGeometryStates,
         captureVisibility:{known:root.captureState.known,checkedAt:root.captureState.checkedAt,error:root.captureState.error,
           polling:root.capturePollNeeded,allowed:root.captureAllowed,
           screens:root.snapshot.monitors.map(function(m) { return {name:m.name,allowed:root.captureAllowedFor(m.name)} })},
@@ -609,13 +1108,16 @@ Item {
     }
     function settings(): void { root.openDialog("settings", root.focusedScreen(), [], null) }
     function all(): void { root.allWindows(root.focusedScreen()) }
-    function dismiss(): void { root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
+    function dismiss(): void { root.endPreviewInteraction("dismissed"); root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
     function refresh(): void { root.refresh() }
     function configure(key: string, value: string): void { root.setting(key, value) }
     function minimize(): void { root.enqueue(["minimize"]) }
     function restoreLast(): void { root.enqueue(["restore-last"]) }
     function restoreOldest(): void { root.enqueue(["restore-oldest"]) }
+    function checkPreviewSupport(): void {root.checkBridgeSupport()}
+    function reloadPreviewSupport(): void {root.reloadPreviewSupport()}
+    function deferPreviewSupport(): void {root.deferBridgeUpdate()}
   }
   Component.onCompleted: refresh()
-  Component.onDestruction:root.stopping=true
+  Component.onDestruction: {root.stopping=true;root.endPreviewInteraction("service-stopped")}
 }

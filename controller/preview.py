@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Keep only currently previewed, owned windows rendering; stdin owns the lease."""
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -13,11 +14,12 @@ import uuid
 
 sys.dont_write_bytecode = True
 from stash import Hyprland, PREFIX, SPECIAL, Stash, lua
+from bridge_runtime import BUSY, bridge_gate
 
 ROOT = Path(__file__).resolve().parents[1]
 API = 'hl.plugin.window_stash_preview'
 MISSING_API = 'Preview compatibility extension is unavailable'
-RESTART_REQUIRED = 'Restart Hyprland to load the updated Window Stash preview extension'
+RESTART_REQUIRED = 'Reload preview support in Window Stash Settings to use the updated extension'
 PROBE = ('if not (hl.plugin and ' + API + ' and type(' + API
          + ".update) == 'function' and type(" + API
          + ".status) == 'function') then error('Preview compatibility extension is unavailable') end\n"
@@ -72,11 +74,29 @@ class PreviewBridge:
         self.version = (ROOT/'native/version.txt').read_text().strip()
         if not re.fullmatch(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)', self.version):
             raise RuntimeError('Invalid native preview bridge version in native/version.txt')
-        self.probe = PROBE + 'if info.version ~= ' + lua(self.version) + " then error('" + RESTART_REQUIRED + "') end\n"
+        versions = [self.version]
+        # Keep the known ordinary render/input API usable during a deferred
+        # bridge update. New features still require their own capability guard;
+        # an older bridge must never silently turn contained fullscreen into
+        # desktop fullscreen. Unknown future implementations remain exact-only.
+        compatible = {'1.29.2': ('1.29.1',), '1.29.3': ('1.29.1', '1.29.2'),
+                      '1.29.4': ('1.29.1', '1.29.2', '1.29.3'),
+                      '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4')}
+        versions.extend(compatible.get(self.version, ()))
+        self.probe = PROBE + 'if not (' + ' or '.join('info.version == '+lua(value) for value in versions) + ") then error('" + RESTART_REQUIRED + "') end\n"
         self.ready = False
         self.generation = 0
+        self.binary_path = None
+
+    def operation(self):
+        # Test doubles do not connect to a compositor or need a session lock.
+        return bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext()
 
     def ensure(self):
+        with self.operation():
+            self._ensure()
+
+    def _ensure(self):
         if self.cancelled():
             raise PreviewStopped()
         if self.ready:
@@ -91,23 +111,26 @@ class PreviewBridge:
             if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit):
                 raise RuntimeError('Cannot identify the running Hyprland build for preview compatibility')
             cache = Path(os.environ.get('XDG_CACHE_HOME', Path.home()/'.cache'))
-            output = cache/'omarchy/window-stash/preview-bridge'/commit/'window-stash-preview.so'
-            output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory = cache/'omarchy/window-stash/preview-bridge'
             self.progress(dict(state='building', ids=[]))
             process = subprocess.run([sys.executable, str(ROOT/'tools/build-preview-bridge.py'),
-                                      '--output', str(output), '--expected-hash', commit],
+                                      '--cache-dir', str(directory), '--expected-hash', commit],
                                      capture_output=True, text=True, timeout=120)
             if process.returncode:
                 detail = (process.stderr or process.stdout).strip()[-1600:]
                 raise RuntimeError('Could not build live preview support. Install matching Hyprland headers and a C++ compiler. '+detail)
             metadata = json.loads(process.stdout)
+            fingerprint = metadata.get('fingerprint', '')
+            output = directory/commit/(self.version+'-'+fingerprint)/'window-stash-preview.so'
             if (metadata.get('hyprlandHash') != commit or metadata.get('protocol') != 1
-                    or metadata.get('path') != str(output) or metadata.get('version') != self.version):
+                    or not re.fullmatch(r'[0-9a-f]{64}', fingerprint)
+                    or metadata.get('path') != str(output.absolute()) or metadata.get('version') != self.version):
                 raise RuntimeError('Preview compatibility build does not match the running compositor')
             if self.cancelled():
                 raise PreviewStopped()
             self.progress(dict(state='loading', ids=[]))
             self.hypr.call('plugin', 'load', str(output))
+            self.binary_path = output
             # Loading schedules a compositor configuration refresh. The Lua
             # namespace may attach on the next event-loop iteration.
             deadline = time.monotonic()+2
@@ -123,6 +146,10 @@ class PreviewBridge:
         self.generation += 1
 
     def update(self, owner, records):
+        with self.operation():
+            self._update(owner, records)
+
+    def _update(self, owner, records):
         windows = ','.join('{' + ','.join(key+'='+lua(value) for key, value in record.items()) + '}' for record in records)
         script = (self.probe + 'local result,err=' + API + '.update({owner=' + lua(owner)
                   + ',windows={' + windows + '}}); assert(result,err); '
@@ -199,7 +226,13 @@ def run_loop(stream, keeper, emit):
                 while b'\n' in buffer:
                     line, buffer = buffer.split(b'\n', 1)
                     wanted = request_ids(json.loads(line))
-            status = keeper.sync(wanted)
+            try:
+                status = keeper.sync(wanted)
+            except RuntimeError as error:
+                if str(error) != BUSY:
+                    raise
+                keeper.close()
+                status = dict(state='paused', ids=[])
             generation = getattr(keeper.bridge, 'generation', 0)
             if status != previous or generation != previous_generation:
                 emit(status)

@@ -53,12 +53,13 @@ class PreviewBridgeBuildTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, args)
         return subprocess.CompletedProcess(args, 0)
 
-    def build(self, expected=COMMIT):
+    def build(self, expected=COMMIT, cached=False):
         output = io.StringIO()
+        destination = ['--cache-dir', str(self.root/'immutable')] if cached else ['--output', str(self.output)]
         with patch.object(builder, 'ROOT', self.root), \
                 patch.object(builder.subprocess, 'check_output', side_effect=self.query), \
                 patch.object(builder.subprocess, 'run', side_effect=self.compiler), \
-                patch.object(builder.sys, 'argv', ['build-preview-bridge.py', '--output', str(self.output), '--expected-hash', expected]), \
+                patch.object(builder.sys, 'argv', ['build-preview-bridge.py', *destination, '--expected-hash', expected]), \
                 contextlib.redirect_stdout(output):
             builder.main()
         return json.loads(output.getvalue())
@@ -71,6 +72,50 @@ class PreviewBridgeBuildTests(unittest.TestCase):
         self.assertEqual(self.build(), result)
         self.assertEqual(self.output.stat().st_mtime_ns, before)
         self.assertEqual(len(self.compiles), 1)
+
+    def test_automatic_cache_uses_distinct_immutable_build_paths(self):
+        first = self.build(cached=True)
+        first_binary = Path(first['path']).read_bytes()
+        self.assertEqual(Path(first['path']).parts[-3:],
+                         (COMMIT, '1.0.0-'+first['fingerprint'], 'window-stash-preview.so'))
+        self.assertEqual(self.build(cached=True), first)
+        self.version.write_text('1.0.1\n')
+        second = self.build(cached=True)
+        self.assertNotEqual(second['path'], first['path'])
+        self.assertEqual(Path(first['path']).read_bytes(), first_binary)
+        self.source.write_text('// same version, different native code\n')
+        third = self.build(cached=True)
+        self.assertNotEqual(third['path'], second['path'])
+        self.assertEqual(len(self.compiles), 3)
+
+    def test_corrupt_automatic_cache_is_never_overwritten(self):
+        result = self.build(cached=True)
+        artifact = Path(result['path'])
+        artifact.write_bytes(b'damaged')
+        with self.assertRaisesRegex(RuntimeError, 'immutable.*damaged'):
+            self.build(cached=True)
+        self.assertEqual(artifact.read_bytes(), b'damaged')
+        self.assertEqual(len(self.compiles), 1)
+
+    def test_cache_symlink_is_never_replaced(self):
+        result = self.build(cached=True)
+        artifact = Path(result['path'])
+        unrelated = self.root/'unrelated.so'
+        artifact.rename(unrelated)
+        artifact.symlink_to(unrelated)
+        before = unrelated.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'immutable.*damaged'):
+            self.build(cached=True)
+        self.assertTrue(artifact.is_symlink())
+        self.assertEqual(unrelated.read_bytes(), before)
+
+    def test_build_embeds_fingerprint_and_allows_module_unloading(self):
+        result = self.build()
+        command = self.compiles[0]
+        self.assertIn('-fno-gnu-unique', command)
+        self.assertIn('-fvisibility-inlines-hidden', command)
+        self.assertNotIn('-fvisibility=hidden', command)
+        self.assertIn('-DSTASH_BRIDGE_FINGERPRINT="'+result['fingerprint']+'"', command)
 
     def test_wrong_runtime_hash_refuses_without_creating_binary(self):
         with self.assertRaisesRegex(RuntimeError, 'do not match'):

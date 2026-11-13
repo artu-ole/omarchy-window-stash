@@ -1,5 +1,248 @@
 # Validation
 
+## v1.31.0 — free preview proportions — 13 November 2026
+
+Side dragging changes preview proportions and reflows the exact hidden source;
+corners scale its current shape. Optional content ratios extend saved position
+triples without changing legacy behavior. Reset returns to the original ratio.
+Original floating geometry, workspace metadata and scrolling width remain
+restoration snapshots, independent of the source's working dimensions.
+
+The complete check passes **355 Python tests**, **15 Node suites**, **thirteen
+offscreen Qt suites**, **111 Python syntax checks**, manifest validation and
+warning-free QML lint. Native bridge **1.29.5** adds a read-only committed-geometry
+query. Its production-function tests reject old configure acknowledgements,
+stale buffers, incomplete animations and wrong identities, with Wayland/CSD and
+XWayland scaling coverage. The four existing native ASAN checks also pass.
+
+Private-desktop acceptance verifies all four physical side drags, fixed opposite
+anchors, proportional corners, responsive GTK allocations and photographed round
+pixels. Standard/Still previews receive a finite management rendering lease.
+A stopped client cannot report ready or accept input while its resize is pending;
+continuing it must produce committed geometry and a fresh matching capture first.
+Native clicks then reach the resized client at the correct coordinates. The same
+source reflow, fresh input and exact restoration pass with a real XWayland GTK
+window on the private compositor's own X server.
+
+Custom proportions survive mode/capture/title/frame changes, private shell
+replacement and restoration/re-stashing under a new record UUID. Tests cover
+lock/preset exclusions, actual context reset to a legacy triple, exact app-group
+lead reflow without resizing nondisplayed members, original floating restoration,
+and narrow/wide scrolling pixel widths and end-column insertion. Chromium and
+Brave retain real video DOM fullscreen, viewport reflow, absent website UI and
+moving playback through horizontal and vertical reshaping, then restore exactly.
+Browser-owned content insets are measured independently of window dimensions.
+
+Resized records require verified native geometry in the same Lua transaction as
+input acquisition. The UI waits for a fresh capture after that acknowledgement;
+neither a compositor resize goal alone nor a stale, differently sized frame can
+enable Interact.
+Backend tests cover exact identity/private scope, client fullscreen preservation,
+input exclusion, resource bounds, source constraints, legacy persistence and
+bounded render ownership. First-use native builds release the ledger while
+compiling and revalidate the source afterward; older modules are not unloaded
+implicitly. No global rendering rules or new settings are introduced.
+
+Native commands: `python3 tests/floating_preview_aspect.py --restart-shell`,
+`python3 tests/floating_preview_aspect.py --apps chromium brave --browser-only`,
+and `python3 tests/floating_preview_aspect.py --xwayland --proof-only` inside the
+explicit isolated desktop. Cleanup pauses capture before terminating fixtures.
+
+## v1.30.1 — browser tabs stay inside interactive previews — 13 November 2026
+
+A normal tabbed Brave window reproduced an unintended restoration on Ctrl+T:
+its activation request arrived while the exact source already owned keyboard
+focus. Native bridge **1.29.4** acknowledges this redundant request in place,
+matching ordinary already-focused activation. Explicit window selection, forced
+activation and genuine activation after keyboard focus leaves the source still
+restore normally. Pointer-only interaction retains its bounded activation policy.
+
+The regression uses normal browser windows and disposable profiles rather than
+the earlier app-mode fixtures. Brave and Chromium pass real mouse-plus, Ctrl+T,
+Ctrl+W, tab switching, target-blank and middle-click background-tab checks, with
+unchanged source geometry and unrelated stashes hidden. GTK verifies both redundant
+self-focus and genuine activation after focus moves to a public control. Existing
+modal, fullscreen, window-management, keyboard and same-client focus regressions pass.
+
+The complete check passes **327 Python tests**, **15 Node suites**, **eleven
+offscreen Qt suites**, **105 Python syntax checks**, manifest validation and
+warning-free QML lint. Four AddressSanitizer checks execute production native
+functions, including focused activation, forced activation, focus loss, unchanged
+pointer-only credits and replacement identity. The native build is warning-free.
+Run `python3 tests/interactive_browser_tabs.py` in the isolated test desktop for
+the tab regression.
+
+## v1.30.0 — fullscreen inside previews — 13 November 2026
+
+Interactive floating previews default to **Fullscreen → Inside preview**. Client
+fullscreen state changes while compositor fullscreen remains disabled and the
+source and preview geometry stay fixed. The **On desktop** option retains normal
+fullscreen restoration. Stock fullscreen bindings are observed without replacing
+user shortcuts; keyboard shortcuts require the miniature to own keyboard focus.
+
+The complete check passes **326 Python tests**, **15 Node suites**, **eleven
+offscreen Qt suites**, syntax checks for **104 Python files**, manifest validation
+and warning-free QML lint. Native bridge **1.29.3** compiles without warnings
+against the running compositor's matching headers.
+
+The disposable compositor verifies application buttons, F11, stock Super+F,
+Escape, passive fullscreen after Stop/outside click, source closure and exact
+restoration, including a 1.5-scale output. Chromium and Brave hide the fixture
+website UI through the real video fullscreen API, return to that UI on exit and
+produce nine distinct passive video frames. Passive app-initiated exit also preserves
+video playback and original geometry. Source and preview geometry are sampled
+throughout. A bounded, acknowledged client-height
+configure sequence handles Chromium's assumption that fullscreen exit resizes
+content; the compositor window, source width and restoration record remain fixed.
+
+Restoration waits for exact-source cleanup before snapshotting fullscreen or
+moving the window public. Timeout leaves it stashed. A shared bridge gate spans
+the entire restore operation. Unit checks execute the actual adapter Lua and
+verify identity, legacy compatibility, pending/ready, errors and timeout. Three
+AddressSanitizer fixtures execute production native cleanup and resize-stage
+functions, covering map-key lifetime, acknowledgement ordering, unresponsive
+clients, changed geometry, tag loss, passive maximize echoes and reentrant
+ownership loss.
+
+The desktop option defers the request until verified public restoration, keeping
+video DOM fullscreen intact instead of briefly configuring the client normal.
+Both browsers pass this path, including sources maximized before stashing.
+
+Native-triggered config reload can reset the Lua shortcut registry between IPC
+calls. Synchronization retries only a vacant registry, atomically retaining the
+same owner and rechecking settings, bindings and conflicts. Successor ownership
+is never reclaimed. Interact reflects lifecycle readiness instead of silently
+rejecting a click while its helper restarts; status retains bounded failure details.
+
+An actual native replacement round trip uses a temporary version-labelled build
+of the same source and then returns to the final artifact. Both swaps drain
+passive video fullscreen, unload the old module and resume moving video at fixed
+geometry. Explicit interaction works again after each replacement. The lifecycle
+owner stays healthy, shortcuts and stash/preferences/positions stay unchanged,
+and the final module has no remaining input, rendering or cleanup owners.
+
+Existing pointer/keyboard input, Ghostty/Chromium/Brave application input, all
+four popup focus modes, modal/activation handoffs and scrolling-width restoration
+pass in the private desktop. All 43 settings remain reachable at 640×480 and
+400×300 with 1.25 scale; confirmed reset preserves windows, placement and geometry.
+The independent headless output is explicitly focused before these tests, since
+the nested Wayland output can stall frame callbacks. Native tests retain the
+five-second notice and use disposable applications, profiles and session data.
+
+Stress teardown exposed a separate [Hyprland toplevel-export
+race](https://github.com/hyprwm/Hyprland/blob/v0.56.2/src/protocols/ToplevelExport.cpp):
+if a window closes before an outstanding capture request is handled, the server
+can skip allocating the requested frame object and reject its later destruction.
+This can disconnect Quickshell. The affected stress fixture pauses captures before
+terminating sources. External source self-closure remains subject to that compositor bug;
+this change does not patch the system compositor.
+
+Commands include `python3 tools/check.py`,
+`python3 tests/interactive_fullscreen.py`,
+`python3 tests/interactive_keyboard.py`,
+`python3 tests/interactive_handoff.py`,
+`python3 tests/interactive_previews.py`,
+`python3 tests/scrolling_width.py --installed`,
+`python3 tests/settings_fit.py` and `python3 tests/reset_settings.py`.
+The fullscreen suite requires its isolated-desktop marker and an empty test stash.
+
+## v1.29.1 — native bridge updates — 13 November 2026
+
+Updates offer **Reload preview support / Later** without restarting Hyprland.
+The bridge builds first into an immutable version/fingerprint path, then drains
+input and rendering before replacement. Native status must confirm the exact
+new version, protocol, compositor hash, module path and fingerprint. Existing
+windows, restoration geometry, preferences, positions and shortcuts are preserved.
+
+The automated check passes **303 Python tests**, **14 Node suites**, **eleven
+offscreen Qt suites**, manifest validation and warning-free QML lint. Dedicated
+controller tests cover ownership refusal, malformed status, held physical releases,
+compiler cancellation, shell-pipe closure, session lock, concurrent acquisitions,
+lost unload acknowledgements, exact rollback and loader-identity rejection.
+The native build has zero GNU-unique symbols and retains compositor singleton
+visibility and exported plugin entry points.
+
+Disposable-compositor tests compile the original render-only bridge from its
+historical source and upgrade it to the new bridge. A separate cooperative old
+version proves that held pointer/key sequences finish before unload and that
+rendering resumes after exact-version replacement. Failed builds retain the old
+module; failed loads recover a verified old artifact. Repeated reloads are no-ops.
+The production Settings test clicks Later and Reload, retains Settings during
+replacement, resumes actual live capture and preserves display geometry. Pointer,
+keyboard and rendering regressions pass after replacement. Scaled 640×480 and
+400×300 settings remain reachable. Settings sizing now avoids a cyclic preferred
+height, and opening/closing dialogs explicitly flushes their Wayland input mask.
+The original experimental interactive bridge is explicitly refused for unloading
+because pending physical-release filters cannot be observed. Its unchanged input
+API remains usable through the narrow transitional compatibility exception until
+the next normal login. No real compositor restart or unload is used for testing.
+Native UI checks use an independent headless output: the nested Cage Wayland
+output stalled frame callbacks during fixture changes and could not serve as
+reliable rendering evidence.
+
+## v1.29.0 — interactive floating previews — 12 November 2026
+
+Adds optional native pointer and keyboard input to one selected floating preview.
+Interaction is off by default; explicit Interact preserves click-to-restore.
+Keyboard focus requires a content click, and the configurable exit chord defaults
+to Ctrl+Alt+Escape. Plain Escape remains available to the application. Active
+capture uses its own 30/60 FPS setting without changing ordinary preview policies.
+
+The complete non-graphical check passes **274 Python tests**, **14 Node suites**,
+**ten offscreen Qt suites**, manifest validation, warning-free QML lint and syntax
+checks for **96 Python files**. Native bridge **1.29.1** builds without warnings
+against the running compositor's matching headers. All **42 settings** are documented.
+
+Native acceptance in the disposable Hyprland/Omarchy desktop passes:
+
+- Scaled left/right/middle clicks, actual wheel input, implicit content drags
+  beyond the miniature, consumed first-click activation and explicit controls.
+  Outside clicks reach their destination once; ended owners cannot rearm.
+- Actual entry typing, UTF-8, selection, native copy/paste, application Escape,
+  default/custom exit chords and matching held-key releases. Unqualified WM close
+  targets the hidden source and leaves the visible control application intact.
+- Exact grouped-window selection and replacement, chooser keyboard ownership,
+  bounded controls on 320×240, clipped-target cancellation and context activation
+  that scrolls the selected row fully into view before acquiring input.
+- Real hidden GTK popup pixels and item clicks, all four focus-follow modes,
+  application Escape and stopping an open grab. Mouse-only popups retain visible
+  keyboard focus and cannot silently enable application typing.
+- Modal dialogs at current/original destinations, fullscreen, oversized popups,
+  switcher-style focus, actual client activation and application move requests.
+  Exact new descendants follow their parent; pre-existing public children and
+  unrelated stashes remain untouched. Independent new windows are not adopted.
+  The compositor event stream records no private-workspace exposure in these flows.
+- Three outputs including scale 1.5, rotation and negative coordinates; viewport
+  renewal, display sleep/removal, actual session lock/unlock, source restoration,
+  invalid requests, helper cancellation and lease expiry.
+- Dormant and newly requested pointer lock/confinement are rejected before
+  activation or cursor warping; unrelated constraints retain normal operation.
+- Actual Ghostty, Chromium and Brave receive synthetic text and application
+  input, show changed pixels in the miniature, and restore with their saved size.
+- Existing persistent and hover previews, side-by-side groups, small-output
+  overflow, scrolling-width restoration and Omarchy 4.5 dock/workspace coexistence.
+  Ghostty/btop produces one distinct Standard frame versus nine Enhanced frames;
+  leaving preview mode releases rendering owners and returns to idle.
+
+All 42 settings and the local exit field remain reachable on scaled 640×480 and
+400×300 work areas with reserved edges. Native tests cover local exit Apply,
+Default and Disable without changing the three global actions. Settings support
+wheel, drag, scrollbar and Tab navigation, bounded dropdowns and reset cancellation.
+Confirmed Reset all restores all 42 canonical defaults while preserving windows,
+positions and geometry. Native shortcut edits, FIFO/LIFO actions and the complete
+CLI add/update/disable/source-deleted-remove/reinstall lifecycle also pass.
+
+The sweep also caught an existing parking issue: an unnecessary resize woke the
+newest hidden window. Correctly sized sources now skip that dispatcher; required
+cross-monitor size correction remains. The rendering-lease test observes exact
+Wayland suspension states, independent owner unions, scoped release and expiry.
+Its owned active-unload/reload branch passes and restores natural suspension.
+
+Pointer-locked applications, cross-window drag-and-drop and input-method popup
+positioning require restoring the full application. Compatibility beyond the
+verified clients is not inferred. Tests use a private home, runtime, D-Bus,
+compositor, browser profiles and synthetic input; the real desktop is unchanged.
+
 ## v1.28.1 — stable stashed dimensions — 12 November 2026
 
 Owned windows park floating at their saved source dimensions inside the private

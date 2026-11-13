@@ -25,7 +25,13 @@ Ui.BorderSurface {
   readonly property var fonts:Style.font
   readonly property real padding:metrics.sm
   readonly property real margin:Math.min(metrics.sm,area.width/2,area.height/2)
-  readonly property var buttons:[hereButton,originalButton,closeButton,allButton,closeAllButton,settingsButton]
+  readonly property bool interactionAvailable:stash.snapshot.settings.presentation==="previews"
+    && stash.snapshot.settings.floatingPreviewInteraction==="on" && targets.length===1 && !targetBusy
+  readonly property bool proportionsResetAvailable:!targetBusy && typeof host.canResetPreviewProportions==="function" && host.canResetPreviewProportions(stash.contextGroup)
+  readonly property var buttons:[hereButton,originalButton].concat(interactionAvailable ? [interactButton] : [])
+    .concat(proportionsResetAvailable ? [proportionsResetButton] : []).concat([closeButton,allButton,closeAllButton,settingsButton])
+  readonly property var actionIds:["here","original"].concat(interactionAvailable ? ["interact"] : [])
+    .concat(proportionsResetAvailable ? ["reset-preview-proportions"] : []).concat(["close","all","closeAll","settings"])
   property int currentIndex:0
   property int frames:0
   property bool openingRightClickPending:false
@@ -85,13 +91,13 @@ Ui.BorderSurface {
     return dx*dx+dy*dy<=r*r
   }
   function actionRect(id) {
-    var names=["here","original","close","all","closeAll","settings"],at=names.indexOf(id)
+    var at=actionIds.indexOf(id)
     if (at<0) return {x:0,y:0,width:0,height:0}
     var button=buttons[at],point=button.mapToItem(host.contentItem,0,0)
     return {x:point.x,y:point.y,width:button.width,height:button.height,feedback:button.feedbackDetails()}
   }
   function details() {
-    var ids=["here","original","close","all","closeAll","settings"]
+    var ids=actionIds
     return {visible:opened && reveal>.999,opened:opened,rendered:visible,progress:reveal,frames:frames,serial:stash.contextSerial,
       openingRightClickPending:openingRightClickPending,
       rect:{x:x,y:y,width:width,height:height},radius:radius,point:{x:stash.contextPoint.x,y:stash.contextPoint.y},
@@ -162,25 +168,43 @@ Ui.BorderSurface {
         id:hereButton
         text:"Restore here"; enabled:menu.targets.length>0 && !menu.targetBusy
         animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
-        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===0
-        onHovered:function(value) { if (value && enabled) menu.currentIndex=0 }
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===hereButton
+        onHovered:function(value) { if (value && enabled) menu.currentIndex=menu.buttons.indexOf(hereButton) }
         onClicked:menu.stash.restoreContext("current")
       }
       StashButton {
         id:originalButton
         text:"Restore to original workspace"; enabled:menu.targets.length>0 && !menu.targetBusy
         animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
-        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===1
-        onHovered:function(value) { if (value && enabled) menu.currentIndex=1 }
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===originalButton
+        onHovered:function(value) { if (value && enabled) menu.currentIndex=menu.buttons.indexOf(originalButton) }
         onClicked:menu.stash.restoreContext("original")
+      }
+      StashButton {
+        id:interactButton
+        visible:menu.interactionAvailable
+        text:"Interact with window";enabled:menu.interactionAvailable
+        animations:menu.animations;animationSpeed:menu.animationSpeed;foreground:menu.palette.text
+        Layout.fillWidth:true;leftAlign:true;hasCursor:menu.buttons[menu.currentIndex]===interactButton
+        onHovered:function(value) {if(value && enabled) menu.currentIndex=menu.buttons.indexOf(interactButton)}
+        onClicked:menu.stash.interactContext()
+      }
+      StashButton {
+        id:proportionsResetButton
+        visible:menu.proportionsResetAvailable
+        text:"Reset preview proportions";enabled:menu.proportionsResetAvailable
+        animations:menu.animations;animationSpeed:menu.animationSpeed;foreground:menu.palette.text
+        Layout.fillWidth:true;leftAlign:true;hasCursor:menu.buttons[menu.currentIndex]===proportionsResetButton
+        onHovered:function(value) {if(value && enabled) menu.currentIndex=menu.buttons.indexOf(proportionsResetButton)}
+        onClicked:menu.stash.resetPreviewProportionsContext()
       }
       StashButton {
         id:closeButton
         text:menu.targetBusy ? "Closing…" : menu.stash.contextIds.length>1 ? "Close stashed windows ("+menu.targets.length+")" : "Close window"
         enabled:menu.targets.length>0 && !menu.targetBusy
         animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
-        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===2
-        onHovered:function(value) { if (value && enabled) menu.currentIndex=2 }
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===closeButton
+        onHovered:function(value) { if (value && enabled) menu.currentIndex=menu.buttons.indexOf(closeButton) }
         onClicked:menu.stash.closeContextWindows()
       }
       Ui.PanelSeparator { id:separator; foreground:menu.palette.text; Layout.fillWidth:true; Layout.topMargin:menu.metrics.xxs; Layout.bottomMargin:menu.metrics.xxs }
@@ -188,8 +212,8 @@ Ui.BorderSurface {
         id:allButton
         text:"All stashed windows…"; enabled:menu.stash.snapshot.windows.length>0
         animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
-        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===3
-        onHovered:function(value) { if (value && enabled) menu.currentIndex=3 }
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===allButton
+        onHovered:function(value) { if (value && enabled) menu.currentIndex=menu.buttons.indexOf(allButton) }
         onClicked:menu.stash.allWindows(menu.screenName)
       }
       StashButton {
@@ -197,16 +221,16 @@ Ui.BorderSurface {
         text:(menu.stash.snapshot.settings.scope==="workspace" ? "Close all in this workspace (" : "Close all stashed windows (")+menu.eligible.length+")"
         enabled:menu.eligible.length>0 && !menu.allBusy
         animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
-        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===4
-        onHovered:function(value) { if (value && enabled) menu.currentIndex=4 }
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===closeAllButton
+        onHovered:function(value) { if (value && enabled) menu.currentIndex=menu.buttons.indexOf(closeAllButton) }
         onClicked:menu.stash.closeContextAll()
       }
       StashButton {
         id:settingsButton
         text:"Settings…"
         animations:menu.animations; animationSpeed:menu.animationSpeed; foreground:menu.palette.text
-        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.currentIndex===5
-        onHovered:function(value) { if (value && enabled) menu.currentIndex=5 }
+        Layout.fillWidth:true; leftAlign:true; hasCursor:menu.buttons[menu.currentIndex]===settingsButton
+        onHovered:function(value) { if (value && enabled) menu.currentIndex=menu.buttons.indexOf(settingsButton) }
         onClicked:menu.stash.openDialog("settings",menu.screenName,[],null)
       }
     }

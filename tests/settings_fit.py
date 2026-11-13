@@ -25,7 +25,10 @@ from stash import CHOICES, DEFAULTS
 spec = importlib.util.spec_from_file_location('fit_shortcut_helpers', ROOT/'tests/shortcuts.py')
 shortcut_helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(shortcut_helpers)
-SECTIONS = ('general', 'placement', 'appearance', 'motion', 'previews', 'shortcuts')
+SECTIONS = ('general', 'placement', 'appearance', 'motion', 'previews', 'interaction', 'shortcuts')
+INTERACTION_CHOICES = ('floatingPreviewInteraction', 'floatingPreviewActivation', 'floatingPreviewKeyboard',
+                       'floatingPreviewInteractionFps', 'floatingPreviewControls', 'floatingPreviewFullscreen')
+EXIT_SHORTCUT = 'floatingPreviewExitShortcut'
 
 
 def contained(rect, area, tolerance=1):
@@ -183,6 +186,8 @@ def dropdown(session, key, value=None, click_option=False):
 def all_controls(session):
     reached = set()
     for section in SECTIONS:
+        if not next(s for s in session.surface()['settingSections'] if s['key'] == section).get('visible', True):
+            continue
         reveal(session, lambda: next(s for s in session.surface()['settingSections'] if s['key'] == section)['rect'])
     for entry in session.surface()['settingControls']:
         if entry['visible']:
@@ -197,6 +202,8 @@ def all_controls(session):
         wait(lambda: shell('status')['settings'][key] == entry['value'], 'Editing an unchanged numeric field changed it: '+key)
         reached.add(key)
     for entry in session.surface()['shortcutControls']:
+        if not entry.get('visible', True):
+            continue
         key = entry['key']
         for part in ('fieldRect', 'applyRect', 'clearRect', 'defaultRect'):
             reveal(session, lambda: shortcut_helpers.control(session, key)[part])
@@ -210,7 +217,7 @@ def all_controls(session):
 def tab_focus(session):
     expected = {c['key'] for c in session.surface()['settingControls'] if c['visible']}
     expected |= {c['key'] for c in session.surface()['numberControls'] if c['visible']}
-    expected |= {c['key'] for c in session.surface()['shortcutControls']}
+    expected |= {c['key'] for c in session.surface()['shortcutControls'] if c.get('visible', True)}
     dropdown(session, 'presentation')
     seen = {'presentation'}
     for _ in range(140):
@@ -266,11 +273,52 @@ def confirmation(session):
 
 def critical_bottom(session):
     for entry in session.surface()['shortcutControls']:
+        if not entry.get('visible', True):
+            continue
         key = entry['key']
         for part in ('fieldRect', 'applyRect', 'clearRect', 'defaultRect'):
             reveal(session, lambda: shortcut_helpers.control(session, key)[part])
     reveal(session, lambda: number(session, 'previewHideDelay')['rect'])
     reveal(session, lambda: session.surface()['reset']['requestRect'])
+
+
+def interaction_controls(session):
+    """Visit the conditional section and exercise the real local-shortcut field."""
+    original = dict(shell('status')['settings'])
+    global_shortcuts = dict(shell('status')['activeShortcuts'])
+    reached = set()
+    assert choice(session, 'floatingPreviewInteraction')['visible'], 'Interaction enable control is hidden in preview mode'
+    dropdown(session, 'floatingPreviewInteraction', 'on')
+    reached.add('floatingPreviewInteraction')
+    section = next(item for item in session.surface()['settingSections'] if item['key'] == 'interaction')
+    assert section['visible'], 'The seventh settings section is hidden in preview mode'
+    reveal(session, lambda: next(item for item in session.surface()['settingSections'] if item['key'] == 'interaction')['rect'])
+    for key in INTERACTION_CHOICES[1:]:
+        assert choice(session, key)['visible'], 'Enabled interaction option is unreachable: '+key
+        dropdown(session, key)
+        reached.add(key)
+    field = shortcut_helpers.control(session, EXIT_SHORTCUT)
+    assert field['visible'] and field['section'] == 'interaction', 'The local exit shortcut is outside the interaction section'
+    authoritative = command('list')['shortcutDefaults'][EXIT_SHORTCUT]
+    assert field['defaultBinding'] == authoritative, 'Exit-field reset does not use the controller default'
+    for part in ('fieldRect', 'applyRect', 'clearRect', 'defaultRect'):
+        reveal(session, lambda: shortcut_helpers.control(session, EXIT_SHORTCUT)[part])
+    candidates = shortcut_helpers.free_chords(shell('status')['settings'])
+    custom = next(value for value in candidates if value not in (original[EXIT_SHORTCUT], authoritative))
+    shortcut_helpers.edit(session, EXIT_SHORTCUT, custom)
+    shortcut_helpers.saved(session, EXIT_SHORTCUT, custom)
+    session.click(reveal(session, lambda: shortcut_helpers.control(session, EXIT_SHORTCUT)['defaultRect']))
+    shortcut_helpers.saved(session, EXIT_SHORTCUT, authoritative)
+    session.click(reveal(session, lambda: shortcut_helpers.control(session, EXIT_SHORTCUT)['clearRect']))
+    shortcut_helpers.saved(session, EXIT_SHORTCUT, '')
+    shortcut_helpers.edit(session, EXIT_SHORTCUT, original[EXIT_SHORTCUT], enter=True)
+    shortcut_helpers.saved(session, EXIT_SHORTCUT, original[EXIT_SHORTCUT])
+    assert shell('status')['activeShortcuts'] == global_shortcuts, 'Editing the local exit chord changed the three global actions'
+    reached.add(EXIT_SHORTCUT)
+    tab_focus(session)
+    configure('floatingPreviewInteraction', original['floatingPreviewInteraction'])
+    assert shell('status')['settings'] == original, 'Interaction reachability checks changed saved preferences'
+    return reached
 
 
 def long_error(session):
@@ -377,6 +425,7 @@ def main():
                         assert choice(session, key)['visible'], 'Floating preview control is hidden: '+key
                         dropdown(session, key)
                         reached.add(key)
+                    reached |= interaction_controls(session)
                     configure('floatingPreviewSizing', before['floatingPreviewSizing'])
                     configure('presentation', before['presentation'])
                     assert reached == set(DEFAULTS), ('Settings were not all reachable', sorted(set(DEFAULTS)-reached))
@@ -389,7 +438,7 @@ def main():
                     long_error(session)
                 assert shell('status')['settings'] == before, 'Accessibility checks changed preferences'
                 assert {w['id'] for w in command('list')['windows']} == session.baseline, 'Accessibility checks changed the stash'
-                print(('PASS %dx%d @ %.2f: '+(('six sections/all%d controls, bounded9-option popup and wrapped error; ' % len(DEFAULTS)) if index == 1 else 'bottom shortcuts/actions and preview controls; ')+
+                print(('PASS %dx%d @ %.2f: '+(('seven sections/all%d controls, local exit apply/default/disable, bounded9-option popup and wrapped error; ' % len(DEFAULTS)) if index == 1 else 'bottom shortcuts/actions and preview controls; ')+
                        'reserved bounds, Tab/wheel/drag/scrollbar and tiny reset cancellation') %
                       (width, height, scale), flush=True)
                 shell('dismiss')

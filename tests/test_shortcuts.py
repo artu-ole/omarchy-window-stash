@@ -35,6 +35,37 @@ class FakeIPC:
         return self.apply_error or 'ok'
 
 
+class ReloadIPC(FakeIPC):
+    """Replace the Lua registry between the runtime read and apply requests."""
+    def __init__(self, resets=1, replacement=None, on_reset=None):
+        super().__init__()
+        self.owner = 'current-generation'
+        self.resets = resets
+        self.replacement = replacement
+        self.on_reset = on_reset
+        self.attempts = 0
+        self.reclaims = 0
+
+    def __call__(self, *args):
+        if args[0] == 'repl' and 'local vacant=' in args[1]:
+            self.calls.append(args)
+            self.reclaims += 1
+            vacant = self.owner is None
+            if vacant:
+                self.owner = 'current-generation'
+            return 'true' if vacant else 'false'
+        if args[0] == 'eval' and 'm.apply(' in args[1]:
+            self.calls.append(args)
+            self.attempts += 1
+            if self.resets:
+                self.resets -= 1
+                self.owner = self.replacement
+                if self.on_reset:
+                    self.on_reset(self)
+            return 'ok' if self.owner == 'current-generation' else 'error: '+shortcuts.OWNER_CHANGED
+        return super().__call__(*args)
+
+
 def binding(key='D', mods=64, description='Other action', arg='17', **extra):
     result = dict(key=key, modmask=mods, dispatcher='__lua', arg=arg, description=description, submap='')
     result.update(extra)
@@ -214,6 +245,78 @@ class ShortcutTests(unittest.TestCase):
         shortcuts.sync(self.config,ipc,owner='current-generation')
         self.assertIn(',"current-generation")',ipc.calls[-1][1])
         self.assertIn('Shortcut owner changed',ipc.calls[-1][1])
+
+    def test_sync_recovers_a_config_reload_between_runtime_read_and_apply(self):
+        ipc = ReloadIPC()
+        before = self.config.read_bytes()
+        result = shortcuts.sync(self.config, ipc, owner='current-generation')
+        self.assertEqual(result['activeShortcuts'], shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual((ipc.attempts, ipc.reclaims, ipc.owner), (2, 1, 'current-generation'))
+        self.assertEqual(sum('m.inspect()' in call[1] for call in ipc.calls), 2)
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_sync_never_reclaims_a_successor_owner(self):
+        ipc = ReloadIPC(replacement='successor-generation')
+        with self.assertRaisesRegex(RuntimeError, shortcuts.OWNER_CHANGED):
+            shortcuts.sync(self.config, ipc, owner='current-generation')
+        self.assertEqual((ipc.attempts, ipc.reclaims, ipc.owner), (1, 1, 'successor-generation'))
+        self.assertFalse(any('m.claim(' in call[1] and 'if vacant' not in call[1] for call in ipc.calls))
+
+    def test_sync_bounds_repeated_reload_attempts(self):
+        ipc = ReloadIPC(resets=10)
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, shortcuts.OWNER_CHANGED):
+            shortcuts.sync(self.config, ipc, owner='current-generation')
+        self.assertEqual((ipc.attempts, ipc.reclaims), (3, 2))
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_sync_retry_rereads_settings_and_new_conflicts(self):
+        def changed(ipc):
+            self.original['plugins'][1]['minimizeShortcut'] = 'ALT + F8'
+            self.config.write_text(json.dumps(self.original))
+            ipc.binds = [binding('F8', mods=8, description='Reloaded desktop action')]
+        ipc = ReloadIPC(on_reset=changed)
+        result = shortcuts.sync(self.config, ipc, owner='current-generation')
+        self.assertEqual(result['shortcuts']['minimizeShortcut'], 'ALT + F8')
+        self.assertEqual(result['activeShortcuts']['minimizeShortcut'], '')
+        self.assertIn('Reloaded desktop action', result['conflicts']['minimizeShortcut'])
+        self.assertEqual(json.loads(self.config.read_text()), self.original)
+
+    def test_sync_retry_respects_plugin_disable_during_reload(self):
+        def disabled(ipc):
+            self.original['disabledPlugins'] = [shortcuts.PLUGIN]
+            self.config.write_text(json.dumps(self.original))
+        ipc = ReloadIPC(on_reset=disabled)
+        self.assertEqual(shortcuts.sync(self.config, ipc, owner='current-generation')['action'], 'shortcuts-disabled')
+        self.assertEqual(ipc.attempts, 1)
+        self.assertIn('m.disable()', ipc.calls[-1][1])
+        self.assertEqual(json.loads(self.config.read_text()), self.original)
+
+    def test_sync_does_not_retry_unrelated_apply_failures(self):
+        ipc = FakeIPC()
+        ipc.apply_error = 'error: could not create binding'
+        with self.assertRaisesRegex(RuntimeError, 'could not create binding'):
+            shortcuts.sync(self.config, ipc, owner='current-generation')
+        self.assertEqual([call[0] for call in ipc.calls], ['repl', 'binds', 'eval'])
+
+    @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
+    def test_reload_reclaim_lua_claims_only_an_absent_owner_atomically(self):
+        calls = []
+        self.assertTrue(shortcuts._reclaim_after_reload('current-generation',
+                                                      lambda *args: calls.append(args) or 'true'))
+        script = Path(self.directory.name)/'reclaim.lua'
+        script.write_text('''
+local reclaim=assert(load(arg[1]))
+assert(reclaim()==true and _community_window_stash_shortcuts.owner=='current-generation')
+assert(reclaim()==false and _community_window_stash_shortcuts.owner=='current-generation')
+_community_window_stash_shortcuts.owner='successor-generation'
+assert(reclaim()==false and _community_window_stash_shortcuts.owner=='successor-generation')
+_community_window_stash_shortcuts.version=1
+assert(reclaim()==false and _community_window_stash_shortcuts.owner=='successor-generation')
+assert(_community_window_stash_shortcuts.version==1)
+''')
+        result = subprocess.run(['lua', str(script), calls[0][1]], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_cleanup_and_owner_query_do_not_load_files_from_a_removed_checkout(self):
         ipc=FakeIPC()

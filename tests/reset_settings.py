@@ -110,6 +110,10 @@ def main():
                       dockCornerRadius=39, iconFrame='shown', dockFrame='shown', animations='off', animationSpeed='ultrafast',
                       dockOpacity=33, iconOpacity=44, hoverPreview='still', livePreviewCompatibility='enhanced', previewSize='large', previewPlacement='above',
                       previewTitles='hidden', previewDelay=75, previewHideDelay=87,
+                      floatingPreviewSizing='preset', floatingPreviewScale='150', floatingPreviewUpdate='live',
+                      floatingPreviewTitles='shown', floatingPreviewFrame='shown', floatingPreviewLock='locked',
+                      floatingPreviewInteraction='on', floatingPreviewActivation='click', floatingPreviewKeyboard='click',
+                      floatingPreviewInteractionFps='30', floatingPreviewControls='always', floatingPreviewFullscreen='desktop', floatingPreviewExitShortcut=chords[3],
                       minimizeShortcut=chords[0], restoreLastShortcut=chords[1], restoreOldestShortcut=chords[2])
         assert set(custom) == set(DEFAULTS), 'Reset fixture does not exercise every current preference'
         assert all(custom[key] != DEFAULTS[key] for key in DEFAULTS), 'Reset fixture contains an unchanged default'
@@ -168,7 +172,7 @@ def main():
         prompt = ask(session)
         session.click(prompt['cancelRect'])
         wait(lambda: not session.surface()['reset']['confirming'], 'Cancel did not preserve the shortcut drafts')
-        assert all(c['dirty'] and c['text'] == chords[3] for c in session.surface()['shortcutControls']), \
+        assert all(c['dirty'] and c['text'] == chords[3] for c in session.surface()['shortcutControls'] if c['key'] in shortcut_helpers.KEYS), \
             'Cancelling reset discarded unapplied shortcut drafts'
         unchanged(before)
 

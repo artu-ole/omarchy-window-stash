@@ -14,10 +14,16 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'controller'))
 from preview import MISSING_API, RESTART_REQUIRED, PreviewBridge, PreviewKeeper, PreviewStopped, preview_records, request_ids, run_loop
 from stash import PLUGIN, SPECIAL, Stash, atomic_json
+from bridge_runtime import BUSY
 
 IDENT = 'a'*32
 OTHER = 'b'*32
 VERSION = (Path(__file__).resolve().parents[1]/'native/version.txt').read_text().strip()
+FINGERPRINT = 'f'*64
+
+
+def built_path(arguments, commit):
+    return str(Path(arguments[arguments.index('--cache-dir')+1])/commit/(VERSION+'-'+FINGERPRINT)/'window-stash-preview.so')
 
 
 def record(ident=IDENT, address='0x123'):
@@ -233,6 +239,23 @@ class PreviewCompatibilityTests(unittest.TestCase):
         self.assertEqual([c[0] for c in self.bridge.calls], ['ensure', 'update', 'ensure', 'update', 'release'])
         self.assertEqual(emitted, [dict(state='ready', ids=[IDENT])])
 
+    def test_reload_gate_pauses_rendering_and_resumes_without_a_new_ui_request(self):
+        self.bridge.error = RuntimeError(BUSY)
+        ticks = 0
+        def poll(*_args):
+            nonlocal ticks
+            ticks += 1
+            if ticks == 2:
+                self.bridge.error = None
+                return [], [], []
+            return [sys.stdin], [], []
+        with patch('preview.select.select', side_effect=poll), \
+                patch('preview.os.read', side_effect=[json.dumps([IDENT]).encode()+b'\n', b'']):
+            emitted = []
+            run_loop(sys.stdin, self.keeper, emitted.append)
+        self.assertEqual(emitted, [dict(state='paused', ids=[]), dict(state='ready', ids=[IDENT])])
+        self.assertEqual([call[0] for call in self.bridge.calls], ['ensure', 'update', 'release', 'ensure', 'update', 'release'])
+
     def test_reacquire_reemits_ready_after_out_of_band_loading_progress(self):
         self.bridge.generation = 1
         original_update = self.bridge.update
@@ -332,9 +355,9 @@ class PreviewCompatibilityTests(unittest.TestCase):
             def call(self, *arguments):
                 events.append(arguments)
         def build(arguments, **_kwargs):
-            path = arguments[arguments.index('--output')+1]
+            path = built_path(arguments, commit)
             self.assertEqual(arguments[arguments.index('--expected-hash')+1], commit)
-            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash=commit, protocol=1, version=VERSION)), '')
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash=commit, protocol=1, version=VERSION, fingerprint=FINGERPRINT)), '')
         progress = []
         with patch.dict(os.environ, {'XDG_CACHE_HOME': str(Path(self.temporary.name)/'cache')}), \
                 patch('preview.subprocess.run', side_effect=build), patch('preview.time.sleep'):
@@ -343,7 +366,7 @@ class PreviewCompatibilityTests(unittest.TestCase):
         self.assertTrue(bridge.ready)
         self.assertEqual(events[0], ('read', 'version'))
         self.assertEqual(events[1][:2], ('plugin', 'load'))
-        self.assertTrue(events[1][2].endswith('/'+commit+'/window-stash-preview.so'))
+        self.assertTrue(events[1][2].endswith('/'+commit+'/'+VERSION+'-'+FINGERPRINT+'/window-stash-preview.so'))
         self.assertEqual([item['state'] for item in progress], ['building', 'loading'])
 
     def test_failed_or_mismatching_build_never_loads_native_code(self):
@@ -368,8 +391,8 @@ class PreviewCompatibilityTests(unittest.TestCase):
         ipc = Installing()
         ipc.fail = self.fail
         def build(arguments, **_kwargs):
-            path = arguments[arguments.index('--output')+1]
-            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION)), '')
+            path = built_path(arguments, 'c'*40)
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION, fingerprint=FINGERPRINT)), '')
         with patch.dict(os.environ, {'XDG_CACHE_HOME': str(Path(self.temporary.name)/'cache')}), \
                 patch('preview.subprocess.run', side_effect=build), self.assertRaises(PreviewStopped):
             PreviewBridge(ipc, cancelled=unittest.mock.Mock(side_effect=[False, True])).ensure()
@@ -397,8 +420,8 @@ class PreviewCompatibilityTests(unittest.TestCase):
         bridge.update('d'*32, records)
         ipc.available = False
         def build(arguments, **_kwargs):
-            path = arguments[arguments.index('--output')+1]
-            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION)), '')
+            path = built_path(arguments, 'c'*40)
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION, fingerprint=FINGERPRINT)), '')
         with patch.dict(os.environ, {'XDG_CACHE_HOME': str(Path(self.temporary.name)/'cache')}), \
                 patch('preview.subprocess.run', side_effect=build) as compile_bridge:
             bridge.update('d'*32, records)
@@ -427,15 +450,15 @@ class PreviewCompatibilityTests(unittest.TestCase):
             bridge.update('d'*32, [])
         reload_bridge.assert_not_called()
 
-    def test_old_loaded_version_requires_restart_instead_of_loading_over_it(self):
+    def test_old_loaded_version_requires_explicit_reload_instead_of_automatic_replacement(self):
         class OldModule:
             def eval(self, _script): raise RuntimeError(RESTART_REQUIRED)
             def read(self, _subject): raise AssertionError('An incompatible loaded module must not be rebuilt or replaced')
         bridge = PreviewBridge(OldModule())
-        with patch('preview.subprocess.run') as build, self.assertRaisesRegex(RuntimeError, 'Restart Hyprland'):
+        with patch('preview.subprocess.run') as build, self.assertRaisesRegex(RuntimeError, 'Reload preview support'):
             bridge.ensure()
         build.assert_not_called()
-        with patch.object(bridge, 'ensure') as reload_bridge, self.assertRaisesRegex(RuntimeError, 'Restart Hyprland'):
+        with patch.object(bridge, 'ensure') as reload_bridge, self.assertRaisesRegex(RuntimeError, 'Reload preview support'):
             bridge.update('d'*32, [])
         reload_bridge.assert_not_called()
 
@@ -467,6 +490,28 @@ class PreviewCompatibilityTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(RESTART_REQUIRED, result.stderr)
             self.assertNotIn('Mismatching native code must not run', result.stderr)
+
+    @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
+    def test_transitional_interactive_api_keeps_working_until_normal_login(self):
+        from interaction import InteractionBridge
+        root = Path(self.temporary.name)
+        (root/'native').mkdir()
+        version = root/'native/version.txt'
+        for expected in ('1.29.2', '1.29.3', '1.29.4', '1.29.5', '1.29.6'):
+            version.write_text(expected+'\n')
+            with patch('preview.ROOT', root):
+                probe = InteractionBridge(FakeHypr()).interaction_probe
+            for loaded, protocol in (('1.29.1', 1), ('1.29.0', 1), ('1.24.0', 1), ('1.29.2', 1), ('1.29.3', 1), ('1.29.4', 1), ('1.29.5', 1), ('1.29.1', 2)):
+                prelude = ('hl={plugin={window_stash_preview={status=function() return '
+                           '{protocol='+str(protocol)+',version="'+loaded+'"} end,'
+                           'update=function() end,interaction_update=function() end,'
+                           'interaction_release=function() end,interaction_status=function() end}}}\n')
+                result = subprocess.run(['lua', '-'], input=prelude+probe, text=True, capture_output=True)
+                compatible = {'1.29.2': ('1.29.1',), '1.29.3': ('1.29.1', '1.29.2'),
+                              '1.29.4': ('1.29.1', '1.29.2', '1.29.3'),
+                              '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4')}
+                allowed = protocol == 1 and (loaded == expected or loaded in compatible.get(expected, ()))
+                self.assertEqual(result.returncode == 0, allowed, (expected, loaded, protocol, result.stderr))
 
 
 if __name__ == '__main__':

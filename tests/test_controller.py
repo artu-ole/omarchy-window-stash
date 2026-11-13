@@ -1,6 +1,7 @@
 import copy
 import json
 import io
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,8 +11,9 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
-from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
+from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PREFIX, PLUGIN, DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
 import shortcuts
+from bridge_runtime import BUSY, bridge_gate
 
 
 def monitor(name="eDP-2", ident=0, x=0, width=1920):
@@ -37,6 +39,7 @@ class FakeHypr:
         self.fail=None
         self.on_read=None
         self.on_close=None
+        self.preview_fullscreen={}
 
     def read(self, name):
         if self.on_read: self.on_read(name)
@@ -67,6 +70,15 @@ class FakeHypr:
     def close_stashed(self, record):
         self.dispatch_owned("window.close", record, parked=True)
 
+    def clear_preview_fullscreen(self, record):
+        current = self.client(record['address'])
+        if (not current or current['pid'] != record['pid'] or current.get('stableId') != record['stableId']
+                or record['tag'] not in current.get('tags', []) or current['workspace']['name'] != SPECIAL):
+            raise RuntimeError('Stashed window identity changed')
+        stable = current.get('stableId')
+        if stable in self.preview_fullscreen:
+            current['fullscreenClient'] = self.preview_fullscreen.pop(stable)
+
     def park_owned(self, record, parked=False):
         # The production adapter sends one guarded Lua transaction. This fake
         # models its actions against client state so controller failure and
@@ -82,11 +94,13 @@ class FakeHypr:
                 raise RuntimeError("Stashed window identity changed")
         if not self.client(record["address"])["floating"]:
             raise RuntimeError("The window could not be parked as floating")
-        self.dispatch_owned("window.resize", record, parked=parked,
-                            x=record["size"][0], y=record["size"][1], relative=False)
+        if self.client(record["address"])["size"] != record["size"]:
+            self.dispatch_owned("window.resize", record, parked=parked,
+                                x=record["size"][0], y=record["size"][1], relative=False)
         self.dispatch_owned("window.move", record, parked=parked, workspace=SPECIAL, follow=False)
-        self.dispatch_owned("window.resize", record, parked=True,
-                            x=record["size"][0], y=record["size"][1], relative=False)
+        if self.client(record["address"])["size"] != record["size"]:
+            self.dispatch_owned("window.resize", record, parked=True,
+                                x=record["size"][0], y=record["size"][1], relative=False)
 
     def scrolling_width(self, record):
         c=self.client(record["address"])
@@ -140,6 +154,41 @@ class FakeHypr:
             if "window" in kw: self.active=kw["window"].removeprefix("address:")
             if "workspace" in kw:
                 self.monitors[0]["activeWorkspace"]=dict(id=int(kw["workspace"]),name=kw["workspace"])
+
+
+class FullscreenCleanupIPC:
+    """Run the production adapter against a small stateful native Lua API."""
+    def __init__(self, record, pending, capability=True, query=True, on_clear=None):
+        self.record = record
+        self.pending = pending
+        self.capability = capability
+        self.query = query
+        self.on_clear = on_clear
+        self.clears = 0
+        self.queries = 0
+
+    def eval(self, script):
+        value = self.pending[min(self.queries,len(self.pending)-1)]
+        response = ('return nil,'+lua(str(value))) if isinstance(value,Exception) else 'return '+lua(value)
+        identity = dict(id=self.record['id'],address=self.record['address'],pid=self.record['pid'],
+                        stable_id=self.record['stableId'],tag=self.record['tag'])
+        checks = ';'.join('assert(v.'+key+'=='+lua(value)+',"Changed cleanup identity")' for key,value in identity.items())
+        functions = ('status=function() return {capabilities={constrainedFullscreen='+lua(self.capability)+'}} end,'
+                     'clear_fullscreen=function(v) '+checks+';clears=clears+1;return true end')
+        if self.query:
+            functions += ',fullscreen_cleanup_pending=function(v) '+checks+';queries=queries+1;'+response+' end'
+        prelude = ('local clears='+str(self.clears)+';local queries='+str(self.queries)+'\n'
+                   'hl={plugin={window_stash_preview={'+functions+'}}}\n')
+        program = (prelude+'local ok,err=pcall(function()\n'+script+'\nend)\n'
+                   'print(tostring(ok));print(clears);print(queries);print(tostring(err))')
+        result = subprocess.run(['lua','-'],input=program,text=True,capture_output=True,check=True)
+        lines = result.stdout.splitlines()
+        cleared_before = self.clears
+        self.clears,self.queries = int(lines[1]),int(lines[2])
+        if self.clears != cleared_before and self.on_clear:
+            self.on_clear()
+        if lines[0] != 'true':
+            raise RuntimeError('\n'.join(lines[3:]))
 
 
 class ControllerTests(unittest.TestCase):
@@ -395,6 +444,14 @@ assert(not w.floating)
             with self.subTest(failed=failed):
                 hypr, stash = self.race_fixture("parking-failure-"+str(index))
                 hypr.clients[0].update(size=[1251,750],at=[-1251,30])
+                if failed == "window.resize":
+                    original_dispatch = hypr.dispatch
+                    def adjust_on_move(name, **args):
+                        result = original_dispatch(name, **args)
+                        if name == "window.move" and args.get("workspace") == SPECIAL:
+                            hypr.clients[0]["size"] = [900,600]
+                        return result
+                    hypr.dispatch = adjust_on_move
                 hypr.fail = failed
                 with self.assertRaisesRegex(RuntimeError,"Injected IPC failure"):
                     stash.minimize()
@@ -416,7 +473,10 @@ assert(not w.floating)
                     if name == blocked:
                         if blocked == "window.resize":hypr.clients[0]["size"]=[320,240]
                         return
-                    return original_dispatch(name,**args)
+                    result = original_dispatch(name,**args)
+                    if blocked == "window.resize" and name == "window.move" and args.get("workspace") == SPECIAL:
+                        hypr.clients[0]["size"]=[320,240]
+                    return result
                 hypr.dispatch = blocked_action
                 with self.assertRaisesRegex(RuntimeError,"parked as floating|retain its saved size"):
                     stash.minimize()
@@ -437,46 +497,64 @@ assert(not w.floating)
         self.assertEqual(len(calls),1,"Parking must be one compositor transaction")
         code = calls[0]
         prelude = '''local events={}
-local original={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750}}
+local original={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750},suspended=false}
 local current=original
-local neighbor={workspace={name="special:window-stash"},floating=true,size={x=1256,y=750}}
+local neighbor={workspace={name="special:window-stash"},floating=true,size={x=1256,y=750},suspended=true}
 local replacement={pid=200,stable_id=2,tags={},workspace={name="7"},floating=false,size={x=333,y=222}}
 hl={get_window=function(selector) assert(selector=="address:0x1");return current end,dsp={window={}},dispatch=function(action) action() end}
 hl.dsp.window.float=function(args) return function() table.insert(events,"float");args.window.floating=true end end
 hl.dsp.window.resize=function(args) return function()
   table.insert(events,"resize");assert(args.window.floating,"Resize was applied to a tiled window")
   assert(args.x==1251 and args.y==750 and args.relative==false)
-  args.window.size={x=args.x,y=args.y}
+  args.window.size={x=args.x,y=args.y};args.window.suspended=false
 end end
 hl.dsp.window.move=function(args) return function()
   table.insert(events,"move");assert(args.window.floating,"Private workspace received a tiled arrival")
   assert(args.workspace=="special:window-stash" and args.follow==false and args.x==nil and args.y==nil)
-  args.window.workspace={name=args.workspace};args.window.size={x=900,y=600}
+  if args.window.workspace.name==args.workspace then return end
+  args.window.workspace={name=args.workspace};args.window.suspended=true
+  if adjust_size_after_move then args.window.size={x=900,y=600} end
   if replace_after_move then current=replacement end
   if tile_after_move then args.window.floating=false end
 end end
 '''
-        success = prelude+code+'''assert(table.concat(events,",")=="float,resize,move,resize")
+        success = prelude+code+'''assert(table.concat(events,",")=="float,move")
 assert(original.size.x==1251 and original.size.y==750 and original.floating)
 assert(original.workspace.name=="special:window-stash")
-assert(neighbor.size.x==1256 and neighbor.size.y==750)
+assert(original.suspended,"Unnecessary resize woke a naturally suspended source")
+assert(neighbor.size.x==1256 and neighbor.size.y==750 and neighbor.suspended)
 print("PARK_OK")
 '''
         result = subprocess.run(["lua","-"],input=success,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn("PARK_OK",result.stdout)
+        for setup, expected_events in (
+                ('original.size={x=640,y=400}', 'float,resize,move'),
+                ('original.workspace={name="special:window-stash"};original.floating=true;original.suspended=true', 'move')):
+            unchanged = prelude+setup+'\n'+code+'''assert(table.concat(events,",")=="'''+expected_events+'''")
+assert(original.size.x==1251 and original.size.y==750 and original.suspended)
+assert(neighbor.size.x==1256 and neighbor.size.y==750 and neighbor.suspended)
+'''
+            result = subprocess.run(["lua","-"],input=unchanged,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+        adjusted = prelude+'adjust_size_after_move=true\n'+code+'''assert(table.concat(events,",")=="float,move,resize")
+assert(original.size.x==1251 and original.size.y==750 and original.floating)
+assert(neighbor.size.x==1256 and neighbor.size.y==750 and neighbor.suspended)
+'''
+        result = subprocess.run(["lua","-"],input=adjusted,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stderr)
         for change in ('current.pid=200','current.stable_id=2','current.tags={"window-stash-test-lookalike"}'):
             rejected = prelude+change+'\nlocal ok=pcall(function()\n'+code+'end)\nassert(not ok and #events==0)\n'
             result = subprocess.run(["lua","-"],input=rejected,text=True,capture_output=True)
             self.assertEqual(result.returncode,0,result.stderr)
         raced = prelude+'replace_after_move=true\nlocal ok=pcall(function()\n'+code+'''end)
-assert(not ok and table.concat(events,",")=="float,resize,move")
+assert(not ok and table.concat(events,",")=="float,move")
 assert(replacement.size.x==333 and replacement.size.y==222 and not replacement.floating)
 '''
         result = subprocess.run(["lua","-"],input=raced,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
         refused = prelude+'tile_after_move=true\nlocal ok=pcall(function()\n'+code+'''end)
-assert(not ok and table.concat(events,",")=="float,resize,move")
+assert(not ok and table.concat(events,",")=="float,move")
 assert(neighbor.size.x==1256 and neighbor.size.y==750)
 '''
         result = subprocess.run(["lua","-"],input=refused,text=True,capture_output=True)
@@ -493,9 +571,9 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         snapshot = self.stash.listing()
         self.assertEqual(snapshot["settings"]["minimizeShortcut"], "CTRL + F8")
         self.assertEqual(snapshot["settings"]["restoreLastShortcut"], "ALT + F9")
-        self.assertEqual(snapshot["shortcutDefaults"], shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual(snapshot["shortcutDefaults"], dict(shortcuts.DEFAULT_SHORTCUTS,**LOCAL_SHORTCUT_DEFAULTS))
         snapshot["shortcutDefaults"]["minimizeShortcut"] = ""
-        self.assertEqual(self.stash.listing()["shortcutDefaults"], shortcuts.DEFAULT_SHORTCUTS)
+        self.assertEqual(self.stash.listing()["shortcutDefaults"], dict(shortcuts.DEFAULT_SHORTCUTS,**LOCAL_SHORTCUT_DEFAULTS))
 
     def test_external_focus_restores_owned_parked_window_and_geometry(self):
         self.hypr.clients[0]["floating"] = True
@@ -1025,6 +1103,8 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
+            floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",floatingPreviewFullscreen="preview",
+            floatingPreviewExitShortcut="CTRL + ALT + Escape",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
 
     def test_floating_previews_default_without_changing_existing_presentation_or_hover_settings(self):
@@ -1460,6 +1540,193 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         self.stash.restore(ident)
         self.assertEqual(self.hypr.clients[0]["fullscreen"],2)
         self.assertTrue(self.hypr.clients[0]["pinned"])
+
+    def test_preview_fullscreen_clears_before_restore_and_preserves_original_real_fullscreen(self):
+        for number, (floating, original_mode, legacy) in enumerate(((True,0,False),(False,0,True),(True,2,False))):
+            with self.subTest(floating=floating, original=original_mode, legacy=legacy):
+                hypr, stash = self.race_fixture('preview-fullscreen-'+str(number))
+                hypr.clients[0].update(floating=floating,fullscreen=original_mode,fullscreenClient=original_mode)
+                ident = stash.minimize()['id']
+                saved = copy.deepcopy(stash.state['windows'][0])
+                if legacy:
+                    del stash.state['windows'][0]['stableId']
+                current = hypr.clients[0]
+                current['fullscreenClient'] = 2
+                hypr.preview_fullscreen[current['stableId']] = 0
+                self.assertEqual(stash.restore(ident)['action'],'restored')
+                self.assertEqual((current['fullscreen'],current['fullscreenClient']),(original_mode,original_mode))
+                self.assertEqual(current['size'],saved['size'])
+                self.assertEqual(hypr.preview_fullscreen,{})
+                self.assertEqual(stash.state['windows'],[])
+
+    def test_preview_fullscreen_clear_is_not_saved_as_a_fullscreen_retry_request(self):
+        self.hypr.clients[0]['floating'] = True
+        ident = self.stash.minimize()['id']
+        current = self.hypr.clients[0]
+        self.hypr.preview_fullscreen[current['stableId']] = 0
+        current['fullscreenClient'] = 2
+        self.hypr.fail = 'window.resize'
+        with self.assertRaisesRegex(RuntimeError,'Injected IPC failure'):
+            self.stash.restore(ident)
+        retained = self.stash.state['windows'][0]
+        self.assertNotIn('restoreFullscreen',retained)
+        self.assertEqual((retained['fullscreen'],retained['fullscreenClient']),(0,0))
+        self.hypr.fail = None
+        self.stash.restore(ident)
+        self.assertEqual((current['fullscreen'],current['fullscreenClient']),(0,0))
+
+    def test_preview_fullscreen_cleanup_rechecks_source_identity_before_any_restore_mutation(self):
+        ident = self.stash.minimize()['id']
+        replacement = client(pid=200)
+        replacement['stableId'] = '0x222'
+        def replace(_record):
+            self.hypr.clients = [replacement]
+        self.hypr.clear_preview_fullscreen = replace
+        before = len(self.hypr.commands)
+        self.assertEqual(self.stash.restore(ident)['action'],'noop')
+        self.assertEqual(self.hypr.commands[before:],[])
+        self.assertEqual(replacement,client(pid=200) | dict(stableId='0x222'))
+
+    def test_native_replacement_gate_blocks_restore_before_ipc_or_ledger_changes(self):
+        ident = self.stash.minimize()['id']
+        before = copy.deepcopy(self.stash.state)
+        before_file = self.stash.path.read_bytes()
+        self.stash.hypr = Hyprland()
+        environment = dict(XDG_RUNTIME_DIR=str(self.root/'bridge-runtime'),
+                           HYPRLAND_INSTANCE_SIGNATURE='restore-gate-test')
+        with patch.dict(os.environ,environment), patch.object(self.stash.hypr,'read') as read:
+            with bridge_gate(exclusive=True), self.assertRaisesRegex(RuntimeError,BUSY):
+                self.stash.restore(ident,'current',monitor='eDP-2',workspace=1,expected=before['windows'][0])
+            read.assert_not_called()
+        self.assertEqual(self.stash.state,before)
+        self.assertEqual(self.stash.path.read_bytes(),before_file)
+
+    def test_restore_holds_shared_native_gate_through_completion_and_releases_it_on_errors(self):
+        self.stash.hypr = Hyprland()
+        environment = dict(XDG_RUNTIME_DIR=str(self.root/'bridge-runtime'),
+                           HYPRLAND_INSTANCE_SIGNATURE='restore-gate-test')
+        def finish(*args):
+            self.assertEqual(args,('exact-id','original','eDP-2',3,{'stableId':'18000001'}))
+            with self.assertRaisesRegex(RuntimeError,BUSY), bridge_gate(exclusive=True):
+                self.fail('Native replacement entered during a restore')
+            return {'ok':True,'action':'restored'}
+        with patch.dict(os.environ,environment), patch.object(self.stash,'_restore',side_effect=finish):
+            self.assertEqual(self.stash.restore('exact-id','original','eDP-2',3,{'stableId':'18000001'})['action'],'restored')
+            with bridge_gate(exclusive=True):
+                pass
+        with patch.dict(os.environ,environment), patch.object(self.stash,'_restore',side_effect=RuntimeError('Restore failed')):
+            with self.assertRaisesRegex(RuntimeError,'Restore failed'):
+                self.stash.restore('exact-id')
+            with bridge_gate(exclusive=True):
+                pass
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_clear_lua_checks_optional_api_and_exact_identity(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        class Capture:
+            def __init__(self):self.scripts=[]
+            def eval(self, script):self.scripts.append(script)
+        capture = Capture()
+        Hyprland.clear_preview_fullscreen(capture,record)
+        for api, success in (('',True),
+            ('clear_fullscreen=function(v) assert(v.id=="'+record['id']+'" and v.address=="0x123" and v.pid==73 '
+             'and v.stable_id=="18000001" and v.tag=="'+record['tag']+'"); return false end',True),
+            ('clear_fullscreen=function() return nil,"changed identity" end',False)):
+            prelude = 'hl={plugin={window_stash_preview={'+api+'}}}\n'
+            program = prelude+';\n'.join('(function()\n'+script+'\nend)()' for script in capture.scripts)
+            result = subprocess.run(['lua','-'],input=program,text=True,capture_output=True)
+            self.assertEqual(result.returncode==0,success,result.stderr)
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_waits_for_exact_original_configure_ack(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        ipc = FullscreenCleanupIPC(record,[True,True,False])
+        with patch('stash.time.sleep') as sleep:
+            Hyprland.clear_preview_fullscreen(ipc,record)
+        self.assertEqual((ipc.clears,ipc.queries),(1,3))
+        self.assertEqual(sleep.call_args_list,[unittest.mock.call(.05),unittest.mock.call(.05)])
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_missing_ack_api_is_refused_before_clear(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        ipc = FullscreenCleanupIPC(record,[False],query=False)
+        with self.assertRaisesRegex(RuntimeError,'Reload preview support'):
+            Hyprland.clear_preview_fullscreen(ipc,record)
+        self.assertEqual((ipc.clears,ipc.queries),(0,0))
+        ipc.capability = False
+        Hyprland.clear_preview_fullscreen(ipc,record)
+        self.assertEqual((ipc.clears,ipc.queries),(1,0),'A legacy bridge with no cleanup API should remain optional')
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_invalid_or_stale_query_never_retries(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        for response, message in (('pending','Could not read'),(RuntimeError('Changed cleanup identity'),'Changed cleanup identity')):
+            ipc = FullscreenCleanupIPC(record,[response])
+            with self.subTest(response=response),patch('stash.time.sleep') as sleep,self.assertRaisesRegex(RuntimeError,message):
+                Hyprland.clear_preview_fullscreen(ipc,record)
+            self.assertEqual((ipc.clears,ipc.queries),(1,1))
+            sleep.assert_not_called()
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_timeout_keeps_the_window_stashed_without_snapshot_mutation(self):
+        ident = self.stash.minimize()['id']
+        record = self.stash.state['windows'][0]
+        current = self.hypr.clients[0]
+        current['fullscreenClient'] = 2
+        before = copy.deepcopy(self.stash.state)
+        before_file = self.stash.path.read_bytes()
+        ipc = FullscreenCleanupIPC(record,[True],on_clear=lambda:current.update(fullscreenClient=0))
+        self.hypr.clear_preview_fullscreen = lambda value:Hyprland.clear_preview_fullscreen(ipc,value)
+        clock = [0.0]
+        def tick(_seconds):clock[0] += 1.5
+        before_commands = len(self.hypr.commands)
+        with patch('stash.time.monotonic',side_effect=lambda:clock[0]),patch('stash.time.sleep',side_effect=tick), \
+                self.assertRaisesRegex(RuntimeError,'window remains stashed'):
+            self.stash.restore(ident)
+        self.assertEqual((ipc.clears,ipc.queries),(1,3))
+        self.assertEqual(self.hypr.commands[before_commands:],[])
+        self.assertEqual(current['workspace']['name'],SPECIAL)
+        self.assertEqual(current['size'],record['size'])
+        self.assertEqual(self.stash.state,before)
+        self.assertEqual(self.stash.path.read_bytes(),before_file)
+
+    def test_fullscreen_requested_while_hidden_is_cleared_for_restore_then_reapplied(self):
+        for floating, internal, client_mode in ((False,2,2),(True,1,0),(True,0,2)):
+            with self.subTest(floating=floating,internal=internal,client=client_mode):
+                hypr,stash=self.race_fixture("restore-live-fullscreen-"+str(floating)+str(internal)+str(client_mode))
+                hypr.clients[0]["floating"]=floating
+                ident=stash.minimize()["id"]
+                hypr.clients[0].update(fullscreen=internal,fullscreenClient=client_mode)
+                dispatch=hypr.dispatch
+                def reject_fullscreen_geometry(name,**args):
+                    source=hypr.client("0x1")
+                    if name in ("window.float","window.resize") and (source["fullscreen"] or source["fullscreenClient"]):
+                        raise RuntimeError("Window is fullscreen")
+                    return dispatch(name,**args)
+                hypr.dispatch=reject_fullscreen_geometry
+                self.assertEqual(stash.restore(ident)["action"],"restored")
+                source=hypr.client("0x1")
+                self.assertEqual((source["fullscreen"],source["fullscreenClient"]),(internal,client_mode))
+                self.assertEqual(source["floating"],floating)
+                self.assertEqual(stash.state["windows"],[])
+
+    def test_partial_fullscreen_restore_retains_new_request_without_changing_original_snapshot(self):
+        self.hypr.clients[0]["floating"]=True
+        ident=self.stash.minimize()["id"]
+        original=copy.deepcopy(self.stash.state["windows"][0])
+        self.hypr.clients[0].update(fullscreen=2,fullscreenClient=1)
+        self.hypr.fail="window.resize"
+        with self.assertRaisesRegex(RuntimeError,"Injected IPC failure"):
+            self.stash.restore(ident)
+        pending=self.stash.state["windows"][0]
+        self.assertEqual(pending["restoreFullscreen"],[2,1])
+        for field in ("fullscreen","fullscreenClient","size","relativePosition","floating","origin"):
+            self.assertEqual(pending[field],original[field])
+        self.assertEqual((self.hypr.clients[0]["fullscreen"],self.hypr.clients[0]["fullscreenClient"]),(0,0))
+        self.hypr.fail=None
+        self.assertEqual(self.stash.restore(ident)["action"],"restored")
+        self.assertEqual((self.hypr.clients[0]["fullscreen"],self.hypr.clients[0]["fullscreenClient"]),(2,1))
+        self.assertEqual(self.stash.state["windows"],[])
 
     def test_external_restore_prunes_metadata(self):
         self.stash.minimize()

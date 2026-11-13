@@ -76,6 +76,7 @@ Item {
     var wanted=identityKey,serial=requestSerial
     Qt.callLater(function() { if (image.active && image.identityKey===wanted && image.requestSerial===serial && !image.failed) image.checking=true })
   }
+  function restartCapture() {begin();return requestSerial}
   function verified(client,requestKey,serial) {
     if (!active || requestKey!==identityKey || serial!==requestSerial || failed) return
     if (!Capture.matches(record,client)) { unavailable("identity-mismatch"); return }
@@ -93,6 +94,14 @@ Item {
         parked:!!candidateIpc && !!candidateIpc.workspace && candidateIpc.workspace.name==="special:window-stash",
         mapped:!!candidateIpc && candidateIpc.mapped===true,
         tags:!!candidateIpc && !!candidateIpc.tags ? candidateIpc.tags.length : 0}}
+  }
+  function contentRect() {
+    return captureView && hasContent ? captureView.contentRect() : null
+  }
+  function refreshFrame() {
+    if(!eligible || mode!=="still" || !captureView) return false
+    captureView.refreshFrame()
+    return true
   }
   onActiveChanged:begin()
   onCandidateIpcChanged: {
@@ -174,6 +183,8 @@ Item {
   component CaptureItem:Item {
     readonly property bool hasContent:view.hasContent
     readonly property size sourceSize:view.sourceSize
+    function contentRect() {return {x:view.x,y:view.y,width:view.width,height:view.height}}
+    function refreshFrame() {if(!view.live) view.captureFrame()}
     ScreencopyView {
       id:view
       anchors.centerIn:parent

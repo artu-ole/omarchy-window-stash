@@ -19,7 +19,7 @@ import time
 import uuid
 
 sys.dont_write_bytecode = True
-from stash import CHOICES, DEFAULTS, PLUGIN, PREFIX, Stash, atomic_json, lua
+from stash import CHOICES, DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, PLUGIN, PREFIX, Stash, atomic_json, lua
 import shortcuts
 
 # Import migration while the checkout still exists. Cleanup uses only code
@@ -52,7 +52,7 @@ def valid_preferences(value):
         if key not in value:
             continue
         item = value[key]
-        if key in shortcuts.DEFAULT_SHORTCUTS:
+        if key in shortcuts.DEFAULT_SHORTCUTS or key in LOCAL_SHORTCUT_DEFAULTS:
             try:
                 result[key] = shortcuts.normalize(item)
             except ValueError:

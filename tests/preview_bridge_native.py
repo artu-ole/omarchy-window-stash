@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Native lease safety, actual GTK suspension, expiry and bridge lifecycle.
+"""Native lease safety, Wayland suspension, expiry and bridge lifecycle.
 
 Run in an unlocked Hyprland session with the checkout installed. Only disposable
 windows and random test-owned leases are changed. A pre-existing bridge is
 preserved; unload/reload checks run only when this suite loaded the bridge.
+The raw client observes protocol state directly; GTK can defer its corresponding
+property until another frame and cannot reliably report hidden-window suspension.
 """
 import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
@@ -21,50 +22,20 @@ from preview import API, PROBE, PreviewBridge
 from stash import PREFIX, SPECIAL, lua
 
 
-def fixture(title, destination):
-    import gi
-    gi.require_version('Gtk', '4.0')
-    from gi.repository import Gio, GLib, Gtk
-
-    application = Gtk.Application(application_id='org.windowstash.PreviewLeaseTest',
-                                  flags=Gio.ApplicationFlags.NON_UNIQUE)
-
-    def activate(app):
-        window = Gtk.ApplicationWindow(application=app, title=title)
-        window.set_default_size(500, 340)
-        window.set_child(Gtk.Label(label='Disposable native preview lease fixture'))
-        revision = [0]
-
-        def publish(*_args):
-            revision[0] += 1
-            path = Path(destination)
-            temporary = path.with_suffix('.next')
-            temporary.write_text(json.dumps(dict(pid=os.getpid(), suspended=window.get_property('suspended'),
-                                                 revision=revision[0])))
-            temporary.replace(path)
-            return GLib.SOURCE_REMOVE
-
-        window.connect('notify::suspended', publish)
-        window.present()
-        GLib.timeout_add(100, publish)
-
-    application.connect('activate', activate)
-    application.run([str(Path(__file__))])
-
-
 def spawn(session, directory, label):
     title = 'Stash native lease %s %s' % (os.getpid(), label)
     path = directory / (label+'.json')
     h.dispatch('focus', workspace=str(session.workspace))
-    process = subprocess.Popen(['/usr/bin/python3', str(Path(__file__).resolve()), '--fixture', title, str(path)],
+    process = subprocess.Popen(['/usr/bin/python3', str(Path(__file__).with_name('constraint-window.py')),
+                                title, str(directory/(label+'.jsonl')), str(path)],
                                env=dict(os.environ, GDK_BACKEND='wayland', PYTHONDONTWRITEBYTECODE='1'),
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     session.processes.append(process)
     client = wait(lambda: next((c for c in h.read('clients') if c['title'] == title), None),
                   'Native lease fixture did not map: '+label)
     session.addresses.append(client['address'])
     h.dispatch('window.float', window='address:'+client['address'], action='on')
-    wait(lambda: path.is_file(), 'GTK suspension state was not published: '+label)
+    wait(lambda: path.is_file(), 'Wayland suspension state was not published: '+label)
     return client['address'], path
 
 
@@ -74,7 +45,7 @@ def suspended(path, expected):
             return json.loads(path.read_text())['suspended'] is expected
         except (FileNotFoundError, ValueError):
             return False
-    wait(check, 'GTK suspension did not become '+str(expected), timeout=4)
+    wait(check, 'Wayland suspension did not become '+str(expected), timeout=4)
 
 
 def available():
@@ -143,15 +114,16 @@ def main():
     loaded_path = None
     try:
         with NativeSession() as session, tempfile.TemporaryDirectory(prefix='stash-native-preview-') as temporary:
+            # Persistent floating captures can keep a hovered source awake
+            # independently of rendering leases. Measure the bridge in isolation.
+            configure('presentation', 'dock')
             configure('hoverPreview', 'off')
             existed = available()
             if not existed:
-                commit = h.read('version')['commit']
-                loaded_path = Path(os.environ.get('XDG_CACHE_HOME', Path.home()/'.cache')) \
-                    / 'omarchy/window-stash/preview-bridge' / commit / 'window-stash-preview.so'
                 # ensure builds against matching headers and loads only the
                 # cache path it produced; the shared desktop guard is active.
                 bridge.ensure()
+                loaded_path = bridge.binary_path
                 loaded_by_test = True
             else:
                 bridge.ensure()
@@ -164,8 +136,15 @@ def main():
             second = session.park(second_address)
             foreign_address, foreign_state = spawn(session, directory, 'unstashed')
             h.dispatch('focus', window='address:'+foreign_address)
-            suspended(first_state, True)
-            suspended(second_state, True)
+            try:
+                suspended(first_state, True)
+                suspended(second_state, True)
+            except AssertionError:
+                print('Natural suspension diagnostics:', {'native': status(),
+                      'first': json.loads(first_state.read_text()), 'second': json.loads(second_state.read_text()),
+                      'clients': [geometry(address) for address in session.addresses],
+                      'active': h.read('activewindow').get('address'), 'monitors': h.read('monitors')}, flush=True)
+                raise
             suspended(foreign_state, False)
             baseline = {address: geometry(address) for address in session.addresses}
             focus = h.read('activewindow')['address'], h.read('activeworkspace')['id']
@@ -290,7 +269,4 @@ def main():
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 4 and sys.argv[1] == '--fixture':
-        fixture(sys.argv[2], sys.argv[3])
-    else:
-        main()
+    main()

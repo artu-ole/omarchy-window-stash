@@ -38,6 +38,41 @@ for(const corner of ['top-left','top-right','bottom-left','bottom-right']) for(c
 }
 console.log('Floating preview resizing: all corners hold their opposite anchor without changing source geometry')
 
+for(const titles of [false,true]) for(const frame of [false,true]) {
+  const initial=geometry.dimensions(280,record,area,titles,frame)
+  const original={x:400,y:250,width:initial.width,height:initial.height}
+  const restore=JSON.stringify(record)
+  for(const edge of ['left','right','top','bottom']) for(const delta of [[0,0],[110,75],[-10000,-10000],[10000,10000]]) {
+    const rect=geometry.resize(original,record,area,...delta,edge,titles,frame)
+    bounded(rect,area)
+    near((rect.width-initial.inset*2)/(rect.height-initial.header-initial.inset*2),rect.aspect)
+    if(edge==='left' || edge==='right') {
+      near(rect.y,original.y);near(rect.height,original.height)
+      near(edge==='left' ? rect.x+rect.width : rect.x,edge==='left' ? original.x+original.width : original.x)
+    } else {
+      near(rect.x,original.x);near(rect.width,original.width)
+      near(edge==='top' ? rect.y+rect.height : rect.y,edge==='top' ? original.y+original.height : original.y)
+    }
+    if(delta.every(value=>value===0)) for(const key of ['x','y','width','height']) near(rect[key],original[key])
+    for(const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+      const scaled=geometry.resize(rect,record,area,35,25,corner,titles,frame,rect.aspect)
+      bounded(scaled,area)
+      near((scaled.width-initial.inset*2)/(scaled.height-initial.header-initial.inset*2),rect.aspect)
+    }
+    assert.equal(JSON.stringify(record),restore,'Changing preview proportions mutated original restore geometry')
+  }
+}
+// Naturally narrow/short cards must not jump to the normal minimum on press.
+for(const size of [[100,5000],[5000,100]]) {
+  const natural=geometry.dimensions(280,{size},area,false,false)
+  const rect={x:area.x,y:area.y,width:natural.width,height:natural.height}
+  for(const edge of ['left','right','top','bottom']) {
+    const result=geometry.resize(rect,{size},area,0,0,edge,false,false)
+    for(const key of ['x','y','width','height']) near(result[key],rect[key])
+  }
+}
+console.log('Floating preview proportions: anchored side drags, chrome-aware ratio, proportional custom corners and no press jumps passed')
+
 const groups=Array.from({length:40},(_,i)=>({key:'window:'+i,windows:[{id:String(i),size:[640,420]}]}))
 const saved={'preview:window:0':[300,250,350],'window:0':[900,600]}
 for(const edges of [false,true]) for(const tiny of [area,{x:0,y:26,width:320,height:214},{x:0,y:0,width:50,height:40}]) {
@@ -64,6 +99,21 @@ near(preset.cards['preview:window:0'].width,140)
 const direct=geometry.layout(groups.slice(0,1),saved,{},area,{sizing:'free',scale:50})
 near(direct.cards['preview:window:0'].width,350)
 console.log('Floating preview placement: independent saved dimensions, preset/free modes and accessible paged overflow passed')
+
+const customSaved={'preview:window:0':[300,250,350,2.4]}
+for(const titles of [false,true]) for(const frame of [false,true]) for(const sizing of ['free','preset']) {
+  const custom=geometry.layout(groups.slice(0,1),customSaved,{},area,{edges:false,titles,frame,sizing,scale:50})
+  const value=custom.cards['preview:window:0'],c=geometry.chrome(titles,frame)
+  near(value.aspectOverride,2.4)
+  near((value.width-c.inset*2)/(value.height-c.header-c.inset*2),2.4)
+  near(value.width,sizing==='free' ? 350 : 140)
+}
+for(const invalid of [0,-1,NaN,Infinity,.001,1000,'invalid']) {
+  const value=geometry.layout(groups.slice(0,1),{'preview:window:0':[300,250,350,invalid]}, {},area,{edges:false}).cards['preview:window:0']
+  near(value.aspectOverride,0);near(value.width/value.height,640/420)
+}
+assert.deepEqual(customSaved['preview:window:0'],[300,250,350,2.4])
+console.log('Floating preview proportions: optional saved content ratio survives chrome/preset changes; legacy and malformed tuples stay natural')
 
 const baseline=geometry.layout(groups.slice(0,2),{}, {},area,{edges:false})
 const occupied=baseline.cards['preview:window:1']
