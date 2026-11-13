@@ -141,6 +141,23 @@ Explicit desktop focus and forced activation still restore the source; once seat
 focus leaves the miniature, ordinary external activation can restore it as well.
 Pointer-only activation retains its existing bounded input acknowledgements.
 
+## Source geometry
+
+`source_geometry(identity)` is a read-only query for exact owned, floating private
+windows. It compares committed logical client geometry and configured size with
+the current resize goal, with `ready` false while configure, drawing, animation or
+fullscreen cleanup is pending. It respects `no_screen_share` and preserves client
+fullscreen. Wayland checks committed configure and surface state; XWayland sizes
+are normalized by its surface scale before comparison.
+
+Edge resizing uses the ordinary guarded resize dispatcher. A short, independently
+owned rendering lease lets the hidden client finish drawing even with Standard or
+Still previews; readiness/error releases it, and its timeout bounds cancellation.
+Original restoration geometry is never overwritten. Resized records require this
+native readiness check in the same Lua transaction as input acquisition, and the
+UI obtains a fresh capture before enabling Interact. Legacy natural previews keep
+their existing input path.
+
 ## Contained fullscreen
 
 The `preview` policy intercepts fullscreen requests for the exact owned source

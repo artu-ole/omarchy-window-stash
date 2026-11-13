@@ -141,14 +141,17 @@ hover delays or coasting momentum.
 
 ### Previews
 
-Floating previews are borderless and untitled by default. Corner dragging preserves
-the captured window's proportions and changes only the miniature; saved restoration
-geometry stays unchanged. Position and width persist separately from floating icons.
-Lock placement to prevent movement and resizing. Free sizing hides the scale dropdown.
+Floating previews are borderless and untitled by default. Drag a side to change
+proportions and reflow the hidden app; corners scale the current proportions.
+Position, width and custom proportions persist separately from floating icons.
+Right-click **Reset preview proportions** to return to the original ratio. Lock
+placement prevents movement and resizing; Free sizing hides the scale dropdown.
 
-Sources retain their saved dimensions while hidden. Tiled windows float inside the
-private stash and rejoin the tiling layout on restore, preserving scrolling width.
-Stashing another window or starting live updates does not reshape existing sources.
+Reshaping preserves the window's original restoration geometry and scrolling width.
+App-group covers reflow only their displayed window; expanded thumbnails keep
+automatic sizing. Stashing another window or starting live updates does not reshape
+existing sources. Interaction waits for the app's resized content and a fresh
+preview frame; use Stop/Manage before resizing an interactive miniature.
 
 | Key | Default | Values / meaning |
 |---|---|---|
@@ -234,6 +237,8 @@ previews remain available.
 Floating previews use the same Standard/Enhanced support independently of the hover
 preview setting. Hidden cards release capture resources. Capture pauses while the
 session is locked or its display sleeps; live cards resume when available.
+Reshaping loads the same bridge as needed and briefly keeps the source drawing
+until its resized frame is ready, without changing the update policy.
 
 Enhanced keeps only verified windows with visible live thumbnails drawing at up to
 15 FPS; the active interactive source has its separate 30/60 FPS limit. Hiding
@@ -278,7 +283,9 @@ Commands: `minimize [--address ADDRESS]`, `restore ID`, `restore-last`,
 `reset-settings --confirm`, `list`, `status`.
 Restore/activate accept `--to current|original`; restore/activate/close accept
 `--monitor OUTPUT --workspace ID`. `restore-all` ignores visibility scope.
-Internal helpers: `position MONITOR KEY X Y`, `preview-position MONITOR KEY X Y WIDTH`,
+Internal helpers: `position MONITOR KEY X Y`,
+`preview-position MONITOR KEY X Y WIDTH [--aspect RATIO]`,
+`preview-aspect ID RATIO --axis width|height [--settle]`, `preview-geometry ID`,
 `rebase OLD_ID NEW_ID`.
 
 [Service.qml](Service.qml) and [ui/](ui/) provide the QML frontend.

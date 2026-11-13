@@ -1,5 +1,53 @@
 # Validation
 
+## v1.31.0 — free preview proportions — 13 November 2026
+
+Side dragging changes preview proportions and reflows the exact hidden source;
+corners scale its current shape. Optional content ratios extend saved position
+triples without changing legacy behavior. Reset returns to the original ratio.
+Original floating geometry, workspace metadata and scrolling width remain
+restoration snapshots, independent of the source's working dimensions.
+
+The complete check passes **355 Python tests**, **15 Node suites**, **thirteen
+offscreen Qt suites**, **111 Python syntax checks**, manifest validation and
+warning-free QML lint. Native bridge **1.29.5** adds a read-only committed-geometry
+query. Its production-function tests reject old configure acknowledgements,
+stale buffers, incomplete animations and wrong identities, with Wayland/CSD and
+XWayland scaling coverage. The four existing native ASAN checks also pass.
+
+Private-desktop acceptance verifies all four physical side drags, fixed opposite
+anchors, proportional corners, responsive GTK allocations and photographed round
+pixels. Standard/Still previews receive a finite management rendering lease.
+A stopped client cannot report ready or accept input while its resize is pending;
+continuing it must produce committed geometry and a fresh matching capture first.
+Native clicks then reach the resized client at the correct coordinates. The same
+source reflow, fresh input and exact restoration pass with a real XWayland GTK
+window on the private compositor's own X server.
+
+Custom proportions survive mode/capture/title/frame changes, private shell
+replacement and restoration/re-stashing under a new record UUID. Tests cover
+lock/preset exclusions, actual context reset to a legacy triple, exact app-group
+lead reflow without resizing nondisplayed members, original floating restoration,
+and narrow/wide scrolling pixel widths and end-column insertion. Chromium and
+Brave retain real video DOM fullscreen, viewport reflow, absent website UI and
+moving playback through horizontal and vertical reshaping, then restore exactly.
+Browser-owned content insets are measured independently of window dimensions.
+
+Resized records require verified native geometry in the same Lua transaction as
+input acquisition. The UI waits for a fresh capture after that acknowledgement;
+neither a compositor resize goal alone nor a stale, differently sized frame can
+enable Interact.
+Backend tests cover exact identity/private scope, client fullscreen preservation,
+input exclusion, resource bounds, source constraints, legacy persistence and
+bounded render ownership. First-use native builds release the ledger while
+compiling and revalidate the source afterward; older modules are not unloaded
+implicitly. No global rendering rules or new settings are introduced.
+
+Native commands: `python3 tests/floating_preview_aspect.py --restart-shell`,
+`python3 tests/floating_preview_aspect.py --apps chromium brave --browser-only`,
+and `python3 tests/floating_preview_aspect.py --xwayland --proof-only` inside the
+explicit isolated desktop. Cleanup pauses capture before terminating fixtures.
+
 ## v1.30.1 — browser tabs stay inside interactive previews — 13 November 2026
 
 A normal tabbed Brave window reproduced an unintended restoration on Ctrl+T:

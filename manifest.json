@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "community.window-stash",
   "name": "Window Stash",
-  "version": "1.30.1",
+  "version": "1.31.0",
   "author": "artu-ole",
   "license": "AGPL-3.0-only",
   "description": "Minimize tiling windows into a dock, floating icons, or resizable floating previews, preserving geometry.",
