@@ -130,6 +130,7 @@ struct FullscreenTransition {
     unsigned activationAllowance = 1;
     bool waitingAck = false;
     uint32_t configureSerial = 0;
+    bool maximizeFollowupHandled = false;
     CHyprSignalListener ackListener{};
 };
 struct EndedInteraction {
@@ -285,6 +286,21 @@ bool fullscreenTarget(const PHLWINDOW& window) {
 void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mode) {
     using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, Fullscreen::eFullscreenMode, bool);
     const auto previous = Fullscreen::controller()->getFullscreenModes(window).client;
+    if (previous != mode && previous != Fullscreen::FSMODE_FULLSCREEN && mode == Fullscreen::FSMODE_MAXIMIZED) {
+        const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+            return item.second.client != Fullscreen::FSMODE_FULLSCREEN && !item.second.maximizeFollowupHandled
+                && (item.second.waitingAck || item.second.expires > Clock::now())
+                && sameWindow(item.second.identity, window.get(), true);
+        });
+        if (found != fullscreenTransitions.end()) {
+            // Chromium restores its pre-fullscreen maximized client state in
+            // a following request. Track that one configure as the same exit,
+            // without letting further state traffic renew this grace forever.
+            found->second.client = mode;
+            found->second.maximizeFollowupHandled = true;
+            found->second.activationAllowance = 1;
+        }
+    }
     if (previous != mode && (previous == Fullscreen::FSMODE_FULLSCREEN || mode == Fullscreen::FSMODE_FULLSCREEN)
         && interaction && !endingInteraction && !reloadPending && interaction->constrainFullscreen
         && sameWindow(interaction->identity, window.get(), true)
@@ -302,6 +318,8 @@ void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mo
     if (previous != mode)
         window->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_FULLSCREENSTATE_CLIENT);
     window->sendWindowSize(true);
+    if (window->m_xdgSurface && window->m_xdgSurface->m_toplevel)
+        window->m_xdgSurface->m_toplevel->setMaximized(mode == Fullscreen::FSMODE_MAXIMIZED);
     if (previous != mode && window->m_xdgSurface) {
         const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
             return item.second.client == mode && sameWindow(item.second.identity, window.get(), true);
@@ -327,7 +345,6 @@ void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mo
 }
 
 bool clearConstrainedFullscreen(std::string id) {
-    fullscreenTransitions.erase(id);
     const auto found = fullscreenWindows.find(id);
     if (found == fullscreenWindows.end())
         return false;
@@ -341,6 +358,9 @@ bool clearConstrainedFullscreen(std::string id) {
                 std::erase_if(fullscreenTransitions, [](const auto& item) { return !item.second.waitingAck && item.second.expires <= Clock::now(); });
                 if (fullscreenTransitions.size() < MAX_WINDOWS)
                     fullscreenTransitions[id] = {previous.identity, previous.originalClient, Clock::now() + std::chrono::seconds(1), {}, 1};
+            } else if (const auto transition = fullscreenTransitions.find(id); transition != fullscreenTransitions.end()
+                       && (transition->second.waitingAck || transition->second.expires > Clock::now())) {
+                transition->second.client = previous.originalClient;
             }
             setClientFullscreen(window, previous.originalClient);
         }
@@ -411,6 +431,24 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
         return sameWindow(item.second.identity, window.get(), true);
     }))
         return; // Do not turn an application's cleanup echo into real fullscreen.
+    if (window && !internal.has_value() && client == Fullscreen::FSMODE_NONE && window->m_xdgSurface
+        && window->m_xdgSurface->m_toplevel && window->m_xdgSurface->m_toplevel->m_state.requestsMaximize == true
+        && controller->getFullscreenModes(window).client == Fullscreen::FSMODE_MAXIMIZED) {
+        const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+            return item.second.client == Fullscreen::FSMODE_MAXIMIZED && !item.second.maximizeFollowupHandled
+                && (item.second.waitingAck || item.second.expires > Clock::now())
+                && sameWindow(item.second.identity, window.get(), true);
+        });
+        if (found != fullscreenTransitions.end()) {
+            // onUpdateState treats a set_maximized echo as a toggle when the
+            // saved client state was already maximized. Acknowledge that one
+            // restore request instead of incorrectly configuring it normal.
+            found->second.maximizeFollowupHandled = true;
+            found->second.activationAllowance = 1;
+            setClientFullscreen(window, Fullscreen::FSMODE_MAXIMIZED);
+            return;
+        }
+    }
     if (fullscreenTarget(window)) {
         const auto modes = controller->getFullscreenModes(window);
         if (!applyConstrainedFullscreen(window, client.value_or(internal.value_or(modes.client))))
@@ -958,7 +996,7 @@ void activateWindow(CWindow* window, bool force) {
                 ++interaction->fullscreenActivationAcknowledgements;
                 return;
             }
-            if (interaction->constrainFullscreen && !interaction->keyboard && interaction->pointerActivationAllowance
+            if (!interaction->keyboard && interaction->pointerActivationAllowance
                 && interaction->pointerActivationDeadline > Clock::now()) {
                 // Mouse-only browser controls can request activation before
                 // their following fullscreen request. Chromium emits two
@@ -1295,7 +1333,7 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
             interaction->grabOffset = point.root - point.local;
         }
         const bool newPress = interaction->buttons.insert(event.button).second;
-        if (newPress && interaction->constrainFullscreen && !interaction->keyboard) {
+        if (newPress && !interaction->keyboard) {
             interaction->pointerActivationAllowance = POINTER_ACTIVATION_CREDITS;
             interaction->pointerActivationDeadline = Clock::now() + std::chrono::milliseconds(500);
         }
@@ -1304,7 +1342,7 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
     g_pSeatManager->sendPointerFrame();
     if (event.state == WL_POINTER_BUTTON_STATE_RELEASED) {
         const bool matchingRelease = interaction->buttons.erase(event.button) != 0;
-        if (matchingRelease && interaction->constrainFullscreen && !interaction->keyboard) {
+        if (matchingRelease && !interaction->keyboard) {
             interaction->pointerActivationAllowance = POINTER_ACTIVATION_CREDITS;
             interaction->pointerActivationDeadline = Clock::now() + std::chrono::milliseconds(500);
         }
