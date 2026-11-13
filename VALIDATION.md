@@ -1,5 +1,40 @@
 # Validation
 
+## v1.32.0 — Super-click preview interaction — 13 November 2026
+
+Super+left click on preview content enters interaction after release, without
+restoring the source, clicking its app or moving the window behind it. The native
+listener scopes interception to the actual focused interactive-preview layer;
+stock mouse bindings remain unchanged elsewhere. App covers expand into exact
+window choices, and selecting another preview uses acknowledged input replacement.
+
+The complete check passes **361 Python tests**, **15 Node suites**, **fifteen
+offscreen Qt suites**, **116 Python syntax checks**, manifest validation and
+warning-free QML lint. Native bridge **1.29.6** builds without warnings. Five
+AddressSanitizer checks execute production native code, including shortcut
+pairing, exact layer/modifier scope, stale focus, maximum drag excursion,
+source replacement and reload cancellation. Held shortcut input blocks reload.
+
+Offscreen checks exercise frontmost content and chrome hit testing, negative
+monitor origins, source identity and geometry changes between press/release,
+missing frames, pending geometry, lifecycle readiness, cancellation and clipped
+group tiles. Preparing support takes no rendering/input lease, preserves older
+loaded modules and never silently replaces them.
+
+The isolated compositor reproduces the original stock-binding conflict, then
+verifies the fix with that same consuming Super+left-drag binding enabled. Actual
+GTK input confirms no activating press or orphan release, correct subsequent
+clicks, unchanged private source/card/underlying-window geometry, release of Super
+before the mouse, drag-away-and-back cancellation, locked placement, existing
+explicit/first-click policies, ordinary outside window dragging, group selection
+and keyboard-focused replacement with exactly paired Super key events.
+
+Run `python3 tests/interactive_super_click.py` inside the disposable desktop.
+The `--fresh-support` variant also passes automatic native preparation with
+Standard/Still previews and no previously loaded module, followed by the same
+gesture matrix with stock bindings present after the initial load. All desktop checks use
+the five-second announcement and pause capture before closing owned fixtures.
+
 ## v1.31.0 — free preview proportions — 13 November 2026
 
 Side dragging changes preview proportions and reflows the exact hidden source;

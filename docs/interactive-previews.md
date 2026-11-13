@@ -2,7 +2,8 @@
 
 Optional input routing for floating preview cards. Interaction is disabled by
 default. Explicit Interact preserves ordinary click-to-restore; optional first-click
-activation consumes its activating click. App groups require selecting one window.
+activation consumes its activating click. Super+left click on preview content also
+enters interaction without restoring the window. App groups require selecting one window.
 See [README.md](../README.md) for settings and [VALIDATION.md](../VALIDATION.md) for
 acceptance evidence; this document describes the implementation contract.
 
@@ -29,6 +30,26 @@ without changing Standard/Enhanced or Still/Hover/Live preferences. Other enhanc
 live sources retain their 15 FPS budget.
 
 ## Input and controls
+
+Enabling interaction prepares native shortcut support when previews are visible,
+including Standard/Still previews. `controller/interaction.py --prepare` loads
+support if absent, checks `capabilities.superClickActivation` and takes no input or
+rendering lease. An older loaded module is preserved and reports the update requirement.
+
+The native mouse listener intercepts pure Super+left only on the actual focused
+root of `omarchy-window-stash-interactive-previews`, before compositor mouse bindings.
+It consumes the whole pair and emits `window-stash-super-click` with
+`serial,press|release|cancel,x,y` in global logical coordinates. Moving more than
+six logical pixels, losing focus or changing desktop state cancels activation.
+The release is consumed even if Super is released first; reload waits for it.
+No application receives the activating press or an unmatched release.
+
+QML pins the frontmost content's identity and geometry on press and revalidates
+both on release. Controls, unavailable frames and partially clipped tiles cannot
+activate or fall through to restore. A group cover expands for exact selection;
+another eligible preview uses the existing acknowledged replacement path.
+Dialogs and menus use the ordinary layer namespace. Global mouse bindings are
+preserved; ordinary Super+drag outside previews still moves windows.
 
 The native bridge maps the full image rectangle to source-local coordinates,
 resolves subsurfaces/popups, and routes pointer movement, buttons and axes through

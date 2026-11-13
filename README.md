@@ -61,6 +61,7 @@ overrides are preserved.
 | Click icon | Restore; multi-window app groups open a searchable chooser. Floating stacks unfold first. |
 | Click preview | Restore; app covers expand into individual window thumbnails. |
 | Preview Interact control | Enter interaction; optional first-click activation consumes the activating click. |
+| Super+left click preview content | Enter interaction without restoring or clicking the app; app covers open their window choices first. |
 | Interactive preview content | Application clicks, scrolling, selection and dragging; typing when click-to-focus keyboard input is enabled. |
 | Ctrl+Alt+Escape / Stop | Leave preview interaction. The shortcut is configurable; plain Escape reaches the application. |
 | Right-click icon/stack | Pointer-positioned window/app menu, Settings, recovery and Close all. |
@@ -170,7 +171,7 @@ Optional interaction is configured under **Preview interaction**:
 | Key | Default | Values / meaning |
 |---|---|---|
 | `floatingPreviewInteraction` | `off` | `off`, `on`; floating previews only |
-| `floatingPreviewActivation` | `explicit` | `explicit`: Interact control/context action; `click`: first click enters interaction without forwarding that click |
+| `floatingPreviewActivation` | `explicit` | `explicit`: Interact control/context action; `click`: first click enters interaction without forwarding that click. Super+left click is available with either setting |
 | `floatingPreviewKeyboard` | `mouse` | `mouse`: pointer only; `click`: content click also acquires keyboard focus; hover never does |
 | `floatingPreviewFullscreen` | `preview` | `preview`: fullscreen stays inside the miniature; `desktop`: restore the window for fullscreen |
 | `floatingPreviewInteractionFps` | `"60"` | `"30"`, `"60"`; active preview rendering limit |
@@ -199,7 +200,7 @@ moving or resizing becomes available. Movement/physics pauses during interaction
 the source geometry remains unchanged. Outside clicks stop interaction and reach
 their destination once; moving the pointer away alone keeps it active.
 
-Interaction loads native support automatically and uses live capture independently
+Enabling interaction prepares native support automatically and uses live capture independently
 of the ordinary snapshot/hover and Standard/Enhanced preferences. Its setup
 requirements are the same as Enhanced previews below. Pointer-locked applications,
 cross-window drag-and-drop and input-method popup positioning require the restored
