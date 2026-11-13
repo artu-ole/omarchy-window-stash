@@ -25,6 +25,8 @@ Item {
   property bool held:false
   property bool moving:false
   property bool resizing:false
+  property bool resizeFreeAspect:false
+  property string resizeGestureCorner:""
   property bool sourceResizeActive:false
   property bool expandedTile:false
   property bool folding:false
@@ -156,8 +158,25 @@ Item {
   function cancelInteraction() {
     pointer.suppressed=true
     if(held || moving) moveCanceled()
-    if(resizing) resizeReleased()
+    endResizeGesture()
+  }
+  function beginResizeGesture(corner,freeAspect) {
+    if(!canResize || resizing || held || moving || !visible || !captureAllowed
+        || ["left","right","top","bottom","top-left","top-right","bottom-left","bottom-right"].indexOf(corner)<0) return false
+    resizeFreeAspect=!!freeAspect && corner.indexOf("-")>=0
+    resizeGestureCorner=corner;resizing=true;resizePressed(corner)
+    return resizing
+  }
+  function updateResizeGesture(dx,dy,corner) {
+    if(!resizing || !canResize || corner!==resizeGestureCorner || !Number.isFinite(dx) || !Number.isFinite(dy)) return false
+    resizeRequested(dx,dy,corner);return true
+  }
+  function endResizeGesture() {
+    var active=resizing
     resizing=false
+    if(active) resizeReleased()
+    resizeFreeAspect=false;resizeGestureCorner=""
+    return active
   }
   function rectOf(item) {var p=item.mapToItem(coordinateRoot,0,0);return {x:p.x,y:p.y,width:item.width,height:item.height}}
   function invalidateInteractionGeometry() {
@@ -217,6 +236,15 @@ Item {
     return Geometry.contains(bounds,x,y)
   }
   function shortcutControlHit(x,y) {return interactionBar.visible && Geometry.contains(globalRectOf(interactionBar),x,y)}
+  function shortcutResizeCorner(x,y) {
+    if(!canResize || !visible || !captureAllowed || held || moving || resizing || (unfolding && presence<.999)) return ""
+    if(shortcutControlHit(x,y) || (closeButton.visible && Geometry.contains(globalRectOf(closeButton),x,y))) return ""
+    for(var i=0;i<resizeRepeater.count;i++) {
+      var handle=resizeRepeater.itemAt(i)
+      if(handle && handle.enabled && Geometry.contains(globalRectOf(handle),x,y)) return handle.corner
+    }
+    return ""
+  }
   function shortcutIdentity() {
     return JSON.stringify({key:key,tile:expandedTile,windows:group.windows.map(function(window) {
       return [window.id,window.address,window.pid,window.stableId,window.tag,window.phase]
@@ -512,13 +540,13 @@ Item {
         hoverEnabled:true;acceptedButtons:Qt.LeftButton
         cursorShape:horizontal ? Qt.SizeHorCursor : Qt.SizeVerCursor
         property point start:Qt.point(0,0)
-        onPressed:function(mouse) {start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizing=true;card.resizePressed(modelData)}
+        onPressed:function(mouse) {start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);mouse.accepted=card.beginResizeGesture(modelData,false)}
         onPositionChanged:function(mouse) {
           if(!pressed) return
-          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizeRequested(p.x-start.x,p.y-start.y,modelData)
+          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.updateResizeGesture(p.x-start.x,p.y-start.y,modelData)
         }
-        onReleased: {card.resizing=false;card.resizeReleased()}
-        onCanceled: {card.resizing=false;card.resizeReleased()}
+        onReleased:card.endResizeGesture()
+        onCanceled:card.endResizeGesture()
       }
     }
     Repeater {
@@ -539,14 +567,14 @@ Item {
         property point start:Qt.point(0,0)
         Behavior on opacity {NumberAnimation {duration:Motion.duration(card.animations,100,60,card.animationSpeed)}}
         onPressed:function(mouse) {
-          start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizing=true;card.resizePressed(corner)
+          start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);mouse.accepted=card.beginResizeGesture(corner,!!(mouse.modifiers & Qt.MetaModifier))
         }
         onPositionChanged:function(mouse) {
           if(!pressed) return
-          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizeRequested(p.x-start.x,p.y-start.y,corner)
+          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.updateResizeGesture(p.x-start.x,p.y-start.y,corner)
         }
-        onReleased: {card.resizing=false;card.resizeReleased()}
-        onCanceled: {card.resizing=false;card.resizeReleased()}
+        onReleased:card.endResizeGesture()
+        onCanceled:card.endResizeGesture()
         Rectangle {
           x:resizeHandle.leftSide ? 3 : parent.width-10;y:resizeHandle.topSide ? 3 : parent.height-4
           width:7;height:1;color:Commons.Color.accent

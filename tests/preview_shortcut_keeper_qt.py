@@ -44,7 +44,7 @@ ShellRoot {
     property bool lifecycleReady:true
     property bool captureAllowed:true
     property var bridgeSupportStatus:({state:"absent"})
-    property var snapshot:({settings:{presentation:"previews",floatingPreviewInteraction:"off"},windows:[{id:"one",phase:"stashed"}]})
+    property var snapshot:({settings:{presentation:"previews",floatingPreviewInteraction:"off",floatingPreviewSizing:"preset"},windows:[{id:"one",phase:"stashed"}]})
   }
   StashPreviewShortcut {
     id:shortcut;stash:fake
@@ -52,7 +52,7 @@ ShellRoot {
   }
   function check(value,message) {if(!value) throw new Error(message)}
   function process() {return shortcut.children.find(function(item) {return item.objectName==="preview-shortcut-prepare"})}
-  function enabled(value) {fake.snapshot={settings:{presentation:"previews",floatingPreviewInteraction:value ? "on" : "off"},windows:[{id:"one",phase:"stashed"}]}}
+  function enabled(value) {fake.snapshot={settings:{presentation:"previews",floatingPreviewInteraction:value ? "on" : "off",floatingPreviewSizing:"preset"},windows:[{id:"one",phase:"stashed"}]}}
   Timer {
     interval:30;repeat:true;running:true
     onTriggered: {
@@ -79,7 +79,9 @@ ShellRoot {
           check(shortcut.nativeEvent("window-stash-super-click","4294967295,press,-1200.5,260.25"),"Valid negative-origin event rejected")
           check(shortcut.nativeEvent("window-stash-super-click","4294967295,release,-1200.5,260.25"),"Valid release rejected")
           check(shortcut.nativeEvent("window-stash-super-click","2,cancel,-1200,260"),"Valid cancellation rejected")
-          check(root.received.length===3 && root.received[0].x===-1200.5,"Event parser lost exact global coordinates")
+          check(shortcut.nativeEvent("window-stash-super-click","3,move,-1200,260"),"Valid drag motion rejected")
+          check(shortcut.nativeEvent("window-stash-super-click","3,drag-release,-1200,260"),"Valid drag release rejected")
+          check(root.received.length===5 && root.received[0].x===-1200.5,"Event parser lost exact global coordinates")
           enabled(false);enabled(true);root.phase=3;root.ticks=0
         } else if(root.phase===3 && root.ticks>=6) {
           check(process().starts===2,"Enabling interaction did not retry support")
@@ -100,6 +102,32 @@ ShellRoot {
         } else if(root.phase===6 && root.ticks>=6) {
           check(process().starts===4,"Resuming visible previews did not prepare support")
           shortcut.message({state:"ready"});process().finish(0)
+          enabled(false)
+          check(!shortcut.wanted,"Preset-only previews prepared disabled interaction")
+          fake.snapshot={settings:{presentation:"previews",floatingPreviewInteraction:"off",floatingPreviewSizing:"free"},windows:[{id:"one",phase:"stashed"}]}
+          check(shortcut.resizeWanted && shortcut.wanted,"View-only free previews did not prepare corner gestures")
+          root.phase=7;root.ticks=0
+        } else if(root.phase===7 && root.ticks>=6) {
+          check(process().starts===5,"View-only corner gestures did not prepare native support")
+          shortcut.message({state:"ready"})
+          check(!shortcut.cornerReady,"A stale click-only ready message claimed corner drag support")
+          shortcut.message({state:"ready",cornerResize:true});process().finish(0)
+          check(shortcut.cornerReady,"Verified motion support did not enable corner dragging")
+          enabled(true)
+          check(!shortcut.resizeWanted && !shortcut.cornerReady,"Preset sizing retained corner support")
+          root.phase=8;root.ticks=0
+        } else if(root.phase===8 && root.ticks>=6) {
+          check(process().starts===6,"Switching to click-only gestures did not recheck support")
+          shortcut.message({state:"ready"});process().finish(0)
+          fake.snapshot={settings:{presentation:"previews",floatingPreviewInteraction:"on",floatingPreviewSizing:"free"},windows:[{id:"one",phase:"stashed"}]}
+          check(shortcut.wanted && !shortcut.cornerReady,"Size policy change reused an old capability result")
+          root.phase=9;root.ticks=0
+        } else if(root.phase===9 && root.ticks>=6) {
+          check(process().starts===7,"Enabling free sizing while interaction stayed on did not recheck corner support")
+          shortcut.message({state:"ready",cornerResize:true});process().finish(0)
+          check(shortcut.cornerReady,"Rechecked free-corner gestures were unavailable")
+          fake.snapshot={settings:{presentation:"previews",floatingPreviewInteraction:"off",floatingPreviewLock:"locked"},windows:[{id:"one",phase:"stashed"}]}
+          check(!shortcut.wanted,"Locked view-only previews prepared corner gestures")
           fake.stopping=true
           check(!shortcut.wanted,"Plugin shutdown left activation enabled")
           console.log("PREVIEW_SHORTCUT_KEEPER_QT_PASS");Qt.quit()

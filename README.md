@@ -68,6 +68,7 @@ overrides are preserved.
 | Middle-click icon/view-only thumbnail | Close represented stashed window(s). Unstashed instances are unaffected. |
 | Thumbnail title × | Close the represented stashed window(s); requires a title strip. |
 | Drag | Move floating items or an unlocked static dock. Resize a floating preview from a corner. Scroll overflowing lists. |
+| Super + corner drag preview | Change width and height independently, keeping the opposite corner fixed. |
 | Arrow keys / Enter | Navigate and select in choosers, unfolded docks or preview groups. |
 | Escape / outside click | Dismiss menus, choosers, hover previews and expanded groups/stacks. |
 
@@ -144,6 +145,7 @@ hover delays or coasting momentum.
 
 Floating previews are borderless and untitled by default. Drag a side to change
 proportions and reflow the hidden app; corners scale the current proportions.
+Hold Super while dragging a corner to reshape both dimensions freely.
 Position, width and custom proportions persist separately from floating icons.
 Right-click **Reset preview proportions** to return to the original ratio. Lock
 placement prevents movement and resizing; Free sizing hides the scale dropdown.
@@ -164,8 +166,8 @@ preview frame; use Stop/Manage before resizing an interactive miniature.
 | `floatingPreviewFrame` | `hidden` | `hidden`, `shown`; optional background and border |
 | `floatingPreviewLock` | `unlocked` | `unlocked`, `locked`; retain placement and dimensions |
 
-Snapshot previews temporarily update live during Responsive/Balanced side drags,
-then return to Snapshot on release. Corner resizing keeps its existing capture policy.
+Snapshot previews temporarily update live during Responsive/Balanced side or Super-corner drags,
+then return to Snapshot on release. Ordinary corner resizing keeps its existing capture policy.
 
 Minimize while hovering a preview to fold it into a floating icon. Clicking that
 icon returns to the preview; restoring again returns the full window. Newest/FIFO

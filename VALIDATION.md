@@ -1,5 +1,27 @@
 # Validation
 
+## v1.35.0 — Super corner resizing — 13 November 2026
+
+Super + corner drag resizes both preview dimensions independently around the
+fixed opposite corner. Ordinary corner dragging retains the chosen proportions.
+Source reflow follows the existing resize-update preference and fresh-frame gate;
+original restoration geometry is unchanged. Locked and preset previews do not
+resize. No new preferences are introduced.
+
+The complete check passes **391 Python tests**, **16 Node suites**, **sixteen
+offscreen Qt suites**, **121 Python syntax checks**, manifest validation and
+warning-free QML lint. Geometry tests cover all corners, chrome, small work areas,
+extreme proportions and client-accepted constraints. Qt tests cover source reflow,
+opposite anchors, cancellation, controls, exact identity and capability readiness.
+
+`python3 tests/preview_super_corner.py` passed in the explicit disposable desktop:
+all four physical Super corner gestures, interaction off/on, a fast pointer jump
+outside the original input mask, source allocations and fresh captures, unchanged
+underlying windows and stash metadata, ordinary proportional corners, locked and
+preset restrictions, Super content activation without click leakage, and exact
+full-window restoration. The native bridge **1.29.7** compiled without warnings;
+ASAN tests cover held pairs, motion, click cancellation, layer lifetime and reload.
+
 ## v1.34.0 — responsive side resizing — 13 November 2026
 
 Continuous side dragging now throttles source updates instead of restarting a

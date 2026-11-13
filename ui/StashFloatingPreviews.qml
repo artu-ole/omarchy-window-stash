@@ -39,6 +39,7 @@ Item {
   property string pendingInteractionId:""
   property int interactionAttempts:0
   property var activationShortcut:null
+  property var resizeShortcut:null
   readonly property bool interacting:typeof stash.endPreviewInteraction==="function" && (!!stash.previewInteractionRequest || !!stash.previewInteractionPendingRequest)
   property int regionRevision:0
   property var inputRegions:[]
@@ -64,8 +65,9 @@ Item {
   readonly property bool held:folded.held || cardList().some(function(card) {return card.held || card.resizing})
   readonly property bool expanded:!!expandedGroup && expandedRecords.length>1
   readonly property string shortcutViewStamp:JSON.stringify([active,captureAllowed,blocked,layout.page,expandedKey,
-    config.presentation,config.scope,config.grouping,config.floatingPreviewInteraction,screenName,monitor ? [monitor.x,monitor.y] : null])
-  onShortcutViewStampChanged:activationShortcut=null
+    config.presentation,config.scope,config.grouping,config.floatingPreviewInteraction,config.floatingPreviewSizing,
+    config.floatingPreviewLock,stash.lifecycleReady,stash.bridgeReloadBusy,stash.previewCornerResizeReady,screenName,monitor ? [monitor.x,monitor.y] : null])
+  onShortcutViewStampChanged: {activationShortcut=null;finishResizeShortcut()}
   signal inputChanged()
   width:coordinateRoot.width;height:coordinateRoot.height
   visible:present && captureAllowed
@@ -125,8 +127,8 @@ Item {
   }
   function updateNativeInteractions() {cardList().concat(tileList()).forEach(function(card) {if(card.interactionBusy) card.syncNativeInteraction()})}
   function shortcutAvailable() {return active && visible && captureAllowed && !blocked && config.floatingPreviewInteraction==="on"}
-  function shortcutCardAt(x,y) {
-    if(!shortcutAvailable()) return null
+  function shortcutFrontAt(x,y) {
+    if(!active || !visible || !captureAllowed || blocked) return null
     if(folded.hit(x,y)) return null
     var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
       .sort(function(first,second) {return first.z-second.z})
@@ -135,21 +137,50 @@ Item {
     // image must not allow a shortcut to reach a different window behind it.
     for(var index=candidates.length-1;index>=0;index--) {
       var card=candidates[index]
-      if(card.shortcutSurfaceHit(x,y)) return card.shortcutHit(x,y) ? card : null
+      if(card.shortcutSurfaceHit(x,y)) return card
       if(card.shortcutControlHit(x,y)) return null
     }
     return null
   }
+  function shortcutCardAt(x,y) {
+    if(!shortcutAvailable()) return null
+    var card=shortcutFrontAt(x,y)
+    return card && card.shortcutHit(x,y) ? card : null
+  }
+  function finishResizeShortcut() {
+    var pending=resizeShortcut;resizeShortcut=null
+    if(!pending) return false
+    var card=cardForKey(pending.key)
+    if(card && card.resizing) card.endResizeGesture()
+    return true
+  }
   function handleActivationShortcut(serial,phase,x,y) {
-    if(phase==="cancel") {activationShortcut=null;return false}
+    if(phase==="cancel") {activationShortcut=null;return finishResizeShortcut()}
     if(phase==="press") {
-      activationShortcut=null
+      activationShortcut=null;finishResizeShortcut()
+      var front=shortcutFrontAt(x,y),corner=front ? front.shortcutResizeCorner(x,y) : ""
+      if(corner) {
+        if(stash.previewCornerResizeReady!==true || !front.beginResizeGesture(corner,true)) return false
+        resizeShortcut={serial:serial,key:front.key,identity:front.shortcutIdentity(),corner:corner,x:x,y:y};return true
+      }
       var candidate=shortcutCardAt(x,y)
       if(!candidate || !candidate.interactionReady(true)) return false
       activationShortcut={serial:serial,key:candidate.key,tile:candidate.expandedTile,identity:candidate.shortcutIdentity(),
         revision:candidate.interactionGeometryRevision,rect:JSON.stringify(candidate.nativeImageRect())}
       return true
     }
+    if(resizeShortcut) {
+      var resizing=resizeShortcut,card=cardForKey(resizing.key)
+      if(resizing.serial!==serial || !active || !visible || !captureAllowed || blocked || !card || !card.visible
+          || !card.canResize || !card.resizing || card.shortcutIdentity()!==resizing.identity) {
+        finishResizeShortcut();return false
+      }
+      if(phase!=="move" && phase!=="release" && phase!=="drag-release") return false
+      card.updateResizeGesture(x-resizing.x,y-resizing.y,resizing.corner)
+      if(phase!=="move") finishResizeShortcut()
+      return true
+    }
+    if(phase==="move") return !!activationShortcut && activationShortcut.serial===serial
     var pending=activationShortcut;activationShortcut=null
     if(phase!=="release" || !pending || pending.serial!==serial || !shortcutAvailable()) return false
     var target=shortcutCardAt(x,y)
@@ -286,10 +317,17 @@ Item {
     if(anchor && anchor.recordId===card.record.id) {
       var c=Geometry.chrome(card.titleVisible,card.frameVisible)
       var wanted=anchor.axis==="width" ? Math.max(1,anchor.height-c.header-c.inset*2)*ratio+c.inset*2 : anchor.width
-      var d=Geometry.dimensions(wanted,card.geometryRecord,previews.layoutArea,card.titleVisible,card.frameVisible,ratio)
+      var available=previews.layoutArea
+      if(anchor.freeAspect) {
+        var left=anchor.edge.indexOf("left")>=0,top=anchor.edge.indexOf("top")>=0
+        var anchorX=left ? anchor.x+anchor.width : anchor.x,anchorY=top ? anchor.y+anchor.height : anchor.y
+        available={x:0,y:0,width:left ? anchorX-available.x : available.x+available.width-anchorX,
+          height:top ? anchorY-available.y : available.y+available.height-anchorY}
+      }
+      var d=Geometry.dimensions(wanted,card.geometryRecord,available,card.titleVisible,card.frameVisible,ratio)
       card.width=d.width
-      card.x=anchor.edge==="left" ? anchor.x+anchor.width-d.width : anchor.x
-      card.y=anchor.edge==="top" ? anchor.y+anchor.height-d.height : anchor.y
+      card.x=anchor.edge.indexOf("left")>=0 ? anchor.x+anchor.width-d.width : anchor.x
+      card.y=anchor.edge.indexOf("top")>=0 ? anchor.y+anchor.height-d.height : anchor.y
       var p=Geometry.position({x:card.x,y:card.y,width:card.width,height:card.height},previews.layoutArea)
       card.x=p.x;card.y=p.y
       card.shapeAnchor=null
@@ -452,7 +490,7 @@ Item {
       readonly property var target:previews.layout.cards[key] || null
       property bool registered:false
       property var resizeOrigin:null
-      sourceResizeActive:resizing && !!resizeOrigin && ["left","right","top","bottom"].indexOf(resizeOrigin.edge)>=0
+      sourceResizeActive:resizing && !!resizeOrigin && (resizeOrigin.freeAspect || ["left","right","top","bottom"].indexOf(resizeOrigin.edge)>=0)
       property var shapeAnchor:null
       stash:previews.stash;config:previews.config;group:collection.dataByKey[groupKey] || ({key:groupKey,windows:[]})
       sourceSizes:previews.observedSizes
@@ -480,26 +518,27 @@ Item {
       onResizePressed:function(corner) {
         previews.closeExpansion();world.remove(key);registered=false
         resizeOrigin={x:x,y:y,width:width,height:height,aspect:dimensions.aspect,custom:aspectOverride,edge:corner,
-          axis:corner==="left" || corner==="right" ? "width" : "height",recordId:record ? record.id : ""}
+          freeAspect:resizeFreeAspect,axis:corner==="left" || corner==="right" ? "width" : "height",recordId:record ? record.id : ""}
         shapeAnchor=Object.assign({},resizeOrigin)
       }
       onResizeRequested:function(dx,dy,corner) {
         if(!resizeOrigin) return
-        var side=["left","right","top","bottom"].indexOf(corner)>=0
-        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible,resizeOrigin.aspect)
-        aspectOverride=side ? rect.aspect : resizeOrigin.custom
+        var reshape=resizeOrigin.freeAspect || ["left","right","top","bottom"].indexOf(corner)>=0
+        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible,resizeOrigin.aspect,resizeOrigin.freeAspect)
+        aspectOverride=reshape ? rect.aspect : resizeOrigin.custom
         width=rect.width;x=rect.x;y=rect.y
-        if(side) previews.requestShape(card,rect.aspect,resizeOrigin.axis,false)
+        if(resizeOrigin.freeAspect) shapeAnchor=Object.assign({},resizeOrigin,rect)
+        if(reshape) previews.requestShape(card,rect.aspect,resizeOrigin.axis,false)
       }
       onResizeReleased: {
         if(!resizeOrigin) return
-        var origin=resizeOrigin,side=["left","right","top","bottom"].indexOf(origin.edge)>=0
+        var origin=resizeOrigin,reshape=origin.freeAspect || ["left","right","top","bottom"].indexOf(origin.edge)>=0
         resizeOrigin=null
         if(!record || origin.recordId!==record.id) {shapeAnchor=null;previews.scheduleLayout();return}
         world.add(key,x,y,width,height);registered=true
         world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked")
         previews.save(card)
-        if(side) previews.requestShape(card,aspectOverride,origin.axis,true)
+        if(reshape) previews.requestShape(card,aspectOverride,origin.axis,true)
         else shapeAnchor=null
         previews.scheduleLayout()
       }

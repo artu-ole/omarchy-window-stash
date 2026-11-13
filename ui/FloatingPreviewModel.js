@@ -46,10 +46,11 @@ function position(rect, area) {
   return {x:clamp(finite(rect.x,area.x),area.x,area.x+area.width-rect.width),
     y:clamp(finite(rect.y,area.y),area.y,area.y+area.height-rect.height)}
 }
-function resize(rect, record, area, dx, dy, corner, titles, frame, aspectOverride) {
+function resize(rect, record, area, dx, dy, corner, titles, frame, aspectOverride, freeAspect) {
   area=rectangle(area)
   if(corner==="left" || corner==="right" || corner==="top" || corner==="bottom")
     return reshape(rect,area,dx,dy,corner,titles,frame)
+  if(freeAspect) return reshapeCorner(rect,area,dx,dy,corner,titles,frame)
   var sx=corner.indexOf("left")>=0 ? -1 : 1,sy=corner.indexOf("top")>=0 ? -1 : 1
   var ratio=customAspect(aspectOverride) || aspect(record),anchorX=sx<0 ? rect.x+rect.width : rect.x,anchorY=sy<0 ? rect.y+rect.height : rect.y
   var widthDelta=Math.abs(dx)>=Math.abs(dy)*ratio ? sx*dx : sy*dy*ratio
@@ -59,6 +60,27 @@ function resize(rect, record, area, dx, dy, corner, titles, frame, aspectOverrid
   var result={x:sx<0 ? anchorX-d.width : anchorX,y:sy<0 ? anchorY-d.height : anchorY,width:d.width,height:d.height,aspect:ratio}
   var point=position(result,area);result.x=point.x;result.y=point.y
   return result
+}
+function reshapeCorner(rect, area, dx, dy, corner, titles, frame) {
+  area=rectangle(area)
+  var left=corner.indexOf("left")>=0,top=corner.indexOf("top")>=0
+  var anchorX=left ? rect.x+rect.width : rect.x,anchorY=top ? rect.y+rect.height : rect.y
+  var maxWidth=Math.max(1,left ? anchorX-area.x : area.x+area.width-anchorX)
+  var maxHeight=Math.max(1,top ? anchorY-area.y : area.y+area.height-anchorY)
+  var c=chrome(titles,frame)
+  c.header=Math.min(c.header,Math.max(0,Math.min(rect.height,maxHeight)-1))
+  c.inset=Math.min(c.inset,Math.max(0,(Math.min(rect.width,maxWidth)-1)/2),Math.max(0,(Math.min(rect.height,maxHeight)-c.header-1)/2))
+  var decoration=c.header+c.inset*2,minWidth=Math.min(120,rect.width,maxWidth),minHeight=Math.min(80,rect.height,maxHeight)
+  // Limit the two independent dimensions to the supported content aspect
+  // range before deriving the ratio used by card sizing and native reflow.
+  minWidth=Math.max(minWidth,Math.max(1,minHeight-decoration)*.02+c.inset*2)
+  maxWidth=Math.min(maxWidth,Math.max(1,maxHeight-decoration)*50+c.inset*2)
+  var width=clamp(rect.width+(left ? -dx : dx),minWidth,maxWidth)
+  minHeight=Math.max(minHeight,(width-c.inset*2)/50+decoration)
+  maxHeight=Math.min(maxHeight,(width-c.inset*2)/.02+decoration)
+  var height=clamp(rect.height+(top ? -dy : dy),minHeight,maxHeight)
+  return {x:left ? anchorX-width : anchorX,y:top ? anchorY-height : anchorY,width:width,height:height,
+    aspect:clamp((width-c.inset*2)/Math.max(1,height-decoration),.02,50)}
 }
 function reshape(rect, area, dx, dy, edge, titles, frame) {
   area=rectangle(area)

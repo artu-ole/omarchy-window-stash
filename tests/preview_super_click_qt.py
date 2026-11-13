@@ -54,10 +54,12 @@ ShellRoot {
     property var previewInteractionPendingRequest:null
     property var previewInteractionStatus:({state:"idle"})
     property bool lifecycleReady:true
+    property bool previewCornerResizeReady:true
     property string previewInteractionError:""
     property bool pointerKnown:false
     property point pointerPosition:Qt.point(0,0)
     property int begun:0
+    property var shapes:[]
     property string restored:""
     signal pointerClicked(real x,real y,int button)
     signal snapshotChanged()
@@ -70,6 +72,7 @@ ShellRoot {
     function closeWindows() {}
     function screenMonitor(screen) {return {name:screen,x:-1600,y:50}}
     function previewGeometryState(id) {return states[id] || null}
+    function requestPreviewAspect(id,aspect,axis,settle) {shapes=shapes.concat([{id:id,aspect:aspect,axis:axis,settle:settle}]);return true}
     function previewInteractionMatches(id,monitor,key) {return Interaction.matches(previewInteractionRequest,id,monitor,key)}
     function previewInteractionPendingMatches(id,monitor,key) {return Interaction.matches(previewInteractionPendingRequest,id,monitor,key)}
     function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
@@ -196,6 +199,31 @@ ShellRoot {
           var content={x:frontImage.x+frontImage.width*.35,y:frontImage.y+20}
           check(back.shortcutHit(content.x,content.y) && front.shortcutHit(content.x,content.y),"Capture-overlap fixture does not overlap source images")
           check(!previews.handleActivationShortcut(++serial,"press",content.x,content.y) && fake.begun===4,"An unavailable front source let input fall through to the source behind")
+          previews.groups=[{key:"window:first",windows:[root.first]}]
+          setting("floatingPreviewInteraction","off")
+          setting("floatingPreviewTitles","hidden")
+        } else if(root.phase===10) {
+          var cover=one();cover.x=200;cover.y=200;cover.width=280
+          var handles=cover.details().resizeRects,corner=handles.find(function(handle) {return handle.corner==="bottom-right"}).rect
+          point={x:-1600+corner.x+corner.width/2,y:50+corner.y+corner.height/2};serial++
+          fake.previewCornerResizeReady=false
+          check(!previews.handleActivationShortcut(serial,"press",point.x,point.y) && !cover.resizing,"A legacy bridge without motion support began corner resizing")
+          fake.previewCornerResizeReady=true
+          check(previews.handleActivationShortcut(serial,"press",point.x,point.y) && cover.resizing && cover.resizeFreeAspect,"Super corner did not start free resize with interaction off")
+          var ratio=cover.width/cover.height,anchorX=cover.x,anchorY=cover.y
+          check(previews.handleActivationShortcut(serial,"move",point.x+120,point.y+10),"Native corner motion was rejected")
+          check(Math.abs(cover.width/cover.height-ratio)>.2 && cover.x===anchorX && cover.y===anchorY,"Super corner did not independently reshape around its opposite corner")
+          check(previews.handleActivationShortcut(serial,"drag-release",point.x+140,point.y+20),"Native corner drag release was rejected")
+          check(!cover.resizing && !cover.resizeFreeAspect && !previews.resizeShortcut,"Free resize did not release its gesture")
+          check(fake.shapes.length>=2 && fake.shapes[fake.shapes.length-1].settle && fake.begun===4 && !fake.restored,"Corner resize did not settle the source or leaked activation/restore")
+          var rect=cover.details().resizeRects.find(function(handle) {return handle.corner==="top-left"}).rect
+          point={x:-1600+rect.x+rect.width/2,y:50+rect.y+rect.height/2};serial++
+          check(previews.handleActivationShortcut(serial,"press",point.x,point.y),"Second native corner resize did not begin")
+          previews.blocked=true;previews.blocked=false
+          check(!cover.resizing && !previews.resizeShortcut,"Blocking a corner drag retained a stuck gesture")
+          check(!previews.handleActivationShortcut(serial,"drag-release",point.x-80,point.y-10),"Cancelled resize replayed a later release")
+          setting("floatingPreviewLock","locked")
+          check(!previews.handleActivationShortcut(++serial,"press",point.x,point.y),"Locked view-only preview accepted a corner drag")
           console.log("PREVIEW_SUPER_CLICK_QT_PASS");Qt.quit()
         }
         root.phase++

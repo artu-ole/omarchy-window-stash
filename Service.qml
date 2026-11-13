@@ -203,6 +203,7 @@ Item {
   }
   function resetPointerHold() { root.pressedPointerButtons={}; clickObserver.resetHeld() }
 
+  readonly property bool previewCornerResizeReady:previewShortcut.cornerReady
   StashPreviewShortcut {
     id:previewShortcut
     stash:root

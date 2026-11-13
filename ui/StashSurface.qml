@@ -98,8 +98,8 @@ PanelWindow {
   }
   function preparePreviewFold(key,origin) {floatingPreviews.prepareFold(key,origin)}
   function handlePreviewShortcut(serial,phase,globalX,globalY) {
-    if(!previewMode || config.floatingPreviewInteraction!=="on" || dialogOpen || contextMenuOpen) {
-      floatingPreviews.activationShortcut=null;return false
+    if(!previewMode || dialogOpen || contextMenuOpen) {
+      floatingPreviews.activationShortcut=null;floatingPreviews.finishResizeShortcut();return false
     }
     return floatingPreviews.handleActivationShortcut(serial,phase,globalX,globalY)
   }
@@ -704,7 +704,8 @@ PanelWindow {
   color: "transparent"
   anchors { top: true; left: true; bottom: true; right: true }
   exclusionMode: ExclusionMode.Ignore
-  WlrLayershell.namespace: previewMode && config.floatingPreviewInteraction==="on" && !dialogOpen && !contextMenuOpen
+  WlrLayershell.namespace: previewMode && (config.floatingPreviewInteraction==="on"
+    || (config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked")) && !dialogOpen && !contextMenuOpen
     ? "omarchy-window-stash-interactive-previews" : "omarchy-window-stash"
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
@@ -1336,7 +1337,7 @@ PanelWindow {
           Text {
             visible:surface.previewMode
             text:surface.config.floatingPreviewSizing==="free"
-              ? "Drag a preview to move it. Corners keep its proportions; sides reshape it. Resize updates controls how closely the app follows a side drag. Click to restore."
+              ? "Drag a preview to move it. Corners keep its proportions; Super + corner drag or sides reshape it. Resize updates controls how closely the app follows. Click to restore."
               : "Click a preview to restore. App groups expand into individual window previews."
             textFormat:Text.PlainText
             color:surface.popupColors.text

@@ -64,7 +64,12 @@ an unfolding miniature has settled. No additional preferences are introduced.
 
 ## Resize responsiveness
 
-`floatingPreviewResizeRate` controls source reflow during side dragging:
+Sides change proportions along one axis. Super + corner drag changes width and
+height independently around the fixed opposite corner. The modifier is latched
+on press; ordinary corner dragging retains the current proportions. Placement
+lock and preset sizing disable both resize gestures.
+
+`floatingPreviewResizeRate` controls source reflow during side or Super corner dragging:
 `realtime` (Responsive, default), `balanced`, or `release` (On release).
 Responsive and Balanced use a non-restarting throttle with target intervals of
 16 and 60 ms. Each source retains only its latest draft and queued resize;
@@ -77,27 +82,35 @@ and uses asynchronous committed-geometry polling and fresh capture before input
 is re-enabled; it does not block the action worker waiting for the client.
 The direct CLI `--settle` remains available for callers needing a bounded wait.
 
-Responsive/Balanced side drags temporarily request live capture even with Snapshot
-selected, then restore the saved update policy. Corners retain ordinary proportional
+Responsive/Balanced reshape drags temporarily request live capture even with Snapshot
+selected, then restore the saved update policy. Ordinary corners retain proportional
 scaling. Only the initial transition to `previewResized` writes the ledger; changing
 working dimensions does not repeatedly rewrite unchanged restoration metadata.
 
 ## Entering interaction
 
-Enabling interaction prepares native shortcut support when previews are visible,
-including Standard/Still previews. `controller/interaction.py --prepare` loads
-support if absent, checks `capabilities.superClickActivation` and takes no input or
-rendering lease. An older loaded module is preserved and reports the update requirement.
+Interaction or free, unlocked previews prepare native pointer shortcuts when
+visible, including Standard/Still previews. `controller/interaction.py --prepare`
+loads support if absent, checks `superClickActivation` and, for corner resizing,
+`superCornerResize`, and takes no input or rendering lease. An older loaded module
+is preserved and reports the update requirement.
 
 The native mouse listener intercepts pure Super+left only on the actual focused
 root of `omarchy-window-stash-interactive-previews`, before compositor mouse bindings.
 It consumes the whole pair and emits `window-stash-super-click` with
-`serial,press|release|cancel,x,y` in global logical coordinates. Moving more than
-six logical pixels, losing focus or changing desktop state cancels activation.
+`serial,press|move|release|drag-release|cancel,x,y` in global logical coordinates.
+Moving more than six logical pixels or losing pointer focus prevents click
+activation. A corner drag continues outside the original input region while its
+source layer remains valid; desktop state changes cancel the gesture.
 The release is consumed even if Super is released first; reload waits for it.
 No application receives the activating press or an unmatched release.
 
-QML pins the frontmost content's identity and geometry on press and revalidates
+QML resolves corner handles before content, respecting higher-priority controls.
+It pins the exact card and opposite corner for the entire resize, then settles
+source reflow before allowing application input. No application receives resize
+buttons, including when preview interaction is disabled.
+
+For activation, QML pins the frontmost content's identity and geometry on press and revalidates
 both on release. Controls, unavailable frames and partially clipped tiles cannot
 activate or fall through to restore. A group cover expands for exact selection;
 another eligible preview uses the existing acknowledged replacement path.
