@@ -169,6 +169,11 @@ ShellRoot {
           var tile=previews.tileList().find(function(item) {return item.record.id==="second"}),at=pointer(tile)
           target=previews.foldAt(at.x,at.y);same(target.ids,["second"],"Expanded tile folding selected siblings")
           check(target.key==="folded-preview:app:test","Expanded app tile used a conflicting icon grouping key")
+          var rect=tile.visualRectOf(tile)
+          tile.interactionClipRect={x:rect.x,y:rect.y,width:rect.width,height:rect.height/2}
+          check(!tile.interactionFullyVisible,"Visible-part folding fixture did not clip its tile")
+          target=previews.foldAt(-1600+rect.x+rect.width*.4,40+rect.y+rect.height*.25)
+          same(target.ids,["second"],"A visible part of a clipped tile could not fold its exact source")
           first=Object.assign({},first,{previewFolded:true});second=Object.assign({},second,{previewFolded:true});update()
         } else if(root.phase===8) {
           check(!card() && !previews.expanded && icon().group.windows.length===2,"Grouped folded records created duplicate lists")

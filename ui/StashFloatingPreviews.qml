@@ -113,7 +113,7 @@ Item {
       var card=candidates[index]
       if(card.shortcutControlHit(x,y)) return {handled:true,ids:[]}
       if(!card.shortcutSurfaceHit(x,y)) continue
-      if(!card.interactive || card.retiring || card.held || card.moving || card.resizing || !card.interactionFullyVisible
+      if(!card.interactive || card.retiring || card.held || card.moving || card.resizing
           || (typeof stash.lifecycleReady==="boolean" && !stash.lifecycleReady)
           || card.group.windows.some(function(record) {return record.previewFolded===true || record.phase && record.phase!=="stashed"
             || stash.pendingCloseIds[record.id] || (stash.pendingPreviewFoldIds && stash.pendingPreviewFoldIds[record.id])})) return {handled:true,ids:[]}
