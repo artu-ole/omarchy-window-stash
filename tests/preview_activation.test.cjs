@@ -13,14 +13,18 @@ const other = 'b'.repeat(32);
 let calls;
 const model = vm.createContext({});
 vm.runInContext(source.slice(begin, end), model);
+for (const [name, boundary] of [['focusedScreen', '  Timer {'], ['screenMonitor', '  function invocationWorkspace(']]) {
+  const start = source.indexOf('  function ' + name + '(');
+  const finish = source.indexOf(boundary, start);
+  assert(start >= 0 && finish > start);
+  vm.runInContext(source.slice(start, finish), model);
+}
 function reset() {
   calls = [];
   Object.assign(model, {
     lifecycleReady: true, stopping: false, pendingCloseIds: {},
-    snapshot: {windows: [{id, phase: 'stashed'}]}, queue: [],
+    snapshot: {windows: [{id, phase: 'stashed'}], monitors: [{name: 'HEADLESS-1', focused: true}]}, queue: [],
     worker: {running: false}, runningArgs: [],
-    focusedScreenName: () => 'HEADLESS-1',
-    screenMonitor: name => name === 'HEADLESS-1' ? {name} : null,
     restorePreviewWindow: (...args) => calls.push(args)
   });
 }
@@ -36,7 +40,7 @@ for (const invalid of [null, 0, {}, '', id.toUpperCase(), id + '\n', id + ',rest
 for (const patch of [
   {lifecycleReady: false}, {stopping: true}, {pendingCloseIds: {[id]: true}},
   {snapshot: {windows: []}}, {snapshot: {windows: [{id, phase: 'restoring'}]}},
-  {screenMonitor: () => null},
+  {snapshot: {windows: [{id, phase: 'stashed'}], monitors: []}},
   {worker: {running: true}, runningArgs: ['restore', id, '--monitor', 'HEADLESS-1']},
   {queue: [['restore', id]]}
 ]) {

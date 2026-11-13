@@ -765,7 +765,7 @@ Item {
         || pendingCloseIds[id] || !snapshot.windows.some(function(window) {return window.id===id && window.phase==="stashed"})) return false
     function sameRestore(args) {return args.length>1 && args[0]==="restore" && args[1]===id}
     if((worker.running && sameRestore(runningArgs)) || queue.some(sameRestore)) return false
-    var name=focusedScreenName()
+    var name=focusedScreen()
     if(!screenMonitor(name)) return false
     restorePreviewWindow(id,name)
     return true
