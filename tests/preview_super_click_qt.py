@@ -71,12 +71,16 @@ ShellRoot {
     function screenMonitor(screen) {return {name:screen,x:-1600,y:50}}
     function previewGeometryState(id) {return states[id] || null}
     function previewInteractionMatches(id,monitor,key) {return Interaction.matches(previewInteractionRequest,id,monitor,key)}
+    function previewInteractionPendingMatches(id,monitor,key) {return Interaction.matches(previewInteractionPendingRequest,id,monitor,key)}
     function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
-      begun++;previewInteractionRequest={id:record.id,monitor:monitor,viewKey:key,rect:rect,excludeRects:excludeRects}
+      begun++
+      var request={id:record.id,monitor:monitor,viewKey:key,rect:rect,excludeRects:excludeRects}
+      if(previewInteractionRequest) {previewInteractionPendingRequest=request;return true}
+      previewInteractionRequest=request
       previewInteractionStatus={state:"active",id:record.id};return true
     }
     function updatePreviewInteraction() {}
-    function endPreviewInteraction() {previewInteractionRequest=null;previewInteractionStatus={state:"idle"}}
+    function endPreviewInteraction() {previewInteractionPendingRequest=null;previewInteractionRequest=null;previewInteractionStatus={state:"idle"}}
   }
   Window {
     id:window;width:1280;height:800;visible:true
@@ -173,12 +177,25 @@ ShellRoot {
         } else if(root.phase===8) {
           var replacement=previews.tileList().find(function(item) {return item.record.id==="first"})
           check(press(replacement) && release(),"An inactive exact tile could not replace another active miniature")
-          check(fake.previewInteractionRequest.id==="first" && fake.begun===4,"Replacement shortcut selected the active or wrong source")
+          check(fake.previewInteractionRequest.id==="second" && fake.previewInteractionPendingRequest.id==="first" && fake.begun===4,"Replacement shortcut selected the wrong source or replaced an unreleased owner")
           endInput()
           var tile=previews.tileList().find(function(item) {return item.record.id==="second"})
           tile.interactionClipRect={x:0,y:0,width:1,height:1}
           check(!press(tile) && !release(),"Clipped group tile accepted invisible input")
           check(!fake.restored,"A rejected shortcut fell through to restore")
+          previews.closeExpansion();setting("floatingPreviewTitles","shown")
+          previews.groups=[{key:"window:first",windows:[root.first]},{key:"window:second",windows:[root.second]}]
+        } else if(root.phase===9) {
+          var covers=previews.cardList(),front=covers.find(function(item) {return item.record.id==="first"}),back=covers.find(function(item) {return item.record.id==="second"})
+          check(!!front && !!back,"Overlapping-card fixture is incomplete")
+          back.x=160;back.y=120;back.z=0;front.x=160;front.y=160;front.z=200
+          var frontImage=front.nativeImageRect(),chrome={x:frontImage.x+frontImage.width*.35,y:50+front.y+front.dimensions.header/2}
+          check(back.shortcutHit(chrome.x,chrome.y) && front.shortcutSurfaceHit(chrome.x,chrome.y) && !front.shortcutHit(chrome.x,chrome.y),"Title-overlap fixture does not separate visible chrome from the covered image")
+          check(!previews.handleActivationShortcut(++serial,"press",chrome.x,chrome.y),"Front title chrome allowed a shortcut to fall through to another source")
+          image(front).available=false
+          var content={x:frontImage.x+frontImage.width*.35,y:frontImage.y+20}
+          check(back.shortcutHit(content.x,content.y) && front.shortcutHit(content.x,content.y),"Capture-overlap fixture does not overlap source images")
+          check(!previews.handleActivationShortcut(++serial,"press",content.x,content.y) && fake.begun===4,"An unavailable front source let input fall through to the source behind")
           console.log("PREVIEW_SUPER_CLICK_QT_PASS");Qt.quit()
         }
         root.phase++

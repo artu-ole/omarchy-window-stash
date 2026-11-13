@@ -191,6 +191,17 @@ Item {
     if(!Geometry.contains(nativeImageRect(),x,y)) return false
     return !nativeExcludeRects().some(function(rect) {return Geometry.contains(rect,x,y)})
   }
+  function shortcutSurfaceHit(x,y) {
+    var bounds=globalRectOf(card)
+    if(interactionClipRect) {
+      var monitor=typeof stash.screenMonitor==="function" ? stash.screenMonitor(screenName) : null
+      if(!monitor) return false
+      bounds=Interaction.intersection(bounds,{x:monitor.x+interactionClipRect.x,y:monitor.y+interactionClipRect.y,
+        width:interactionClipRect.width,height:interactionClipRect.height})
+    }
+    return Geometry.contains(bounds,x,y)
+  }
+  function shortcutControlHit(x,y) {return interactionBar.visible && Geometry.contains(globalRectOf(interactionBar),x,y)}
   function shortcutIdentity() {
     return JSON.stringify({key:key,tile:expandedTile,windows:group.windows.map(function(window) {
       return [window.id,window.address,window.pid,window.stableId,window.tag,window.phase]

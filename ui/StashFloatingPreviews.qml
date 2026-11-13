@@ -81,8 +81,8 @@ Item {
     // image must not allow a shortcut to reach a different window behind it.
     for(var index=candidates.length-1;index>=0;index--) {
       var card=candidates[index]
-      if(card.shortcutHit(x,y)) return card
-      if(card.nativeExcludeRects().some(function(rect) {return Geometry.contains(rect,x,y)})) return null
+      if(card.shortcutSurfaceHit(x,y)) return card.shortcutHit(x,y) ? card : null
+      if(card.shortcutControlHit(x,y)) return null
     }
     return null
   }
