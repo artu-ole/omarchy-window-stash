@@ -36,6 +36,21 @@ Item {
   readonly property bool pointerButtonHeld:Object.keys(pressedPointerButtons).length>0
   property bool pointerKnown:false
   property point pointerPosition:Qt.point(0,0)
+  property var bridgeSupportStatus:({state:"unknown"})
+  property string bridgeSupportError:""
+  property bool bridgeReloadBusy:false
+  property string bridgeReloadStage:""
+  property bool bridgeReloadComplete:false
+  property bool bridgeReloadFailed:false
+  property bool bridgeUpdateDeferred:false
+  property string bridgeUpdateNotified:""
+  property int bridgeSupportGeneration:0
+  readonly property bool bridgeUpdateRequired:bridgeSupportStatus.state==="update-required"
+  readonly property bool bridgeSupportVisible:bridgeUpdateRequired || bridgeReloadBusy || bridgeSupportError!==""
+  readonly property string bridgeSupportText:bridgeSupportError || (bridgeReloadBusy
+    ? bridgeReloadStage==="building" ? "Building updated preview support…"
+      : bridgeReloadStage==="loading" ? "Loading updated preview support…" : "Finishing preview interaction…"
+    : "Updated preview support is available. Reload it to apply the update without closing your applications.")
   readonly property bool pointerTracking:root.surfaces.some(function(surface) {
     return surface.previewPending || surface.previewOpen || surface.floatingDockOpen || surface.floatingPreviewsExpanded || surface.contextMenuOpen
   }) || !!previewInteractionRequest
@@ -56,7 +71,7 @@ Item {
   readonly property var previewCompatibilityIds: {
     var liveSource=snapshot.settings.hoverPreview==="live"
       || (snapshot.settings.presentation==="previews" && ["hover","live"].indexOf(snapshot.settings.floatingPreviewUpdate)>=0)
-    if (!captureAllowed || !liveSource || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
+    if (bridgeReloadBusy || !captureAllowed || !liveSource || snapshot.settings.livePreviewCompatibility!=="enhanced") return []
     var ids=Object.keys(previewCompatibilityRequests).map(function(key) { return root.previewCompatibilityRequests[key] })
     return ids.filter(function(id,index) { return ids.indexOf(id)===index }).sort().slice(0,128)
   }
@@ -97,7 +112,7 @@ Item {
   property int resetSerial:0
   readonly property bool resetBusy:resetting || (worker.running && runningArgs[0]==="reset-settings")
     || queue.some(function(args) { return args[0]==="reset-settings" })
-  readonly property bool settingsBusy:resetBusy || shortcutsBusy || previewInteractionStopping
+  readonly property bool settingsBusy:resetBusy || shortcutsBusy || previewInteractionStopping || bridgeReloadBusy
   onShortcutStampChanged:shortcutSyncDelay.restart()
 
   signal pointerClicked(real x,real y,int button)
@@ -127,7 +142,7 @@ Item {
     shortcutSyncError=Object.keys(value.conflicts || {}).map(function(key) { return value.conflicts[key] }).join("\n")
     if (shortcutSyncError) lastError=shortcutSyncError
     else if (lastError===previous) lastError=""
-    if (first) { root.refresh(); root.pump() }
+    if (first) { root.refresh(); root.pump(); root.checkBridgeSupport() }
   }
   Process {
     id:lifecycle
@@ -286,7 +301,7 @@ Item {
   function previewInteractionMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionRequest,id,monitor,key)}
   function previewInteractionPendingMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionPendingRequest,id,monitor,key)}
   function validInteractionTarget(request) {
-    return !!request && lifecycleReady && PreviewInteraction.enabled(snapshot.settings) && captureAllowedFor(request.monitor)
+    return !!request && lifecycleReady && !bridgeReloadBusy && PreviewInteraction.enabled(snapshot.settings) && captureAllowedFor(request.monitor)
       && !pendingCloseIds[request.id] && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed"})
       && snapshot.monitors.some(function(monitor) {return monitor.name===request.monitor})
   }
@@ -299,7 +314,7 @@ Item {
     return true
   }
   function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
-    if(!record || pendingCloseIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
+    if(!record || bridgeReloadBusy || pendingCloseIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
         || !snapshot.windows.some(function(window) {return window.id===record.id && window.phase==="stashed"})) return false
     var request=PreviewInteraction.request(previewInteractionSerial+1,record.id,monitor,key,rect,excludeRects,snapshot.settings)
     if(!request) return false
@@ -446,7 +461,7 @@ Item {
     }
   }
   function pump() {
-    if (worker.running || !lifecycleReady || previewInteractionStopping) return
+    if (worker.running || !lifecycleReady || previewInteractionStopping || bridgeReloadBusy) return
     if (queue.length === 0) {
       if (pendingRefresh) { pendingRefresh = false; enqueue(["list"]) }
       return
@@ -457,6 +472,136 @@ Item {
     runningArgs=args; closeNotified=false
     worker.command = controllerCommand.concat(args)
     worker.running = true
+  }
+  // Updating the native bridge is a separate, explicit action. Pause every
+  // helper before unloading so a live delegate cannot reacquire the old API.
+  function checkBridgeSupport() {
+    if(stopping || !lifecycleReady || bridgeReloadBusy || bridgeProbe.running) return
+    bridgeProbe.generation=bridgeSupportGeneration
+    bridgeProbe.running=true
+  }
+  function bridgeSupportMessage(value) {
+    if(!value || ["current","absent","update-required","error","busy"].indexOf(value.state)<0)
+      throw new Error("Invalid preview support status")
+    bridgeSupportStatus=value
+    if(value.state==="error") bridgeSupportError=String(value.error || "Could not check preview support")
+    if(value.state==="current" || value.state==="absent") {
+      bridgeUpdateDeferred=false
+      bridgeUpdateNotified=""
+      if(value.state==="current") bridgeReloadFailed=false
+      if(!bridgeReloadBusy && !bridgeReloadFailed) bridgeSupportError=""
+    }
+    if(value.state==="update-required") {
+      var key=String(value.loadedVersion || "unknown")+":"+String(value.expectedVersion || "unknown")
+      if(key!==bridgeUpdateNotified && !bridgeUpdateDeferred) {
+        bridgeUpdateNotified=key
+        bridgeNotification.running=true
+      }
+    }
+  }
+  function deferBridgeUpdate() { bridgeUpdateDeferred=true }
+  function reloadPreviewSupport() {
+    if(stopping || bridgeReloadBusy || !lifecycleReady || resetBusy || shortcutsBusy) return false
+    bridgeSupportError="";bridgeReloadComplete=false;bridgeReloadFailed=false;bridgeReloadStage="stopping"
+    bridgeSupportGeneration++
+    bridgeReloadBusy=true;bridgeUpdateDeferred=false
+    previewInteractionPendingRequest=null
+    endPreviewInteraction("bridge-update")
+    bridgeReloadWait.restart()
+    bridgeReloadWaitDeadline.restart()
+    return true
+  }
+  function beginBridgeReload() {
+    if(!bridgeReloadBusy || bridgeReload.running || previewInteractionRequest || previewInteractionStopping || worker.running) return
+    bridgeReloadWait.stop();bridgeReloadWaitDeadline.stop()
+    bridgeReloadStage="building"
+    bridgeReload.running=true
+    bridgeReloadDeadline.restart()
+  }
+  function bridgeReloadMessage(value) {
+    if(!bridgeReloadBusy || !value || ["building","stopping","loading","ready","error","cancelled"].indexOf(value.state)<0) return
+    bridgeReloadStage=value.state
+    if(value.state==="error" || value.state==="cancelled" || value.ok===false) {
+      bridgeReloadComplete=false
+      bridgeSupportError=String(value.error || "Could not reload preview support")
+    } else if(value.state==="ready" && value.ok===true) {
+      bridgeReloadComplete=true
+      bridgeSupportStatus=Object.assign({},value,{state:"current"})
+    }
+  }
+  function finishBridgeReload(code) {
+    if(!bridgeReloadBusy) return
+    bridgeReloadWait.stop();bridgeReloadWaitDeadline.stop();bridgeReloadDeadline.stop();bridgeReloadKillDeadline.stop()
+    if(code!==0 || !bridgeReloadComplete) {
+      bridgeReloadFailed=true
+      if(!bridgeSupportError) bridgeSupportError="Could not reload preview support. Try again, or log out and back in later."
+    } else {
+      bridgeSupportError="";bridgeUpdateNotified=""
+      previewCompatibilityError="";previewInteractionError=""
+      previewCompatibilityStatus={state:"idle",ids:[]}
+    }
+    bridgeReloadBusy=false;bridgeReloadStage=""
+    Qt.callLater(root.checkBridgeSupport)
+    Qt.callLater(root.pump)
+    Qt.callLater(root.applyDeferredSettings)
+  }
+  Timer { id:bridgeReloadWait;interval:40;repeat:true;onTriggered:root.beginBridgeReload() }
+  Timer {
+    id:bridgeReloadWaitDeadline;interval:10000
+    onTriggered:if(root.bridgeReloadBusy && !bridgeReload.running) {
+      root.bridgeSupportError="Could not pause preview support while another window action is finishing. Try again when ready."
+      root.finishBridgeReload(1)
+    }
+  }
+  Timer {
+    id:bridgeReloadDeadline;interval:150000
+    onTriggered:if(bridgeReload.running) {
+      root.bridgeSupportError="Preview support reload timed out. Try again when ready."
+      bridgeReload.signal(15);bridgeReloadKillDeadline.restart()
+    }
+  }
+  Timer {id:bridgeReloadKillDeadline;interval:5000;onTriggered:if(bridgeReload.running) bridgeReload.signal(9)}
+  Timer { interval:30000;repeat:true;running:root.lifecycleReady && !root.stopping;onTriggered:root.checkBridgeSupport() }
+  Process {
+    id:bridgeProbe
+    property int generation:0
+    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/bridge.py").toString().replace(/^file:\/\//,"")),"status"]
+    stdout:StdioCollector {
+      onStreamFinished: {
+        if(root.bridgeReloadBusy || root.stopping || bridgeProbe.generation!==root.bridgeSupportGeneration) return
+        try {root.bridgeSupportMessage(JSON.parse(text))}
+        catch(error) {root.bridgeSupportError="Could not read preview support status"}
+      }
+    }
+    stderr:StdioCollector {}
+  }
+  Process {
+    id:bridgeReload
+    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/bridge.py").toString().replace(/^file:\/\//,"")),"reload"]
+    stdinEnabled:true
+    stdout:SplitParser {
+      onRead:function(line) {
+        try {root.bridgeReloadMessage(JSON.parse(line))}
+        catch(error) {root.bridgeSupportError="Could not read preview support reload status"}
+      }
+    }
+    stderr:StdioCollector {}
+    onExited:function(code) {Qt.callLater(function() {root.finishBridgeReload(code)})}
+  }
+  Process {
+    id:bridgeNotification
+    command:["notify-send","--app-name=Window Stash","--wait","--expire-time=30000",
+      "--action=reload=Reload preview support","--action=later=Later",
+      "Window Stash update ready","Reload preview support to apply the update without closing applications."]
+    stdout:StdioCollector {
+      onStreamFinished: {
+        if(root.stopping) return
+        if(!root.bridgeUpdateRequired) return
+        if(text.trim()==="reload") root.reloadPreviewSupport()
+        else if(text.trim()==="later") root.deferBridgeUpdate()
+      }
+    }
+    stderr:StdioCollector {}
   }
   function screenMonitor(name) {
     for (var i = 0; i < snapshot.monitors.length; i++)
@@ -568,6 +713,7 @@ Item {
     dialogQuery = ""
     dialogDestination = ""
     dialogKind = kind
+    if(kind==="settings") checkBridgeSupport()
   }
   function closeDialog() { resetConfirmation=false; dialogKind = ""; dialogGroup = null; dialogQuery = "" }
   function askResetSettings() {
@@ -608,7 +754,7 @@ Item {
   }
   function setting(key, value) {
     if (!shell) { lastError = "Shell settings are not available"; return }
-    if (resetBusy || resetConfirmation) return
+    if (resetBusy || resetConfirmation || bridgeReloadBusy) return
     if(previewInteractionRequest) {
       deferredSettings=deferredSettings.concat([[key,value]])
       endPreviewInteraction("settings")
@@ -800,6 +946,8 @@ Item {
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
+        bridgeSupport:{status:root.bridgeSupportStatus,error:root.bridgeSupportError,busy:root.bridgeReloadBusy,stage:root.bridgeReloadStage,
+          deferred:root.bridgeUpdateDeferred,checking:bridgeProbe.running},
         previewInteraction:{request:root.previewInteractionRequest,pendingRequest:root.previewInteractionPendingRequest,stopping:root.previewInteractionStopping,
           status:root.previewInteractionStatus,error:root.previewInteractionError,running:!!root.previewInteractionWorker && root.previewInteractionWorker.running},
         captureVisibility:{known:root.captureState.known,checkedAt:root.captureState.checkedAt,error:root.captureState.error,
@@ -819,6 +967,9 @@ Item {
     function minimize(): void { root.enqueue(["minimize"]) }
     function restoreLast(): void { root.enqueue(["restore-last"]) }
     function restoreOldest(): void { root.enqueue(["restore-oldest"]) }
+    function checkPreviewSupport(): void {root.checkBridgeSupport()}
+    function reloadPreviewSupport(): void {root.reloadPreviewSupport()}
+    function deferPreviewSupport(): void {root.deferBridgeUpdate()}
   }
   Component.onCompleted: refresh()
   Component.onDestruction: {root.stopping=true;root.endPreviewInteraction("service-stopped")}

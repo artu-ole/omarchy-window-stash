@@ -338,6 +338,8 @@ PanelWindow {
     if (within(item,resetCancel)) { result.key="reset-settings";result.part="cancel" }
     else if (within(item,resetConfirm)) { result.key="reset-settings";result.part="confirm" }
     else if (within(item,resetRequest)) { result.key="reset-settings";result.part="request" }
+    else if (within(item,bridgeReloadButton)) { result.key="preview-support";result.part="reload" }
+    else if (within(item,bridgeLaterButton)) { result.key="preview-support";result.part="later" }
     else if (within(item,settingsHeading.closeButton)) result.part="close"
     return result
   }
@@ -558,6 +560,9 @@ PanelWindow {
         focusedRect:focusDetails.rect,activeFocusRect:focusDetails.activeRect,focusedKey:focusDetails.key,focusedPart:focusDetails.part,
         scrollbarRect:itemRect(settingsScrollbar),thumbRect:itemRect(settingsScrollbar.contentItem)},shortcutControls:shortcutControls,
       settingsError:{visible:settingsErrorText.visible,rect:itemRect(settingsErrorText),text:settingsErrorText.text,lineCount:settingsErrorText.lineCount},
+      bridgeSupport:{visible:bridgeUpdatePane.visible,rect:itemRect(bridgeUpdatePane),text:bridgeStatusText.text,
+        textRect:itemRect(bridgeStatusText),reloadRect:itemRect(bridgeReloadButton),reloadEnabled:bridgeReloadButton.enabled,
+        laterRect:itemRect(bridgeLaterButton),laterVisible:bridgeLaterButton.visible,busy:stash.bridgeReloadBusy},
       reset:{confirming:stash.resetConfirmation,busy:stash.resetBusy,serial:stash.resetSerial,
         requestEnabled:resetRequest.enabled,confirmEnabled:resetConfirm.enabled,
         requestRect:itemRect(resetRequest),cancelRect:itemRect(resetCancel),confirmRect:itemRect(resetConfirm),confirmationRect:itemRect(resetPane)},
@@ -1104,9 +1109,50 @@ PanelWindow {
             wrapMode:Text.Wrap; Layout.fillWidth:true; Layout.minimumWidth:0
           }
           ColumnLayout {
+            id:bridgeUpdatePane
+            visible:!surface.stash.resetConfirmation && surface.stash.bridgeSupportVisible
+            Layout.fillWidth:true;Layout.minimumWidth:0
+            spacing:surface.metrics.rowGap
+            Text {
+              id:bridgeStatusText
+              text:surface.stash.bridgeSupportText
+              textFormat:Text.PlainText
+              color:surface.stash.bridgeSupportError ? Commons.Color.urgent : surface.popupColors.text
+              font.family:surface.fonts.family;font.pixelSize:surface.fonts.body
+              wrapMode:Text.Wrap;Layout.fillWidth:true;Layout.minimumWidth:0
+            }
+            GridLayout {
+              id:bridgeUpdateActions
+              Layout.fillWidth:true;Layout.minimumWidth:0
+              columns:width<bridgeReloadButton.implicitWidth+bridgeLaterButton.implicitWidth+surface.metrics.sm ? 1 : 2
+              columnSpacing:surface.metrics.sm;rowSpacing:surface.metrics.sm
+              StashButton {
+                id:bridgeReloadButton
+                text:surface.stash.bridgeReloadBusy ? "Reloading…" : "Reload preview support"
+                tooltipText:"Reload preview support without closing applications"
+                enabled:!surface.stash.settingsBusy && surface.stash.lifecycleReady
+                focusable:true;Layout.minimumWidth:0;Layout.fillWidth:bridgeUpdateActions.columns===1
+                Layout.maximumWidth:bridgeUpdateActions.width
+                animations:surface.animations;animationSpeed:surface.animationSpeed
+                foreground:surface.popupColors.text
+                onClicked:surface.stash.reloadPreviewSupport()
+              }
+              StashButton {
+                id:bridgeLaterButton
+                text:"Later";focusable:true
+                visible:surface.stash.bridgeUpdateRequired && !surface.stash.bridgeUpdateDeferred && !surface.stash.bridgeReloadBusy
+                Layout.minimumWidth:0;Layout.fillWidth:bridgeUpdateActions.columns===1
+                animations:surface.animations;animationSpeed:surface.animationSpeed
+                foreground:surface.popupColors.text
+                onClicked:surface.stash.deferBridgeUpdate()
+              }
+            }
+            Ui.PanelSeparator {Layout.fillWidth:true;Layout.minimumWidth:0;foreground:surface.popupColors.text}
+          }
+          ColumnLayout {
             id:settingsContents
             visible:!surface.stash.resetConfirmation
-            enabled:!surface.stash.resetBusy
+            enabled:!surface.stash.settingsBusy
             Layout.fillWidth:true; Layout.minimumWidth:0
             spacing:surface.metrics.panelGap
           Ui.PanelSectionHeader { id:generalHeader; text:"General"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }

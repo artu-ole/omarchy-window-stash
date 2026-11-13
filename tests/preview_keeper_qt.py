@@ -36,6 +36,7 @@ ShellRoot {
   property var a:null
   property var b:null
   property var c:null
+  property bool bridgeReloadBusy:false
   property var snapshot:({windows:[{id:"first"}],settings:{presentation:"previews",hoverPreview:"off",floatingPreviewUpdate:"hover",livePreviewCompatibility:"enhanced"}})
   component FakeProcess:Item {
     property bool running:true
@@ -102,12 +103,18 @@ ShellRoot {
           root.policy("live")
         } else if(root.phase===8) {
           check(root.previewCompatibilityWorker && root.previewCompatibilityIds.join(",")==="second,third","Policy resume did not restore source requests")
+          root.bridgeReloadBusy=true
+        } else if(root.phase===9) {
+          check(!root.previewCompatibilityWorker && Object.keys(root.previewCompatibilityRequests).length===2,"Bridge reload did not pause rendering or discarded delegate ownership")
+          root.bridgeReloadBusy=false
+        } else if(root.phase===10) {
+          check(root.previewCompatibilityWorker && root.previewCompatibilityIds.join(",")==="second,third","Bridge reload did not resume rendering owners")
           root.a.destroy();root.b.destroy();root.a=null;root.b=null
           root.c=ownerFactory.createObject(root,{key:"replacement",recordId:"fourth"})
-        } else if(root.phase===9) {
+        } else if(root.phase===11) {
           check(root.previewCompatibilityIds.join(",")==="fourth" && Object.keys(root.previewCompatibilityRequests).length===1,"Old teardown discarded a replacement owner")
           root.policy("still","floating");root.c.destroy();root.c=null
-        } else if(root.phase===10) {
+        } else if(root.phase===12) {
           check(!root.previewCompatibilityWorker && !Object.keys(root.previewCompatibilityRequests).length,"Leaving preview mode retained rendering or stale ownership")
           check(root.created===root.destroyed,"Worker lifetimes leaked")
           console.log("PREVIEW_KEEPER_QT_PASS");Qt.quit()

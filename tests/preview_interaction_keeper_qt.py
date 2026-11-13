@@ -34,6 +34,7 @@ ShellRoot {
   property int nativeOwners:0
   property var actor:null
   property bool stopping:false
+  property bool bridgeReloadBusy:false
   property real failedAt:0
   property bool lifecycleReady:true
   property bool readable:true
