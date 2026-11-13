@@ -9,17 +9,57 @@ and headers matching the running compositor.
 Build without loading:
 
 ```sh
-python3 tools/build-preview-bridge.py --output /tmp/window-stash-preview.so
+python3 tools/build-preview-bridge.py --cache-dir /tmp/window-stash-preview-cache
 ```
 
-The builder prints JSON with the binary path, build hash, version and protocol.
+The builder prints JSON with the binary path, build hash, version, fingerprint and protocol.
 `--expected-hash HASH` checks headers against the running compositor. Loading also
 checks the full Hyprland and dependency ABI. Rebuild after compositor updates.
 
 `native/version.txt` identifies the native implementation independently of the
 manifest. Bump it when native code changes; UI-only releases retain it. The builder
 includes it in the cache fingerprint, and helpers require an exact version match.
-Replacing loaded native code requires restarting Hyprland.
+The sole transitional exception lets helpers expecting `1.29.2` continue using
+the unchanged render/input API of experimental `1.29.1` until the next login;
+upgrade detection and its unsafe-unload refusal remain active.
+Automatic artifacts use immutable `<Hyprland hash>/<version>-<fingerprint>/`
+directories. The explicit developer `--output FILE` option remains replaceable.
+
+## Updating a loaded bridge
+
+`controller/bridge.py status` probes without building or changing the compositor.
+The shell detects a mismatch at startup, in Settings and every 30 seconds. The
+notification and Settings offer **Reload preview support / Later**; detection never
+interrupts input. `controller/bridge.py reload` performs the explicit replacement:
+
+1. Build and verify a new immutable artifact before changing the loaded module.
+2. Pause capture helpers and finish acknowledged interaction. A session-scoped
+   file lock excludes new acquisitions, including restoration handoffs.
+3. Call `prepare_reload()`, which stops rendering/input, refuses new leases and
+   cancels pending restoration handoffs. Wait for `reloadReady`, including every
+   held physical key/button release filter. Timeout/cancellation calls
+   `cancel_reload()` and retains the old module.
+4. Unload only the verified Window Stash module in its owned cache. Load the new
+   pathname and verify its protocol, version, compositor hash and fingerprint.
+5. Resume rendering. Input requires a new explicit activation. Windows, geometry,
+   preferences, positions and shortcuts remain unchanged.
+
+`status()` exposes `reloadProtocol`, `reloadPending`, `reloadReady`, `pendingKeys`,
+`pendingButtons`, `modulePath` and `fingerprint`. Reload has no global compositor
+restart action. Failed loads can roll back only a digest-verified old artifact;
+an overwritten legacy cache entry is never guessed at. Cancellation before unload
+preserves the old bridge; after unload replacement completes even if the shell
+closes its pipe. `--watch-stdin` binds pre-unload cancellation to that pipe.
+
+The original render-only bridge drains through its lease timeout. The first
+experimental interactive bridge cannot expose pending physical-release filters;
+it requires one logout/login before adopting this upgrade protocol. Unknown
+bridges, ambiguous ownership, a locked session or mismatched compositor headers
+are refused. Ordinary stash actions and Standard previews remain available.
+
+Builds disable GNU-unique module pinning and hide inline implementation symbols
+while preserving compositor singleton visibility. New paths and exact native
+identity checks prevent a successful `dlopen` from being mistaken for new code.
 
 ## Rendering
 

@@ -1,5 +1,31 @@
 # Validation
 
+## v1.29.1 — native bridge updates — 13 November 2026
+
+Updates offer **Reload preview support / Later** without restarting Hyprland.
+The bridge builds first into an immutable version/fingerprint path, then drains
+input and rendering before replacement. Native status must confirm the exact
+new version, protocol, compositor hash, module path and fingerprint. Existing
+windows, restoration geometry, preferences, positions and shortcuts are preserved.
+
+The automated check passes **303 Python tests**, **14 Node suites**, **eleven
+offscreen Qt suites**, manifest validation and warning-free QML lint. Dedicated
+controller tests cover ownership refusal, malformed status, held physical releases,
+compiler cancellation, shell-pipe closure, session lock, concurrent acquisitions,
+lost unload acknowledgements, exact rollback and loader-identity rejection.
+The native build has zero GNU-unique symbols and retains compositor singleton
+visibility and exported plugin entry points.
+
+Disposable-compositor tests compile the original render-only bridge from its
+historical source and upgrade it to the new bridge. A separate cooperative old
+version proves that held pointer/key sequences finish before unload and that
+rendering resumes after exact-version replacement. Failed builds retain the old
+module; failed loads recover a verified old artifact. Repeated reloads are no-ops.
+The original experimental interactive bridge is explicitly refused for unloading
+because pending physical-release filters cannot be observed. Its unchanged input
+API remains usable through the narrow transitional compatibility exception until
+the next normal login. No real compositor restart or unload is used for testing.
+
 ## v1.29.0 — interactive floating previews — 12 November 2026
 
 Adds optional native pointer and keyboard input to one selected floating preview.

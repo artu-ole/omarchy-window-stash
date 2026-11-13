@@ -228,7 +228,11 @@ Enhanced keeps only verified windows with visible live thumbnails drawing at up 
 15 FPS; the active interactive source has its separate 30/60 FPS limit. Hiding
 previews releases rendering leases; no global rendering rules or app profiles
 change. Application-level throttling can still limit updates. Updating an already
-loaded native bridge requires restarting Hyprland.
+loaded native bridge shows **Reload preview support / Later** in a notification
+and Settings. Reload replaces only the bridge, preserving applications and the
+stash; active interaction ends and can be entered again afterward. Fresh installs
+load support on demand. Older experimental bridges without safe reload support,
+or headers from a newer compositor than the running session, require logout/login.
 See [native/README.md](native/README.md) for the bridge implementation and build API.
 
 ### Shortcuts
