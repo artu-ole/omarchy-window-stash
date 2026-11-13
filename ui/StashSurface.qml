@@ -92,6 +92,14 @@ PanelWindow {
   function dismissPreview() { windowPreview.dismiss(true) }
   function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
   function activatePreviewInteraction(id) {return floatingPreviews.activateInteraction(id)}
+  function canResetPreviewProportions(group) {
+    if(config.presentation!=="previews" || config.floatingPreviewSizing==="preset" || config.floatingPreviewLock==="locked"
+        || !group || !group.windows || !group.windows.length) return false
+    var card=floatingPreviews.cardForKey("preview:"+group.key)
+    return !!card && card.visible && !card.retiring && card.aspectOverride>0 && !!card.displayRecord
+      && card.displayRecord.id===group.windows[0].id
+  }
+  function resetPreviewProportions(id) {return floatingPreviews.resetPreviewProportions(id)}
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
   readonly property bool previewInteractionOwnsScreen:(!!stash.previewInteractionRequest && stash.previewInteractionRequest.monitor===screen.name) || (!!stash.previewInteractionPendingRequest && stash.previewInteractionPendingRequest.monitor===screen.name)
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen || (floatingPreviewsExpanded && !previewInteractionOwnsScreen)

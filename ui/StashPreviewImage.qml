@@ -76,6 +76,7 @@ Item {
     var wanted=identityKey,serial=requestSerial
     Qt.callLater(function() { if (image.active && image.identityKey===wanted && image.requestSerial===serial && !image.failed) image.checking=true })
   }
+  function restartCapture() {begin();return requestSerial}
   function verified(client,requestKey,serial) {
     if (!active || requestKey!==identityKey || serial!==requestSerial || failed) return
     if (!Capture.matches(record,client)) { unavailable("identity-mismatch"); return }

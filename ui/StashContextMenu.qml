@@ -27,8 +27,11 @@ Ui.BorderSurface {
   readonly property real margin:Math.min(metrics.sm,area.width/2,area.height/2)
   readonly property bool interactionAvailable:stash.snapshot.settings.presentation==="previews"
     && stash.snapshot.settings.floatingPreviewInteraction==="on" && targets.length===1 && !targetBusy
-  readonly property var buttons:[hereButton,originalButton].concat(interactionAvailable ? [interactButton] : []).concat([closeButton,allButton,closeAllButton,settingsButton])
-  readonly property var actionIds:["here","original"].concat(interactionAvailable ? ["interact"] : []).concat(["close","all","closeAll","settings"])
+  readonly property bool proportionsResetAvailable:!targetBusy && typeof host.canResetPreviewProportions==="function" && host.canResetPreviewProportions(stash.contextGroup)
+  readonly property var buttons:[hereButton,originalButton].concat(interactionAvailable ? [interactButton] : [])
+    .concat(proportionsResetAvailable ? [proportionsResetButton] : []).concat([closeButton,allButton,closeAllButton,settingsButton])
+  readonly property var actionIds:["here","original"].concat(interactionAvailable ? ["interact"] : [])
+    .concat(proportionsResetAvailable ? ["reset-preview-proportions"] : []).concat(["close","all","closeAll","settings"])
   property int currentIndex:0
   property int frames:0
   property bool openingRightClickPending:false
@@ -185,6 +188,15 @@ Ui.BorderSurface {
         Layout.fillWidth:true;leftAlign:true;hasCursor:menu.buttons[menu.currentIndex]===interactButton
         onHovered:function(value) {if(value && enabled) menu.currentIndex=menu.buttons.indexOf(interactButton)}
         onClicked:menu.stash.interactContext()
+      }
+      StashButton {
+        id:proportionsResetButton
+        visible:menu.proportionsResetAvailable
+        text:"Reset preview proportions";enabled:menu.proportionsResetAvailable
+        animations:menu.animations;animationSpeed:menu.animationSpeed;foreground:menu.palette.text
+        Layout.fillWidth:true;leftAlign:true;hasCursor:menu.buttons[menu.currentIndex]===proportionsResetButton
+        onHovered:function(value) {if(value && enabled) menu.currentIndex=menu.buttons.indexOf(proportionsResetButton)}
+        onClicked:menu.stash.resetPreviewProportionsContext()
       }
       StashButton {
         id:closeButton

@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Exercise actual free-aspect card gestures and fresh-frame input gating offscreen."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+ROOT=Path(__file__).resolve().parents[1]
+with tempfile.TemporaryDirectory(prefix='stash-aspect-cards-') as directory:
+    folder=Path(directory)
+    shutil.copytree(ROOT/'ui',folder/'ui')
+    for name in ('Commons','Ui'):
+        (folder/name).symlink_to('/usr/share/omarchy/shell/'+name,target_is_directory=True)
+    for name in ('runtime','cache','config'):
+        (folder/name).mkdir(mode=0o700)
+    (folder/'ui/StashPreviewImage.qml').write_text('''import QtQuick
+Item {
+  property var stash
+  property var record
+  property string mode:"still"
+  property bool active:false
+  property string animations:"off"
+  property string animationSpeed:"normal"
+  property size sourceSize:Qt.size(640,420)
+  property bool hasFrame:true
+  property int restarts:0
+  readonly property bool eligible:active
+  readonly property bool hasContent:active && hasFrame
+  function contentRect() {return {x:0,y:0,width:width,height:height}}
+  function refreshFrame() {return true}
+  function restartCapture() {restarts++;hasFrame=false;return restarts}
+  function details() {return {hasContent:hasContent,sourceSize:sourceSize,restarts:restarts}}
+}
+''')
+    (folder/'shell.qml').write_text('''pragma ComponentBehavior: Bound
+import QtQuick
+import QtQuick.Window
+import Quickshell
+import "ui"
+ShellRoot {
+  id:root
+  property int phase:0
+  property real originalHeight:0
+  property int requestsBeforeCorner:0
+  property int requestsBeforeReplacement:0
+  property var first:({id:"first",phase:"stashed",size:[640,420],title:"First",app:"test"})
+  property var second:({id:"second",phase:"stashed",size:[800,600],title:"Second",app:"test"})
+  QtObject {
+    id:fake
+    property var saved:({})
+    property var pendingCloseIds:({})
+    property var states:({})
+    property var requests:[]
+    property int serial:0
+    property bool lifecycleReady:true
+    property var previewInteractionRequest:null
+    property var previewInteractionPendingRequest:null
+    property var previewInteractionStatus:({state:"idle"})
+    property string previewInteractionError:""
+    property bool pointerKnown:false
+    property point pointerPosition:Qt.point(0,0)
+    signal pointerClicked(real x,real y,int button)
+    signal snapshotChanged()
+    function groupClosing(group) {return false}
+    function positionPending(key) {return false}
+    function recordPreviewPosition(m,key,x,y,width,aspect) {
+      var next=Object.assign({},saved);next[key]=aspect>0 ? [x,y,width,aspect] : [x,y,width];saved=next
+    }
+    function restorePreviewWindow(id,screen) {}
+    function openContext(group,screen,point) {}
+    function closeGroup(group,screen) {}
+    function closeWindows(windows,screen) {}
+    function screenMonitor(screen) {return {name:screen,x:0,y:0}}
+    function beginPreviewInteraction() {throw new Error("A blocked preview acquired input")}
+    function endPreviewInteraction() {}
+    function previewGeometryState(id) {return states[id] || null}
+    function requestPreviewAspect(id,aspect,axis,settle) {
+      requests=requests.concat([{id:id,aspect:aspect,axis:axis,settle:settle}])
+      var next=Object.assign({},states);next[id]={epoch:++serial,requestedAspect:aspect,axis:axis,pending:true,ready:false};states=next;return true
+    }
+    function ready(aspect,size) {
+      var next=Object.assign({},states),state=Object.assign({},next.first)
+      state.ready=true;state.pending=false;state.aspect=aspect;state.size=size;state.captureRevision=state.epoch;next.first=state;states=next
+    }
+  }
+  Window {
+    id:window;width:1280;height:800;visible:true
+    StashFloatingPreviews {
+      id:previews;stash:fake
+      config:({presentation:"previews",animations:"off",floatingPlacement:"free",dragMotion:"direct",floatingPreviewSizing:"free",floatingPreviewUpdate:"still",floatingPreviewTitles:"hidden",floatingPreviewFrame:"hidden",floatingPreviewLock:"unlocked",floatingPreviewInteraction:"on",floatingPreviewActivation:"explicit",floatingPreviewControls:"always"})
+      area:({x:0,y:26,width:1280,height:774});coordinateRoot:window.contentItem;screenName:"test";monitor:({x:0,y:0})
+      savedPositions:fake.saved;groups:[{key:"window:first",windows:[root.first]}];active:true
+    }
+  }
+  function one() {return previews.cardList()[0]}
+  function image() {return one().children.find(function(item) {return item.objectName==="floating-preview-source"})}
+  function check(value,message) {if(!value) throw new Error(message)}
+  function near(actual,expected,message) {check(Math.abs(actual-expected)<1.1,message+": "+actual+" vs "+expected)}
+  Timer {
+    interval:45;repeat:true;running:true
+    onTriggered: {
+      try {
+        if(root.phase===0) {
+          check(one().details().resizeRects.length===8,"Free previews did not expose all corners and sides")
+          one().x=200;one().y=180;previews.save(one());originalHeight=one().height
+          one().resizing=true;one().resizePressed("right");one().resizeRequested(140,0,"right")
+          near(one().height,originalHeight,"Horizontal edge changed the orthogonal dimension")
+          check(one().aspectOverride>2 && fake.requests.length===1 && !fake.requests[0].settle,"Edge drag did not request live source reflow")
+          one().resizing=false;one().resizeReleased()
+          check(fake.requests.length===2 && fake.requests[1].settle,"Edge release did not flush final native readiness")
+          check(fake.saved[one().key].length===4,"Custom proportions were not persisted")
+        } else if(root.phase===1) {
+          check(!one().geometryReady && one().canResize && !one().beginNativeInteraction(),"Pending resize acquired input or locked management")
+          fake.ready(2.2,[924,420])
+        } else if(root.phase===2) {
+          near(one().aspectOverride,2.2,"Client-accepted aspect was ignored")
+          near(one().x,200,"Accepted horizontal aspect moved the opposite edge")
+          near(one().height,originalHeight,"Accepted horizontal aspect changed its fixed height")
+          check(image().restarts===1 && !one().geometryReady,"Native readiness enabled input before a fresh capture")
+          image().sourceSize=Qt.size(924,420);image().hasFrame=true
+        } else if(root.phase===3) {
+          check(one().geometryReady && image().restarts===1,"Matching fresh frame did not unlock input exactly once")
+          requestsBeforeCorner=fake.requests.length
+          one().resizing=true;one().resizePressed("bottom-right");one().resizeRequested(40,20,"bottom-right");one().resizing=false;one().resizeReleased()
+          near(one().width/one().height,2.2,"Corner scaling lost custom proportions")
+          check(fake.requests.length===requestsBeforeCorner,"Corner scaling resized the underlying application")
+          previews.groups=[{key:"window:first",windows:[Object.assign({},root.first,{title:"Refreshed metadata"})]}]
+          root.phase=30;return
+        } else if(root.phase===30) {
+          check(one().geometryReady && image().restarts===1,"A same-identity metadata refresh recreated the committed capture")
+          image().sourceSize=Qt.size(640,420)
+          root.phase=4;return
+        } else if(root.phase===4) {
+          near(one().width/one().height,2.2,"Passive source observation overwrote selected proportions")
+          check(!one().geometryReady,"A stale wrong-aspect frame enabled native input")
+          one().resetProportions()
+          check(one().aspectOverride===0 && fake.saved[one().key].length===3,"Reset did not clear custom proportions")
+          check(fake.requests[fake.requests.length-1].settle,"Reset did not settle natural source proportions")
+          fake.ready(641/421,[641,421])
+        } else if(root.phase===5) {
+          check(image().restarts===2,"Reset did not request one fresh capture")
+          image().sourceSize=Qt.size(641,421);image().hasFrame=true
+        } else if(root.phase===6) {
+          check(one().geometryReady && one().aspectOverride===0,"Natural reset did not recover input readiness")
+          check(root.first.size.join(",")==="640,420","Resize changed the original restore geometry")
+          one().resizing=true;one().resizePressed("left");one().resizeRequested(20,0,"left")
+          requestsBeforeReplacement=fake.requests.length
+          previews.groups=[{key:"window:first",windows:[root.second]}]
+        } else if(root.phase===7) {
+          check(!one().resizing && one().record.id==="second","Lead replacement did not cancel the old resize gesture")
+          check(fake.requests.length===requestsBeforeReplacement,"Old resize release mutated the replacement source")
+          fake.ready(3,[1200,400])
+        } else if(root.phase===8) {
+          check(one().record.id==="second" && one().aspectOverride===0,"A stale source result reshaped the replacement cover")
+          console.log("PREVIEW_ASPECT_CARDS_QT_PASS");Qt.quit()
+        }
+        root.phase++
+      } catch(error) {console.error("PREVIEW_ASPECT_CARDS_QT_FAIL: "+error);Qt.exit(1)}
+    }
+  }
+}
+''')
+    env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QPA_PLATFORMTHEME='generic',QT_QUICK_CONTROLS_STYLE='Basic',QSG_RHI_BACKEND='software',XDG_RUNTIME_DIR=str(folder/'runtime'),XDG_CACHE_HOME=str(folder/'cache'),XDG_CONFIG_HOME=str(folder/'config'),DBUS_SESSION_BUS_ADDRESS='unix:path=/dev/null')
+    for key in ('WAYLAND_DISPLAY','DISPLAY','HYPRLAND_INSTANCE_SIGNATURE'):
+        env.pop(key,None)
+    result=subprocess.run(['qs','-p',str(folder/'shell.qml')],env=env,capture_output=True,text=True,timeout=10)
+    output=result.stdout+result.stderr
+    assert result.returncode==0 and 'PREVIEW_ASPECT_CARDS_QT_PASS' in output,output
+    assert not any(message in output for message in ('Binding loop','ReferenceError','TypeError','Cannot assign','Cannot read')),output
+    print('Qt free-aspect previews: side gestures, source reflow, accepted constraints, opposite anchors, fresh capture gate, custom corner scaling and reset passed')

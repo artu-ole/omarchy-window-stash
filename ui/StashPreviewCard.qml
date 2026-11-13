@@ -30,6 +30,11 @@ Item {
   property real maximumHeight:100000
   property real presence:0
   property var sourceSizes:({})
+  property real aspectOverride:0
+  property int appliedGeometryEpoch:0
+  property bool awaitingGeometryCapture:false
+  property real expectedSourceAspect:0
+  readonly property string geometryWatchKey:"geometry:"+String(Date.now())+":"+String(Math.random())
   property var interactionClipRect:null
   property string claimedInteractionKey:""
   property var leasedRecord:null
@@ -38,6 +43,7 @@ Item {
   property var managementArea:({x:0,y:0,width:coordinateRoot.width,height:coordinateRoot.height})
   readonly property var record:group && group.windows.length ? group.windows[0] : null
   readonly property var displayRecord:interactionBusy && leasedRecord ? leasedRecord : record
+  readonly property string geometryIdentityKey:displayRecord ? [displayRecord.id,displayRecord.address,displayRecord.pid,displayRecord.stableId].join(":") : ""
   readonly property var geometryRecord:Geometry.geometryRecord(displayRecord,sourceSizes)
   readonly property string key:"preview:"+(group ? group.key : "")
   readonly property string animations:config.animations || "full"
@@ -47,7 +53,12 @@ Item {
   readonly property var popupColors:Commons.Color.popups
   readonly property var fonts:Style.font
   readonly property var desktop:DesktopEntries.heuristicLookup(displayRecord ? String(displayRecord.app || "") : "")
-  readonly property var dimensions:Geometry.dimensions(width,geometryRecord,{x:0,y:0,width:Math.max(1,width),height:Math.max(1,maximumHeight)},titleVisible,frameVisible)
+  readonly property var dimensions:Geometry.dimensions(width,geometryRecord,{x:0,y:0,width:Math.max(1,width),height:Math.max(1,maximumHeight)},titleVisible,frameVisible,aspectOverride)
+  readonly property var sourceGeometryState:displayRecord && typeof stash.previewGeometryState==="function" ? stash.previewGeometryState(displayRecord.id) : null
+  readonly property bool geometryReady:!resizing && ((!sourceGeometryState && !(displayRecord && displayRecord.previewResized)) || (sourceGeometryState && sourceGeometryState.ready && appliedGeometryEpoch===sourceGeometryState.captureRevision
+    && !awaitingGeometryCapture && frameMatchesGeometry()))
+  readonly property string geometryReason:resizing ? "Finish resizing to interact" : sourceGeometryState && !geometryReady
+    ? sourceGeometryState.reason || "Waiting for a fresh preview frame…" : ""
   readonly property bool interactionEnabled:config.floatingPreviewInteraction==="on" && typeof stash.beginPreviewInteraction==="function"
   readonly property bool lifecycleAvailable:typeof stash.lifecycleReady!=="boolean" || stash.lifecycleReady
   readonly property bool interactionOwned:typeof stash.endPreviewInteraction==="function" && !!stash.previewInteractionRequest
@@ -80,6 +91,8 @@ Item {
   signal scrolled(real delta)
   signal sourceAspectObserved(string recordId,real width,real height)
   signal geometryReleased()
+  signal sourceGeometryAccepted(var state)
+  signal proportionsResetRequested()
   height:dimensions.height
   enabled:interactive && !retiring
   opacity:presence*feedback.visualOpacity
@@ -95,11 +108,19 @@ Item {
   onHeldChanged:if(!held) geometryReleased()
   onResizingChanged:if(!resizing) geometryReleased()
   onMovingChanged:if(!moving) geometryReleased()
-  onRetiringChanged: {if(retiring) endNativeInteraction("retiring");presence=retiring && !interactionBusy ? 0 : 1}
+  onRetiringChanged: {if(retiring) endNativeInteraction("retiring");presence=retiring && !interactionBusy ? 0 : 1;syncGeometryVisibility()}
   onInteractiveChanged:if (!interactive) {cancelInteraction();endNativeInteraction("preview-disabled")}
-  onCaptureAllowedChanged:if(!captureAllowed) endNativeInteraction("capture-suspended")
-  onVisibleChanged:if(!visible) endNativeInteraction("preview-hidden")
-  onRecordChanged:if(interactionOwned && (!record || stash.previewInteractionRequest.id!==record.id)) endNativeInteraction("preview-source-changed")
+  onCaptureAllowedChanged: {if(!captureAllowed) endNativeInteraction("capture-suspended");syncGeometryVisibility();sourceGeometryUpdate.restart()}
+  onVisibleChanged: {if(!visible) endNativeInteraction("preview-hidden");syncGeometryVisibility();sourceGeometryUpdate.restart()}
+  onRecordChanged: {
+    if(interactionOwned && (!record || stash.previewInteractionRequest.id!==record.id)) endNativeInteraction("preview-source-changed")
+  }
+  onGeometryIdentityKeyChanged: {
+    if(resizing || held || moving) cancelInteraction()
+    appliedGeometryEpoch=0;awaitingGeometryCapture=false;expectedSourceAspect=0;syncGeometryVisibility();sourceGeometryUpdate.restart()
+  }
+  onSourceGeometryStateChanged:sourceGeometryUpdate.restart()
+  onDisplayRecordChanged: {syncGeometryVisibility();sourceGeometryUpdate.restart()}
   onGroupChanged:if(interactionEnabled && claimedInteractionKey && (!group || group.windows.length!==1)) endNativeInteraction("preview-group-changed")
   onKeyChanged:if(claimedInteractionKey && claimedInteractionKey!==key) endNativeInteraction("preview-replaced")
   onInteractionRequestedChanged: {geometryReleased();interactionGeometry.restart()}
@@ -162,7 +183,7 @@ Item {
     return excluded
   }
   function beginNativeInteraction() {
-    if(interactionBusy || !interactionEnabled || !lifecycleAvailable || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
+    if(interactionBusy || !interactionEnabled || !lifecycleAvailable || !geometryReady || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
     claimedInteractionKey=key
     leasedRecord=record
     var accepted=stash.beginPreviewInteraction(record,screenName,key,nativeImageRect(),nativeExcludeRects())
@@ -193,16 +214,44 @@ Item {
     var size=thumbnail.sourceSize
     if(Geometry.validSourceSize([size.width,size.height])) sourceAspectObserved(displayRecord.id,size.width,size.height)
   }
+  function frameMatchesGeometry() {
+    if(!sourceGeometryState) return true
+    var size=thumbnail.sourceSize,goal=sourceGeometryState.size,aspect=Number(sourceGeometryState.aspect)
+    if(!thumbnail.hasContent || !thumbnail.eligible || !Number.isFinite(aspect) || aspect<=0 || size.width<=0 || size.height<=0) return false
+    var scale=goal && goal[0]>0 ? Math.max(1,size.width/goal[0]) : 1
+    return Math.abs(size.width-size.height*aspect)<=2*scale
+  }
+  function syncSourceGeometry() {
+    var state=sourceGeometryState
+    if(!state || !state.ready || !state.captureRevision || state.captureRevision===appliedGeometryEpoch || resizing || !visible || !captureAllowed || retiring) return
+    appliedGeometryEpoch=state.captureRevision;expectedSourceAspect=Number(state.aspect);awaitingGeometryCapture=true
+    sourceGeometryAccepted(state)
+    if(typeof thumbnail.restartCapture==="function") thumbnail.restartCapture()
+    else awaitingGeometryCapture=false
+  }
+  function checkGeometryFrame() {
+    if(awaitingGeometryCapture && frameMatchesGeometry()) awaitingGeometryCapture=false
+  }
+  function imageReadyForShape() {return thumbnail.hasContent && thumbnail.eligible}
+  function capturedSourceSize() {return thumbnail.sourceSize}
+  function syncGeometryVisibility() {
+    if(typeof stash.watchPreviewGeometry==="function") stash.watchPreviewGeometry(geometryWatchKey,
+      visible && captureAllowed && !retiring && displayRecord ? displayRecord.id : "")
+  }
+  function resetProportions() {if(canResize) proportionsResetRequested()}
   function details() {
     var rect=rectOf(card),handles=[]
     var corners=["top-left","top-right","bottom-left","bottom-right"]
     for(var i=0;i<resizeRepeater.count;i++) {var handle=resizeRepeater.itemAt(i);if(handle) handles.push({corner:corners[i],rect:rectOf(handle),visible:handle.opacity>0,enabled:handle.enabled})}
+    var edges=["left","right","top","bottom"]
+    for(var j=0;j<edgeRepeater.count;j++) {var edge=edgeRepeater.itemAt(j);if(edge) handles.push({corner:edges[j],rect:rectOf(edge),visible:edge.opacity>0,enabled:edge.enabled})}
     return {key:key,recordId:displayRecord ? displayRecord.id : "",rect:rect,x:rect.x,y:rect.y,width:width,height:height,
       imageRect:rectOf(thumbnail),resizeRect:handles.length ? handles[3].rect : null,resizeRects:handles,
-      titleVisible:titleVisible,frameVisible:frameVisible,hovered:hovered,held:held,moving:moving,resizing:resizing,
+      titleVisible:titleVisible,frameVisible:frameVisible,hovered:hovered,held:held,moving:moving,resizing:resizing,aspectOverride:aspectOverride,geometryReady:geometryReady,geometryReason:geometryReason,
       groupCount:group ? group.windows.length : 0,visible:visible,presence:presence,image:thumbnail.details(),
       locked:config.floatingPreviewLock==="locked",resizable:canResize,closeRect:rectOf(closeButton),closeVisible:closeButton.visible,
       interaction:{enabled:interactionEnabled,requested:interactionRequested,queued:interactionQueued,busy:interactionBusy,active:interactionActive,fullyVisible:interactionFullyVisible,
+        interactEnabled:interactButton.enabled,
         imageRect:nativeImageRect(),excludeRects:nativeExcludeRects(),controlsVisible:interactionBar.visible,
         controlsOutside:controlsOutside,controlsRect:rectOf(interactionBar),
         interactRect:rectOf(interactButton),restoreRect:rectOf(restoreButton),manageRect:rectOf(manageButton)}}
@@ -232,11 +281,13 @@ Item {
     mode:card.live ? "live" : "still"
     active:card.captureAllowed && card.visible && !card.retiring
     animations:card.animations;animationSpeed:card.animationSpeed
-    onSourceSizeChanged: {sourceObservation.restart();interactionGeometry.restart()}
-    onHasContentChanged: {sourceObservation.restart();interactionGeometry.restart()}
+    onSourceSizeChanged: {sourceObservation.restart();interactionGeometry.restart();geometryFrameCheck.restart()}
+    onHasContentChanged: {sourceObservation.restart();interactionGeometry.restart();geometryFrameCheck.restart()}
   }
   Timer {id:sourceObservation;interval:0;onTriggered:card.observeSourceAspect()}
   Timer {id:interactionGeometry;interval:0;onTriggered:card.syncNativeInteraction()}
+  Timer {id:sourceGeometryUpdate;interval:0;onTriggered:card.syncSourceGeometry()}
+  Timer {id:geometryFrameCheck;interval:0;onTriggered:card.checkGeometryFrame()}
   Rectangle {
     x:card.dimensions.inset;y:card.dimensions.inset
     width:Math.max(0,card.width-card.dimensions.inset*2);height:card.dimensions.header
@@ -349,11 +400,12 @@ Item {
       x:2;y:2;size:interactionBar.buttonSize
       iconText:card.interactionBusy ? "■" : "▶"
       tooltipText:card.interactionBusy ? "Stop interacting" : !card.lifecycleAvailable ? "Window Stash support is restarting…"
+        : !card.geometryReady ? card.geometryReason
         : !card.interactionFullyVisible ? "Scroll this preview fully into view to interact"
         : card.stash.previewInteractionError ? "Interact: "+card.stash.previewInteractionError : "Interact with this window"
       foreground:card.interactionBusy ? Commons.Color.accent : card.popupColors.text
       animations:card.animations;animationSpeed:card.animationSpeed
-      enabled:card.interactive && (card.interactionBusy || (card.lifecycleAvailable && card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))
+      enabled:card.interactive && (card.interactionBusy || (card.lifecycleAvailable && card.geometryReady && card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))
       onPressed:activeAtPress=card.interactionBusy
       onCanceled:activeAtPress=false
       onClicked: {
@@ -389,6 +441,33 @@ Item {
   Item {
     id:resizeHandles
     anchors.fill:parent
+    Repeater {
+      id:edgeRepeater
+      model:["left","right","top","bottom"]
+      delegate:MouseArea {
+        id:edgeHandle
+        required property string modelData
+        readonly property bool horizontal:modelData==="left" || modelData==="right"
+        readonly property real cornerInset:Math.min(18,card.width/3,card.height/3)
+        width:horizontal ? Math.min(7,card.width/3) : Math.max(0,card.width-cornerInset*2)
+        height:horizontal ? Math.max(0,card.height-cornerInset*2) : Math.min(7,card.height/3)
+        x:horizontal ? modelData==="left" ? 0 : card.width-width : cornerInset
+        y:horizontal ? cornerInset : modelData==="top" ? 0 : card.height-height
+        z:1
+        enabled:card.canResize && width>0 && height>0
+        opacity:enabled && (card.hovered || pressed) ? 1 : 0
+        hoverEnabled:true;acceptedButtons:Qt.LeftButton
+        cursorShape:horizontal ? Qt.SizeHorCursor : Qt.SizeVerCursor
+        property point start:Qt.point(0,0)
+        onPressed:function(mouse) {start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizing=true;card.resizePressed(modelData)}
+        onPositionChanged:function(mouse) {
+          if(!pressed) return
+          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizeRequested(p.x-start.x,p.y-start.y,modelData)
+        }
+        onReleased: {card.resizing=false;card.resizeReleased()}
+        onCanceled: {card.resizing=false;card.resizeReleased()}
+      }
+    }
     Repeater {
       id:resizeRepeater
       model:["top-left","top-right","bottom-left","bottom-right"]
@@ -426,6 +505,9 @@ Item {
       }
     }
   }
-  Component.onCompleted: {presence=retiring ? 0 : 1;invalidateInteractionGeometry()}
-  Component.onDestruction: {cancelInteraction();endNativeInteraction("card-destroyed")}
+  Component.onCompleted: {presence=retiring ? 0 : 1;invalidateInteractionGeometry();syncGeometryVisibility()}
+  Component.onDestruction: {
+    if(typeof stash.watchPreviewGeometry==="function") stash.watchPreviewGeometry(geometryWatchKey,"")
+    cancelInteraction();endNativeInteraction("card-destroyed")
+  }
 }

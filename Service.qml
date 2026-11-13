@@ -89,12 +89,18 @@ Item {
   property var previewInteractionStatus:({state:"idle"})
   property string previewInteractionError:""
   property int previewInteractionSerial:0
+  property var previewGeometryStates:({})
+  property var previewGeometryDrafts:({})
+  property var previewGeometryWatchers:({})
+  property int previewGeometrySerial:0
+  property int runningGeometryEpoch:0
+  property bool runningGeometryReplied:false
   readonly property string previewInteractionStamp:JSON.stringify(PreviewInteraction.wire(previewInteractionRequest))
   readonly property InteractionHost previewInteractionWorker:interactionKeeper.item as InteractionHost
   onPreviewInteractionStampChanged:if(previewInteractionWorker) previewInteractionWorker.send()
   onCaptureStateChanged:validatePreviewInteraction()
   onCaptureClockChanged:validatePreviewInteraction()
-  onSnapshotChanged:validatePreviewInteraction()
+  onSnapshotChanged: {validatePreviewInteraction();prunePreviewGeometry()}
   property string contextScreen:""
   property int contextWorkspace:1
   property point contextPoint:Qt.point(0,0)
@@ -296,18 +302,101 @@ Item {
       }
   }
   function enqueue(args) {
-    if(previewInteractionRequest && ["restore","restore-last","restore-oldest","restore-all","minimize","activate","close","close-all","reset-settings"].indexOf(args[0])>=0)
+    if(previewInteractionRequest && ["restore","restore-last","restore-oldest","restore-all","minimize","activate","close","close-all","reset-settings","preview-aspect"].indexOf(args[0])>=0)
       endPreviewInteraction("window-action")
     var next = queue.slice()
     next.push(args)
     queue = next
     pump()
   }
+  function previewGeometryCommand(args) {return args && ["preview-aspect","preview-geometry"].indexOf(args[0])>=0}
+  function previewGeometryState(id) {return previewGeometryStates[id] || null}
+  function previewGeometryVisible(id) {return Object.keys(previewGeometryWatchers).some(function(key) {return root.previewGeometryWatchers[key]===id})}
+  function watchPreviewGeometry(key,id) {
+    var next=Object.assign({},previewGeometryWatchers)
+    if(id) next[key]=id;else delete next[key]
+    previewGeometryWatchers=next
+    queue=queue.filter(function(args) {return args[0]!=="preview-geometry" || root.previewGeometryVisible(args[1])})
+  }
+  function verifyPreviewGeometry(id) {
+    if(previewGeometryStates[id] || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"})) return
+    var states=Object.assign({},previewGeometryStates)
+    states[id]={id:id,epoch:++previewGeometrySerial,ready:false,pending:true,nativeRequired:false,reason:"Checking preview proportions…",captureRevision:0}
+    previewGeometryStates=states
+    enqueue(["preview-geometry",id])
+  }
+  function retryPreviewGeometry() {
+    Object.keys(previewGeometryStates).forEach(function(id) {
+      var state=root.previewGeometryStates[id]
+      if(!state.nativeRequired || !root.previewGeometryVisible(id)) return
+      if(Number.isFinite(state.requestedAspect)) root.requestPreviewAspect(id,state.requestedAspect,state.axis || "width",true)
+      else {
+        var next=Object.assign({},root.previewGeometryStates);delete next[id];root.previewGeometryStates=next
+        root.verifyPreviewGeometry(id)
+      }
+    })
+  }
+  function prunePreviewGeometry() {
+    var states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts),changed=false
+    Object.keys(states).forEach(function(id) {
+      if(!root.snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"})) {
+        delete states[id];delete drafts[id];changed=true
+      }
+    })
+    if(changed) {previewGeometryStates=states;previewGeometryDrafts=drafts}
+  }
+  function requestPreviewAspect(id,aspect,axis,settle) {
+    aspect=Number(aspect)
+    if(typeof id!=="string" || !Number.isFinite(aspect) || aspect<.02 || aspect>50 || ["width","height"].indexOf(axis)<0
+        || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"}) || pendingCloseIds[id]) return false
+    if(previewInteractionRequest) endPreviewInteraction("preview-resize")
+    var epoch=++previewGeometrySerial,states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts)
+    states[id]={epoch:epoch,requestedAspect:aspect,axis:axis,ready:false,pending:true,nativeRequired:false,reason:"Updating preview proportions…",captureRevision:0}
+    var args=["preview-aspect",id,String(aspect),"--axis",axis]
+    if(settle) args.push("--settle")
+    drafts[id]=args
+    queue=queue.filter(function(args) {return !root.previewGeometryCommand(args) || args[1]!==id})
+    previewGeometryStates=states;previewGeometryDrafts=drafts
+    if(settle) flushPreviewGeometry();else previewGeometryFlush.restart()
+    return true
+  }
+  function flushPreviewGeometry() {
+    var drafts=previewGeometryDrafts;previewGeometryDrafts={}
+    Object.keys(drafts).forEach(function(id) {if(root.previewGeometryStates[id]) root.enqueue(drafts[id])})
+  }
+  function pollPreviewGeometry() {
+    Object.keys(previewGeometryStates).forEach(function(id) {
+      var state=root.previewGeometryStates[id]
+      if(!state.pending || state.nativeRequired || !root.previewGeometryVisible(id) || root.previewGeometryDrafts[id]
+          || (worker.running && root.previewGeometryCommand(root.runningArgs) && root.runningArgs[1]===id)
+          || root.queue.some(function(args) {return root.previewGeometryCommand(args) && args[1]===id})) return
+      root.enqueue(["preview-geometry",id])
+    })
+  }
+  function previewGeometryResult(result,args,epoch) {
+    var id=args[1],state=previewGeometryStates[id]
+    if(!state || state.epoch!==epoch) return
+    runningGeometryReplied=true
+    var next=Object.assign({},state);next.id=id
+    if(!result || result.ok===false || result.id!==id || typeof result.ready!=="boolean") {
+      next.pending=false;next.ready=false;next.reason=result && result.error ? String(result.error) : "Could not verify preview proportions"
+    } else {
+      next.aspect=Number(result.aspect);next.size=result.size;next.ready=result.ready
+      next.nativeRequired=result.nativeRequired===true;next.pending=!next.ready && !next.nativeRequired
+      next.reason=result.reason ? String(result.reason) : next.ready ? "" : "Waiting for the application to resize…"
+      if(next.ready) next.captureRevision=epoch
+    }
+    var states=Object.assign({},previewGeometryStates);states[id]=next;previewGeometryStates=states
+  }
+  Timer {id:previewGeometryFlush;interval:60;onTriggered:root.flushPreviewGeometry()}
+  Timer {interval:150;repeat:true;running:Object.keys(root.previewGeometryStates).some(function(id) {return root.previewGeometryStates[id].pending && root.previewGeometryVisible(id)})
+    onTriggered:root.pollPreviewGeometry()}
   function previewInteractionMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionRequest,id,monitor,key)}
   function previewInteractionPendingMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionPendingRequest,id,monitor,key)}
   function validInteractionTarget(request) {
     return !!request && lifecycleReady && !bridgeReloadBusy && PreviewInteraction.enabled(snapshot.settings) && captureAllowedFor(request.monitor)
-      && !pendingCloseIds[request.id] && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed"})
+      && !pendingCloseIds[request.id] && (!previewGeometryStates[request.id] || previewGeometryStates[request.id].ready)
+      && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed"})
       && snapshot.monitors.some(function(monitor) {return monitor.name===request.monitor})
   }
   function activatePreviewInteraction(request) {
@@ -475,6 +564,8 @@ Item {
     var args = next.shift()
     queue = next
     runningArgs=args; closeNotified=false
+    runningGeometryEpoch=previewGeometryCommand(args) && previewGeometryStates[args[1]] ? previewGeometryStates[args[1]].epoch : 0
+    runningGeometryReplied=false
     worker.command = controllerCommand.concat(args)
     worker.running = true
   }
@@ -559,6 +650,7 @@ Item {
       bridgeSupportError="";bridgeUpdateNotified=""
       previewCompatibilityError="";previewInteractionError=""
       previewCompatibilityStatus={state:"idle",ids:[]}
+      if(typeof root.retryPreviewGeometry==="function") Qt.callLater(root.retryPreviewGeometry)
     }
     bridgeReloadBusy=false;bridgeReloadStage=""
     Qt.callLater(root.checkBridgeSupport)
@@ -690,6 +782,14 @@ Item {
     var surface=surfaces.find(function(item) {return item.screen.name===name})
     if(surface) Qt.callLater(function() {surface.activatePreviewInteraction(windows[0].id)})
   }
+  function resetPreviewProportionsContext() {
+    var group=contextGroup,name=contextScreen
+    var surface=surfaces.find(function(item) {return item.screen.name===name})
+    if(!surface || !surface.canResetPreviewProportions(group)) return
+    var id=group.windows[0].id
+    closeContext()
+    Qt.callLater(function() {surface.resetPreviewProportions(id)})
+  }
   function restoreContext(destination) {
     var windows=contextWindows(),name=contextScreen,workspace=contextWorkspace,group=contextGroup
     closeContext()
@@ -708,6 +808,8 @@ Item {
     Quickshell.execDetached(["notify-send","--app-name=Window Stash","Could not close every stashed window",message])
   }
   function finishWorker(code) {
+    if(previewGeometryCommand(runningArgs) && !runningGeometryReplied)
+      previewGeometryResult({ok:false,error:"Could not finish resizing this preview"},runningArgs,runningGeometryEpoch)
     if (runningArgs[0]==="close") {
       var pending=Object.assign({},pendingCloseIds)
       for (var i=1;i<runningArgs.length && !String(runningArgs[i]).startsWith("--");i++) delete pending[runningArgs[i]]
@@ -858,8 +960,10 @@ Item {
     var owner=key.indexOf("dock:static:")===0 ? Model.staticDockMonitorKey(monitor) : Model.monitorKey(monitor)
     enqueue(["position", owner, key, String(Math.round(x)), String(Math.round(y))])
   }
-  function recordPreviewPosition(monitor,key,x,y,width) {
-    enqueue(["preview-position",Model.staticDockMonitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))])
+  function recordPreviewPosition(monitor,key,x,y,width,aspect) {
+    var args=["preview-position",Model.staticDockMonitorKey(monitor),key,String(Math.round(x)),String(Math.round(y)),String(Math.round(width))]
+    if(Number.isFinite(aspect) && aspect>=.02 && aspect<=50) args.push("--aspect",String(aspect))
+    enqueue(args)
   }
   function allWindows(name) { openDialog("picker", name, snapshot.windows, null) }
   function focusedScreen() {
@@ -898,6 +1002,7 @@ Item {
       onStreamFinished: {
         try {
           var result = JSON.parse(text)
+          if(root.previewGeometryCommand(root.runningArgs)) {root.previewGeometryResult(result,root.runningArgs,root.runningGeometryEpoch);return}
           if (result.windows) { root.snapshot = result; Qt.callLater(root.applyDeferredSettings) }
           if (result.action==="close" && result.restored>0) { root.closeContext(); root.closeDialog() }
           if (result.ok === false) {
@@ -932,6 +1037,9 @@ Item {
           }
           if (root.runningArgs[0]==="close") root.pendingRefresh=true
         } catch (error) {
+          if(root.previewGeometryCommand(root.runningArgs)) {
+            root.previewGeometryResult({ok:false,error:"Could not read preview geometry"},root.runningArgs,root.runningGeometryEpoch);return
+          }
           root.lastError = "Could not read controller response: " + String(error)
           if (root.runningArgs[0]==="close") root.notifyCloseError(root.lastError)
         }
@@ -988,6 +1096,7 @@ Item {
           deferred:root.bridgeUpdateDeferred,checking:bridgeProbe.running},
         previewInteraction:{request:root.previewInteractionRequest,pendingRequest:root.previewInteractionPendingRequest,stopping:root.previewInteractionStopping,
           status:root.previewInteractionStatus,error:root.previewInteractionError,running:!!root.previewInteractionWorker && root.previewInteractionWorker.running},
+        previewGeometry:root.previewGeometryStates,
         captureVisibility:{known:root.captureState.known,checkedAt:root.captureState.checkedAt,error:root.captureState.error,
           polling:root.capturePollNeeded,allowed:root.captureAllowed,
           screens:root.snapshot.monitors.map(function(m) { return {name:m.name,allowed:root.captureAllowedFor(m.name)} })},

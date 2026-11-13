@@ -157,11 +157,61 @@ Item {
     if(!card || card.retiring || !active || !captureAllowed || !monitor) return
     var prior=drafts[card.key] || savedPositions[card.key],savedWidth=config.floatingPreviewSizing==="preset" ? prior && prior.length>=3 ? prior[2] : 280 : card.width
     var point=[Math.round(card.x),Math.round(card.y),Math.round(savedWidth)]
+    if(card.aspectOverride>0) point.push(card.aspectOverride)
     if(prior && JSON.stringify(prior)===JSON.stringify(point)) return
     var next=Object.assign({},drafts)
     next[card.key]=point
     drafts=next
-    stash.recordPreviewPosition(monitor,card.key,point[0],point[1],point[2])
+    stash.recordPreviewPosition(monitor,card.key,point[0],point[1],point[2],point.length>3 ? point[3] : 0)
+  }
+  function requestShape(card,aspect,axis,settle) {
+    if(!card || !card.displayRecord || card.expandedTile || typeof stash.requestPreviewAspect!=="function") return false
+    return stash.requestPreviewAspect(card.record.id,aspect,axis,settle)
+  }
+  function applySavedShape(card) {
+    if(!card || !card.visible || card.retiring || card.resizing || card.interactionBusy || card.expandedTile
+        || !card.record || !card.imageReadyForShape()) return
+    var size=card.capturedSourceSize(),state=typeof stash.previewGeometryState==="function" ? stash.previewGeometryState(card.record.id) : null
+    if(state && state.ready && Math.abs(Number(state.aspect)-card.aspectOverride)<=Math.max(Number(state.aspect),card.aspectOverride)*.0001 && card.frameMatchesGeometry()) return
+    if(card.aspectOverride>0 && !Geometry.sameAspect([card.aspectOverride,1],[size.width,size.height])) {
+      if(state && Math.abs(Number(state.requestedAspect)-card.aspectOverride)<=card.aspectOverride*.0001) return
+      requestShape(card,card.aspectOverride,"width",true);return
+    }
+    if(card.record.previewResized && !state && typeof stash.verifyPreviewGeometry==="function") stash.verifyPreviewGeometry(card.record.id)
+  }
+  function acceptShape(card,state) {
+    if(!card || !card.record || !state || state.id && state.id!==card.record.id || !Geometry.customAspect(state.aspect)) return
+    if(card.resizing) return
+    var anchor=card.shapeAnchor,ratio=Number(state.aspect),natural=Geometry.aspect(card.record)
+    var verifying=!Number.isFinite(state.requestedAspect) && !anchor
+    var naturalTolerance=state.size && state.size[1]>0 ? 2/state.size[1] : natural*.0001
+    var custom=(verifying && card.aspectOverride<=0) || (anchor && anchor.reset && Math.abs(ratio-natural)<=naturalTolerance) ? 0 : ratio
+    card.aspectOverride=custom
+    if(anchor && anchor.recordId===card.record.id) {
+      var c=Geometry.chrome(card.titleVisible,card.frameVisible)
+      var wanted=anchor.axis==="width" ? Math.max(1,anchor.height-c.header-c.inset*2)*ratio+c.inset*2 : anchor.width
+      var d=Geometry.dimensions(wanted,card.geometryRecord,previews.layoutArea,card.titleVisible,card.frameVisible,ratio)
+      card.width=d.width
+      card.x=anchor.edge==="left" ? anchor.x+anchor.width-d.width : anchor.x
+      card.y=anchor.edge==="top" ? anchor.y+anchor.height-d.height : anchor.y
+      var p=Geometry.position({x:card.x,y:card.y,width:card.width,height:card.height},previews.layoutArea)
+      card.x=p.x;card.y=p.y
+      card.shapeAnchor=null
+    }
+    world.remove(card.key);world.add(card.key,card.x,card.y,card.width,card.height);card.registered=true
+    world.freeze(card.key,blocked || config.floatingPreviewLock==="locked")
+    save(card);scheduleLayout()
+  }
+  function resetShape(card) {
+    if(!card || !card.canResize || !card.record || card.expandedTile) return
+    card.shapeAnchor={x:card.x,y:card.y,width:card.width,height:card.height,axis:"height",edge:"bottom",recordId:card.record.id,reset:true}
+    card.aspectOverride=0
+    save(card);requestShape(card,Geometry.aspect(card.record),"height",true);scheduleLayout()
+  }
+  function resetPreviewProportions(id) {
+    var card=cardList().find(function(item) {return item.visible && !item.retiring && item.displayRecord && item.displayRecord.id===id})
+    if(!card || !card.canResize) return false
+    resetShape(card);return true
   }
   function clearExpandedGeometry() {expandedObservedSizes={};expandedPendingSizes={}}
   function closeExpansion() {pendingInteractionId="";expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
@@ -202,6 +252,7 @@ Item {
       if(card.interactionBusy) {world.freeze(card.key,true);card.syncNativeInteraction();return}
       if(body && body.moving) return
       var changed=!body || Math.abs(body.width-target.width)>.05 || Math.abs(body.height-target.height)>.05
+      card.aspectOverride=target.aspectOverride || 0
       card.width=target.width
       if(!card.registered) {
         card.x=target.x;card.y=target.y
@@ -215,6 +266,7 @@ Item {
         }
       }
       world.freeze(card.key,blocked || config.floatingPreviewLock==="locked" || expanded)
+      applySavedShape(card)
     })
     scheduleRegions()
   }
@@ -303,6 +355,7 @@ Item {
       readonly property var target:previews.layout.cards[key] || null
       property bool registered:false
       property var resizeOrigin:null
+      property var shapeAnchor:null
       stash:previews.stash;config:previews.config;group:collection.dataByKey[groupKey] || ({key:groupKey,windows:[]})
       sourceSizes:previews.observedSizes
       coordinateRoot:previews.coordinateRoot;screenName:previews.screenName
@@ -312,8 +365,11 @@ Item {
       visible:!!target && target.visible && previews.captureAllowed
       maximumHeight:previews.layoutArea.height
       width:280
+      aspectOverride:target ? target.aspectOverride || 0 : 0
       onInputChanged:previews.scheduleRegions()
-      onSourceAspectObserved:function(recordId,width,height) {previews.observeSource(recordId,width,height)}
+      onSourceAspectObserved:function(recordId,width,height) {previews.observeSource(recordId,width,height);previews.applySavedShape(card)}
+      onSourceGeometryAccepted:function(state) {previews.acceptShape(card,state)}
+      onProportionsResetRequested:previews.resetShape(card)
       onGeometryReleased:sourceGeometryDelay.restart()
       onMovePressed: {previews.closeExpansion();world.press(key)}
       onMoveRequested:function(x,y) {world.drag(key,x,y)}
@@ -321,19 +377,28 @@ Item {
       onMoveCanceled:world.cancel(key,false)
       onResizePressed:function(corner) {
         previews.closeExpansion();world.remove(key);registered=false
-        resizeOrigin={x:x,y:y,width:width,height:height}
+        resizeOrigin={x:x,y:y,width:width,height:height,aspect:dimensions.aspect,custom:aspectOverride,edge:corner,
+          axis:corner==="left" || corner==="right" ? "width" : "height",recordId:record ? record.id : ""}
+        shapeAnchor=Object.assign({},resizeOrigin)
       }
       onResizeRequested:function(dx,dy,corner) {
         if(!resizeOrigin) return
-        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible)
+        var side=["left","right","top","bottom"].indexOf(corner)>=0
+        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible,resizeOrigin.aspect)
+        aspectOverride=side ? rect.aspect : resizeOrigin.custom
         width=rect.width;x=rect.x;y=rect.y
+        if(side) previews.requestShape(card,rect.aspect,resizeOrigin.axis,false)
       }
       onResizeReleased: {
         if(!resizeOrigin) return
+        var origin=resizeOrigin,side=["left","right","top","bottom"].indexOf(origin.edge)>=0
         resizeOrigin=null
+        if(!record || origin.recordId!==record.id) {shapeAnchor=null;previews.scheduleLayout();return}
         world.add(key,x,y,width,height);registered=true
         world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked")
         previews.save(card)
+        if(side) previews.requestShape(card,aspectOverride,origin.axis,true)
+        else shapeAnchor=null
         previews.scheduleLayout()
       }
       onActivated:previews.activate(card)

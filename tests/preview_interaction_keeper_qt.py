@@ -44,6 +44,7 @@ ShellRoot {
   property var record:({id:"first",phase:"stashed",size:[640,420]})
   property var snapshot:({windows:[record],monitors:[{name:"test"}],settings:{presentation:"previews",floatingPreviewInteraction:"on",floatingPreviewActivation:"explicit",floatingPreviewKeyboard:"mouse",floatingPreviewInteractionFps:"60",floatingPreviewControls:"hover",floatingPreviewUpdate:"still",livePreviewCompatibility:"standard"}})
   function captureAllowedFor(monitor) {return readable && monitor==="test"}
+  function prunePreviewGeometry() {}
   function closeContext() {}
   function closeDialog() {}
   function pump() {check(!previewInteractionStopping,"Window actions resumed before native release was acknowledged")}
