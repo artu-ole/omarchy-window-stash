@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Own one verified preview input lease; compositor hooks route actual events."""
+import contextlib
 import json
 import math
 import os
@@ -17,7 +18,7 @@ import shortcuts
 MAX_REQUEST = 8192
 MAX_EXCLUDES = 16
 RENEW_SECONDS = .5
-RESTART_REQUIRED = 'Restart Hyprland to load interactive Window Stash previews'
+RESTART_REQUIRED = 'Reload preview support in Window Stash Settings to use interactive previews'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
 RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
@@ -142,6 +143,10 @@ class InteractionBridge(PreviewBridge):
         self.hypr.eval(self.interaction_probe)
 
     def interaction_update(self, owner, source, target):
+        with self.operation():
+            return self._interaction_update(owner, source, target)
+
+    def _interaction_update(self, owner, source, target):
         identity = '{'+','.join(key+'='+lua(value) for key, value in source.items())+'}'
         excluded = '{'+','.join(lua_rectangle(rect) for rect in target['excludeRects'])+'}'
         exit_binding = target.get('exitShortcut')
@@ -213,6 +218,10 @@ class InteractionKeeper:
         return sources[0], parameters
 
     def _restore_handoff(self, target):
+        with self.bridge.operation() if isinstance(self.bridge, PreviewBridge) else contextlib.nullcontext():
+            return self._guarded_restore_handoff(target)
+
+    def _guarded_restore_handoff(self, target):
         # Native detection is a request, not authority to mutate a client. Hold
         # the ledger lock and recheck the exact initially accepted identity,
         # ownership, phase, monitor and visibility policy before restoration.

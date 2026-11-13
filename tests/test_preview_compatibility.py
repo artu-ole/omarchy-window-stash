@@ -18,6 +18,11 @@ from stash import PLUGIN, SPECIAL, Stash, atomic_json
 IDENT = 'a'*32
 OTHER = 'b'*32
 VERSION = (Path(__file__).resolve().parents[1]/'native/version.txt').read_text().strip()
+FINGERPRINT = 'f'*64
+
+
+def built_path(arguments, commit):
+    return str(Path(arguments[arguments.index('--cache-dir')+1])/commit/(VERSION+'-'+FINGERPRINT)/'window-stash-preview.so')
 
 
 def record(ident=IDENT, address='0x123'):
@@ -332,9 +337,9 @@ class PreviewCompatibilityTests(unittest.TestCase):
             def call(self, *arguments):
                 events.append(arguments)
         def build(arguments, **_kwargs):
-            path = arguments[arguments.index('--output')+1]
+            path = built_path(arguments, commit)
             self.assertEqual(arguments[arguments.index('--expected-hash')+1], commit)
-            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash=commit, protocol=1, version=VERSION)), '')
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash=commit, protocol=1, version=VERSION, fingerprint=FINGERPRINT)), '')
         progress = []
         with patch.dict(os.environ, {'XDG_CACHE_HOME': str(Path(self.temporary.name)/'cache')}), \
                 patch('preview.subprocess.run', side_effect=build), patch('preview.time.sleep'):
@@ -343,7 +348,7 @@ class PreviewCompatibilityTests(unittest.TestCase):
         self.assertTrue(bridge.ready)
         self.assertEqual(events[0], ('read', 'version'))
         self.assertEqual(events[1][:2], ('plugin', 'load'))
-        self.assertTrue(events[1][2].endswith('/'+commit+'/window-stash-preview.so'))
+        self.assertTrue(events[1][2].endswith('/'+commit+'/'+VERSION+'-'+FINGERPRINT+'/window-stash-preview.so'))
         self.assertEqual([item['state'] for item in progress], ['building', 'loading'])
 
     def test_failed_or_mismatching_build_never_loads_native_code(self):
@@ -368,8 +373,8 @@ class PreviewCompatibilityTests(unittest.TestCase):
         ipc = Installing()
         ipc.fail = self.fail
         def build(arguments, **_kwargs):
-            path = arguments[arguments.index('--output')+1]
-            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION)), '')
+            path = built_path(arguments, 'c'*40)
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION, fingerprint=FINGERPRINT)), '')
         with patch.dict(os.environ, {'XDG_CACHE_HOME': str(Path(self.temporary.name)/'cache')}), \
                 patch('preview.subprocess.run', side_effect=build), self.assertRaises(PreviewStopped):
             PreviewBridge(ipc, cancelled=unittest.mock.Mock(side_effect=[False, True])).ensure()
@@ -397,8 +402,8 @@ class PreviewCompatibilityTests(unittest.TestCase):
         bridge.update('d'*32, records)
         ipc.available = False
         def build(arguments, **_kwargs):
-            path = arguments[arguments.index('--output')+1]
-            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION)), '')
+            path = built_path(arguments, 'c'*40)
+            return subprocess.CompletedProcess(arguments, 0, json.dumps(dict(path=path, hyprlandHash='c'*40, protocol=1, version=VERSION, fingerprint=FINGERPRINT)), '')
         with patch.dict(os.environ, {'XDG_CACHE_HOME': str(Path(self.temporary.name)/'cache')}), \
                 patch('preview.subprocess.run', side_effect=build) as compile_bridge:
             bridge.update('d'*32, records)
@@ -427,15 +432,15 @@ class PreviewCompatibilityTests(unittest.TestCase):
             bridge.update('d'*32, [])
         reload_bridge.assert_not_called()
 
-    def test_old_loaded_version_requires_restart_instead_of_loading_over_it(self):
+    def test_old_loaded_version_requires_explicit_reload_instead_of_automatic_replacement(self):
         class OldModule:
             def eval(self, _script): raise RuntimeError(RESTART_REQUIRED)
             def read(self, _subject): raise AssertionError('An incompatible loaded module must not be rebuilt or replaced')
         bridge = PreviewBridge(OldModule())
-        with patch('preview.subprocess.run') as build, self.assertRaisesRegex(RuntimeError, 'Restart Hyprland'):
+        with patch('preview.subprocess.run') as build, self.assertRaisesRegex(RuntimeError, 'Reload preview support'):
             bridge.ensure()
         build.assert_not_called()
-        with patch.object(bridge, 'ensure') as reload_bridge, self.assertRaisesRegex(RuntimeError, 'Restart Hyprland'):
+        with patch.object(bridge, 'ensure') as reload_bridge, self.assertRaisesRegex(RuntimeError, 'Reload preview support'):
             bridge.update('d'*32, [])
         reload_bridge.assert_not_called()
 

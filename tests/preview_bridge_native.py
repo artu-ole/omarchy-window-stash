@@ -120,12 +120,10 @@ def main():
             configure('hoverPreview', 'off')
             existed = available()
             if not existed:
-                commit = h.read('version')['commit']
-                loaded_path = Path(os.environ.get('XDG_CACHE_HOME', Path.home()/'.cache')) \
-                    / 'omarchy/window-stash/preview-bridge' / commit / 'window-stash-preview.so'
                 # ensure builds against matching headers and loads only the
                 # cache path it produced; the shared desktop guard is active.
                 bridge.ensure()
+                loaded_path = bridge.binary_path
                 loaded_by_test = True
             else:
                 bridge.ensure()
