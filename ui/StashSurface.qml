@@ -593,6 +593,7 @@ PanelWindow {
   }
   onDialogOpenChanged: {
     dialogFrames=0
+    refreshInputMask()
     if (dialogOpen) floatingDock.close()
     else {
       var rows=settingItems()
