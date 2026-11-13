@@ -182,8 +182,22 @@ Item {
     if(interactionBar.visible && controlsOutside) excluded.push(globalRectOf(interactionBar))
     return excluded
   }
+  function interactionReady(allowGroup) {
+    return !interactionBusy && interactionEnabled && lifecycleAvailable && geometryReady && !!record
+      && (allowGroup || group.windows.length===1) && interactive && visible && captureAllowed && !retiring
+      && !held && !moving && !resizing && visibleForInteraction(interactionGeometryRevision) && thumbnail.hasContent && thumbnail.eligible
+  }
+  function shortcutHit(x,y) {
+    if(!Geometry.contains(nativeImageRect(),x,y)) return false
+    return !nativeExcludeRects().some(function(rect) {return Geometry.contains(rect,x,y)})
+  }
+  function shortcutIdentity() {
+    return JSON.stringify({key:key,tile:expandedTile,windows:group.windows.map(function(window) {
+      return [window.id,window.address,window.pid,window.stableId,window.tag,window.phase]
+    })})
+  }
   function beginNativeInteraction() {
-    if(interactionBusy || !interactionEnabled || !lifecycleAvailable || !geometryReady || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
+    if(!interactionReady(false)) return false
     claimedInteractionKey=key
     leasedRecord=record
     var accepted=stash.beginPreviewInteraction(record,screenName,key,nativeImageRect(),nativeExcludeRects())
@@ -413,7 +427,7 @@ Item {
       tooltipText:card.interactionBusy ? "Stop interacting" : !card.lifecycleAvailable ? "Window Stash support is restarting…"
         : !card.geometryReady ? card.geometryReason
         : !card.interactionFullyVisible ? "Scroll this preview fully into view to interact"
-        : card.stash.previewInteractionError ? "Interact: "+card.stash.previewInteractionError : "Interact with this window"
+        : card.stash.previewInteractionError ? "Interact: "+card.stash.previewInteractionError : "Interact with this window (Super+left click)"
       foreground:card.interactionBusy ? Commons.Color.accent : card.popupColors.text
       animations:card.animations;animationSpeed:card.animationSpeed
       enabled:card.interactive && (card.interactionBusy || (card.lifecycleAvailable && card.geometryReady && card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))

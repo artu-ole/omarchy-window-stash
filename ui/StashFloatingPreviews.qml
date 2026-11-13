@@ -29,6 +29,7 @@ Item {
   property bool keyboardSelection:false
   property string pendingInteractionId:""
   property int interactionAttempts:0
+  property var activationShortcut:null
   readonly property bool interacting:typeof stash.endPreviewInteraction==="function" && (!!stash.previewInteractionRequest || !!stash.previewInteractionPendingRequest)
   property int regionRevision:0
   property var inputRegions:[]
@@ -53,6 +54,9 @@ Item {
   readonly property bool present:collection.count>0
   readonly property bool held:cardList().some(function(card) {return card.held || card.resizing})
   readonly property bool expanded:!!expandedGroup && expandedRecords.length>1
+  readonly property string shortcutViewStamp:JSON.stringify([active,captureAllowed,blocked,layout.page,expandedKey,
+    config.presentation,config.scope,config.grouping,config.floatingPreviewInteraction,screenName,monitor ? [monitor.x,monitor.y] : null])
+  onShortcutViewStampChanged:activationShortcut=null
   signal inputChanged()
   width:coordinateRoot.width;height:coordinateRoot.height
   visible:present && captureAllowed
@@ -67,6 +71,43 @@ Item {
   function tileList() {var result=[];for(var i=0;i<tiles.count;i++) {var tile=tiles.itemAt(i);if(tile) result.push(tile)}return result}
   function cardForKey(key) {return cardList().find(function(card) {return card.key===key}) || null}
   function updateNativeInteractions() {cardList().concat(tileList()).forEach(function(card) {if(card.interactionBusy) card.syncNativeInteraction()})}
+  function shortcutAvailable() {return active && visible && captureAllowed && !blocked && !interacting && config.floatingPreviewInteraction==="on"}
+  function shortcutCardAt(x,y) {
+    if(!shortcutAvailable()) return null
+    var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
+      .sort(function(first,second) {return first.z-second.z})
+    if(expanded) candidates=candidates.concat(tileList().filter(function(tile) {return tile.inViewport}))
+    // Resolve the frontmost image before checking readiness. An unavailable
+    // image must not allow a shortcut to reach a different window behind it.
+    for(var index=candidates.length-1;index>=0;index--) {
+      var card=candidates[index]
+      if(card.shortcutHit(x,y)) return card
+      if(card.nativeExcludeRects().some(function(rect) {return Geometry.contains(rect,x,y)})) return null
+    }
+    return null
+  }
+  function handleActivationShortcut(serial,phase,x,y) {
+    if(phase==="cancel") {activationShortcut=null;return false}
+    if(phase==="press") {
+      activationShortcut=null
+      var candidate=shortcutCardAt(x,y)
+      if(!candidate || !candidate.interactionReady(true)) return false
+      activationShortcut={serial:serial,key:candidate.key,tile:candidate.expandedTile,identity:candidate.shortcutIdentity(),
+        revision:candidate.interactionGeometryRevision,rect:JSON.stringify(candidate.nativeImageRect())}
+      return true
+    }
+    var pending=activationShortcut;activationShortcut=null
+    if(phase!=="release" || !pending || pending.serial!==serial || !shortcutAvailable()) return false
+    var target=shortcutCardAt(x,y)
+    if(!target || target.key!==pending.key || target.expandedTile!==pending.tile || target.shortcutIdentity()!==pending.identity
+        || target.interactionGeometryRevision!==pending.revision || JSON.stringify(target.nativeImageRect())!==pending.rect
+        || !target.interactionReady(true)) return false
+    if(target.group.windows.length>1) {
+      if(expandedKey!==target.group.key) activate(target)
+      return true
+    }
+    return target.beginNativeInteraction()
+  }
   function activateInteraction(id) {
     if(config.floatingPreviewInteraction!=="on" || !active || blocked) return false
     var cover=cardList().find(function(card) {return !card.retiring && card.group.windows.some(function(window) {return window.id===id})})
@@ -214,7 +255,7 @@ Item {
     resetShape(card);return true
   }
   function clearExpandedGeometry() {expandedObservedSizes={};expandedPendingSizes={}}
-  function closeExpansion() {pendingInteractionId="";expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
+  function closeExpansion() {activationShortcut=null;pendingInteractionId="";expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
   function selectTile(delta) {
     if(!expandedRecords.length) return
     selectedIndex=Geometry.clamp(selectedIndex+delta,0,expandedRecords.length-1);keyboardSelection=true
@@ -288,7 +329,7 @@ Item {
   onCaptureAllowedChanged: {if(!captureAllowed) closeExpansion();scheduleLayout()}
   onBlockedChanged: {if(blocked) {closeExpansion();cardList().forEach(function(card) {card.cancelInteraction()})};scheduleLayout()}
   onExpandedChanged: {expansionValidation.restart();scheduleRegions();scheduleLayout()}
-  onInteractingChanged: {scheduleLayout();sourceGeometryDelay.restart();scheduleRegions()}
+  onInteractingChanged: {activationShortcut=null;scheduleLayout();sourceGeometryDelay.restart();scheduleRegions()}
   onExpandedRecordsChanged: {expansionValidation.restart();sourceGeometryDelay.restart();scheduleRegions()}
   onSavedPositionsChanged: {
     var next=Object.assign({},drafts)

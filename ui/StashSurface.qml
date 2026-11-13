@@ -92,6 +92,12 @@ PanelWindow {
   function dismissPreview() { windowPreview.dismiss(true) }
   function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
   function activatePreviewInteraction(id) {return floatingPreviews.activateInteraction(id)}
+  function handlePreviewShortcut(serial,phase,globalX,globalY) {
+    if(!previewMode || config.floatingPreviewInteraction!=="on" || dialogOpen || contextMenuOpen) {
+      floatingPreviews.activationShortcut=null;return false
+    }
+    return floatingPreviews.handleActivationShortcut(serial,phase,globalX,globalY)
+  }
   function canResetPreviewProportions(group) {
     if(config.presentation!=="previews" || config.floatingPreviewSizing==="preset" || config.floatingPreviewLock==="locked"
         || !group || !group.windows || !group.windows.length) return false
@@ -615,7 +621,8 @@ PanelWindow {
   color: "transparent"
   anchors { top: true; left: true; bottom: true; right: true }
   exclusionMode: ExclusionMode.Ignore
-  WlrLayershell.namespace: "omarchy-window-stash"
+  WlrLayershell.namespace: previewMode && config.floatingPreviewInteraction==="on" && !dialogOpen && !contextMenuOpen
+    ? "omarchy-window-stash-interactive-previews" : "omarchy-window-stash"
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
