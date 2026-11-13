@@ -75,11 +75,12 @@ class PreviewBridge:
         if not re.fullmatch(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)', self.version):
             raise RuntimeError('Invalid native preview bridge version in native/version.txt')
         versions = [self.version]
-        # This unpublished predecessor has the identical render/input API but
-        # cannot prove its release filters are drained for unloading. Keep it
-        # usable until the next normal login rather than disabling previews.
-        if self.version == '1.29.2':
-            versions.append('1.29.1')
+        # Keep the known ordinary render/input API usable during a deferred
+        # bridge update. New features still require their own capability guard;
+        # an older bridge must never silently turn contained fullscreen into
+        # desktop fullscreen. Unknown future implementations remain exact-only.
+        compatible = {'1.29.2': ('1.29.1',), '1.29.3': ('1.29.1', '1.29.2')}
+        versions.extend(compatible.get(self.version, ()))
         self.probe = PROBE + 'if not (' + ' or '.join('info.version == '+lua(value) for value in versions) + ") then error('" + RESTART_REQUIRED + "') end\n"
         self.ready = False
         self.generation = 0
