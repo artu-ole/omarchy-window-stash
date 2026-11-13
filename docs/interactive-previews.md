@@ -168,10 +168,12 @@ interaction and expose the existing safe preview-support update action.
 
 ## Restoration fallback
 
-The implementation requests restoration for modal dialogs, fullscreen, overflowing
-popups, explicit application activation and application move/resize requests.
-Native acceptance covers dialogs at both destinations, fullscreen, oversized
-popups and independent new windows without exposing unrelated stashes.
+The implementation requests restoration for modal dialogs, overflowing popups,
+explicit application activation and application move/resize requests. Fullscreen
+requests stay inside the miniature under the default `preview` policy; the
+`desktop` policy restores the window for fullscreen. Native acceptance covers
+both fullscreen policies, dialogs at both destinations, oversized popups and
+independent new windows without exposing unrelated stashes.
 
 Only an ended status with `restoreRequested=true` and an allowlisted reason may
 start fallback. The helper revalidates its original owner/source and fresh scope
