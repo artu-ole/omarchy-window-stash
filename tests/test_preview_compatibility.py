@@ -14,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'controller'))
 from preview import MISSING_API, RESTART_REQUIRED, PreviewBridge, PreviewKeeper, PreviewStopped, preview_records, request_ids, run_loop
 from stash import PLUGIN, SPECIAL, Stash, atomic_json
+from bridge_runtime import BUSY
 
 IDENT = 'a'*32
 OTHER = 'b'*32
@@ -237,6 +238,23 @@ class PreviewCompatibilityTests(unittest.TestCase):
             run_loop(sys.stdin, self.keeper, emitted.append)
         self.assertEqual([c[0] for c in self.bridge.calls], ['ensure', 'update', 'ensure', 'update', 'release'])
         self.assertEqual(emitted, [dict(state='ready', ids=[IDENT])])
+
+    def test_reload_gate_pauses_rendering_and_resumes_without_a_new_ui_request(self):
+        self.bridge.error = RuntimeError(BUSY)
+        ticks = 0
+        def poll(*_args):
+            nonlocal ticks
+            ticks += 1
+            if ticks == 2:
+                self.bridge.error = None
+                return [], [], []
+            return [sys.stdin], [], []
+        with patch('preview.select.select', side_effect=poll), \
+                patch('preview.os.read', side_effect=[json.dumps([IDENT]).encode()+b'\n', b'']):
+            emitted = []
+            run_loop(sys.stdin, self.keeper, emitted.append)
+        self.assertEqual(emitted, [dict(state='paused', ids=[]), dict(state='ready', ids=[IDENT])])
+        self.assertEqual([call[0] for call in self.bridge.calls], ['ensure', 'update', 'release', 'ensure', 'update', 'release'])
 
     def test_reacquire_reemits_ready_after_out_of_band_loading_progress(self):
         self.bridge.generation = 1
@@ -472,6 +490,25 @@ class PreviewCompatibilityTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(RESTART_REQUIRED, result.stderr)
             self.assertNotIn('Mismatching native code must not run', result.stderr)
+
+    @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
+    def test_transitional_interactive_api_keeps_working_until_normal_login(self):
+        from interaction import InteractionBridge
+        root = Path(self.temporary.name)
+        (root/'native').mkdir()
+        version = root/'native/version.txt'
+        for expected in ('1.29.2', '1.29.3'):
+            version.write_text(expected+'\n')
+            with patch('preview.ROOT', root):
+                probe = InteractionBridge(FakeHypr()).interaction_probe
+            for loaded, protocol in (('1.29.1', 1), ('1.29.0', 1), ('1.24.0', 1), ('1.29.3', 1), ('1.29.1', 2)):
+                prelude = ('hl={plugin={window_stash_preview={status=function() return '
+                           '{protocol='+str(protocol)+',version="'+loaded+'"} end,'
+                           'update=function() end,interaction_update=function() end,'
+                           'interaction_release=function() end,interaction_status=function() end}}}\n')
+                result = subprocess.run(['lua', '-'], input=prelude+probe, text=True, capture_output=True)
+                allowed = protocol == 1 and (loaded == expected or expected == '1.29.2' and loaded == '1.29.1')
+                self.assertEqual(result.returncode == 0, allowed, (expected, loaded, protocol, result.stderr))
 
 
 if __name__ == '__main__':

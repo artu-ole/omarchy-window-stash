@@ -275,7 +275,7 @@ Item {
           onRead:function(line) {
             try {
               var value=JSON.parse(line)
-              if (["idle","disabled","building","loading","ready","unavailable"].indexOf(value.state)<0) return
+              if (["idle","paused","disabled","building","loading","ready","unavailable"].indexOf(value.state)<0) return
               root.previewCompatibilityStatus=value
               if (value.error) root.previewCompatibilityError=String(value.error)
             } catch (error) { root.previewCompatibilityError="Could not read live preview support status" }

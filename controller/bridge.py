@@ -124,7 +124,7 @@ class BridgeManager:
         supported = self.supported(value)
         return dict(result, state='current' if current else 'update-required', canReload=supported,
                     error='' if supported or current else
-                    'This older interactive bridge cannot be replaced safely. Log out and back in once; subsequent bridge updates support reloading here.')
+                    'Existing previews can keep working, but this older interactive bridge cannot be replaced safely. Log out and back in once; subsequent bridge updates support reloading here.')
 
     def checkpoint(self):
         if self.cancelled():

@@ -14,7 +14,7 @@ import uuid
 
 sys.dont_write_bytecode = True
 from stash import Hyprland, PREFIX, SPECIAL, Stash, lua
-from bridge_runtime import bridge_gate
+from bridge_runtime import BUSY, bridge_gate
 
 ROOT = Path(__file__).resolve().parents[1]
 API = 'hl.plugin.window_stash_preview'
@@ -74,7 +74,13 @@ class PreviewBridge:
         self.version = (ROOT/'native/version.txt').read_text().strip()
         if not re.fullmatch(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)', self.version):
             raise RuntimeError('Invalid native preview bridge version in native/version.txt')
-        self.probe = PROBE + 'if info.version ~= ' + lua(self.version) + " then error('" + RESTART_REQUIRED + "') end\n"
+        versions = [self.version]
+        # This unpublished predecessor has the identical render/input API but
+        # cannot prove its release filters are drained for unloading. Keep it
+        # usable until the next normal login rather than disabling previews.
+        if self.version == '1.29.2':
+            versions.append('1.29.1')
+        self.probe = PROBE + 'if not (' + ' or '.join('info.version == '+lua(value) for value in versions) + ") then error('" + RESTART_REQUIRED + "') end\n"
         self.ready = False
         self.generation = 0
         self.binary_path = None
@@ -217,7 +223,13 @@ def run_loop(stream, keeper, emit):
                 while b'\n' in buffer:
                     line, buffer = buffer.split(b'\n', 1)
                     wanted = request_ids(json.loads(line))
-            status = keeper.sync(wanted)
+            try:
+                status = keeper.sync(wanted)
+            except RuntimeError as error:
+                if str(error) != BUSY:
+                    raise
+                keeper.close()
+                status = dict(state='paused', ids=[])
             generation = getattr(keeper.bridge, 'generation', 0)
             if status != previous or generation != previous_generation:
                 emit(status)
