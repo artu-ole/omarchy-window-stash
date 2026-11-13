@@ -1,6 +1,6 @@
 # Window Stash
 
-![Static dock, floating dock, floating icons and window previews.](preview.png)
+![Window Stash: static dock, floating dock, floating icons and floating previews, with geometry preservation, app grouping, multi-monitor support and theme matching.](preview.png)
 
 Window minimization for **tiling layouts** in Omarchy/Hyprland. Windows stay running
 in a private workspace and restore to the original or current workspace. Floating
