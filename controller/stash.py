@@ -32,7 +32,7 @@ MAX_PREVIEW_FOLD_IDS = 256
 LOCAL_SHORTCUT_DEFAULTS = {"floatingPreviewExitShortcut": "CTRL + ALT + Escape"}
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
-                floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
+                floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover", floatingPreviewResizeRate="realtime",
                 floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked",
                 floatingPreviewInteraction="off", floatingPreviewActivation="explicit", floatingPreviewKeyboard="mouse",
                 floatingPreviewInteractionFps="60", floatingPreviewControls="hover", floatingPreviewFullscreen="preview")
@@ -49,7 +49,7 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=(
                hoverPreview=("off", "still", "live"), livePreviewCompatibility=("standard", "enhanced"), previewSize=("small", "medium", "large"),
                previewPlacement=("auto", "above", "below", "left", "right"), previewTitles=("shown", "hidden"),
                previewDelay=range(1501), previewHideDelay=range(1001),
-               floatingPreviewSizing=("free", "preset"),
+               floatingPreviewSizing=("free", "preset"), floatingPreviewResizeRate=("realtime", "balanced", "release"),
                floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
                floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
                floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),

@@ -110,7 +110,7 @@ def main():
                       dockCornerRadius=39, iconFrame='shown', dockFrame='shown', animations='off', animationSpeed='ultrafast',
                       dockOpacity=33, iconOpacity=44, hoverPreview='still', livePreviewCompatibility='enhanced', previewSize='large', previewPlacement='above',
                       previewTitles='hidden', previewDelay=75, previewHideDelay=87,
-                      floatingPreviewSizing='preset', floatingPreviewScale='150', floatingPreviewUpdate='live',
+                      floatingPreviewSizing='preset', floatingPreviewScale='150', floatingPreviewUpdate='live', floatingPreviewResizeRate='release',
                       floatingPreviewTitles='shown', floatingPreviewFrame='shown', floatingPreviewLock='locked',
                       floatingPreviewInteraction='on', floatingPreviewActivation='click', floatingPreviewKeyboard='click',
                       floatingPreviewInteractionFps='30', floatingPreviewControls='always', floatingPreviewFullscreen='desktop', floatingPreviewExitShortcut=chords[3],

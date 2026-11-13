@@ -459,6 +459,7 @@ PanelWindow {
       && (modelData.key!=="iconShape" || surface.config.iconFrame==="shown")
       && (modelData.key.indexOf("floatingPreview")!==0 || surface.previewMode)
       && (modelData.key!=="floatingPreviewScale" || surface.config.floatingPreviewSizing==="preset")
+      && (modelData.key!=="floatingPreviewResizeRate" || surface.config.floatingPreviewSizing!=="preset")
       && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls","floatingPreviewFullscreen"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
@@ -1246,6 +1247,7 @@ PanelWindow {
             model:[
               {key:"floatingPreviewSizing", label:"Preview sizing", values:["free","preset"], labels:["Resize directly","Size presets"], section:"previews"},
               {key:"floatingPreviewScale", label:"Preview scale", values:["50","75","100","125","150","175","200","250","300"], labels:["50%","75%","100%","125%","150%","175%","200%","250%","300%"], section:"previews"},
+              {key:"floatingPreviewResizeRate", label:"Resize updates", values:["realtime","balanced","release"], labels:["Responsive","Balanced","On release"], section:"previews"},
               {key:"floatingPreviewUpdate", label:"Preview updates", values:["still","hover","live"], labels:["Snapshot","Live on hover","Always live"], section:"previews"},
               {key:"floatingPreviewTitles", label:"Preview title strip", values:["hidden","shown"], labels:["Hidden","Shown"], section:"previews"},
               {key:"floatingPreviewFrame", label:"Preview border/background", values:["hidden","shown"], labels:["Hidden","Shown"], section:"previews"}
@@ -1255,7 +1257,7 @@ PanelWindow {
           Text {
             visible:surface.previewMode
             text:surface.config.floatingPreviewSizing==="free"
-              ? "Drag a preview to move it; use a corner to resize. Click to restore. Resizing keeps the window's proportions and does not resize the original window."
+              ? "Drag a preview to move it. Corners keep its proportions; sides reshape it. Resize updates controls how closely the app follows a side drag. Click to restore."
               : "Click a preview to restore. App groups expand into individual window previews."
             textFormat:Text.PlainText
             color:surface.popupColors.text

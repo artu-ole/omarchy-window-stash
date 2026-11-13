@@ -419,7 +419,14 @@ def main():
                     dropdown(session, 'staticDockLock')
                     reached.add('staticDockLock')
                     configure('presentation', 'previews')
+                    configure('floatingPreviewSizing', 'free')
+                    assert choice(session, 'floatingPreviewResizeRate')['visible'], 'Resize update control is hidden in free sizing'
+                    dropdown(session, 'floatingPreviewResizeRate', 'balanced', click_option=True)
+                    dropdown(session, 'floatingPreviewResizeRate', 'release', click_option=True)
+                    dropdown(session, 'floatingPreviewResizeRate', before['floatingPreviewResizeRate'])
+                    reached.add('floatingPreviewResizeRate')
                     configure('floatingPreviewSizing', 'preset')
+                    assert not choice(session, 'floatingPreviewResizeRate')['visible'], 'Size presets expose an inapplicable drag update control'
                     for key in ('floatingPreviewSizing', 'floatingPreviewScale', 'floatingPreviewUpdate',
                                 'floatingPreviewTitles', 'floatingPreviewFrame', 'floatingPreviewLock'):
                         assert choice(session, key)['visible'], 'Floating preview control is hidden: '+key
