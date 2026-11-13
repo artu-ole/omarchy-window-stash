@@ -124,10 +124,12 @@ def status_json(expression):
     fields = []
     for field in ('active', 'keyboard', 'keyboardFocused', 'restoreRequested', 'previewFullscreen'):
         fields.append(lua(json.dumps(field)+':')+'..tostring(result.'+field+'==true)')
-    for field in ('owner', 'id', 'reason', 'fullscreen'):
+    for field in ('owner', 'id', 'reason', 'fullscreen', 'activationOrigin'):
         fields.append(lua(json.dumps(field)+':')+'..quote(result.'+field+')')
     for field in ('fps', 'heldButtons', 'heldKeys', 'motionEvents', 'buttonEvents', 'axisEvents', 'keyEvents',
-                  'lastAxisDelta', 'lastAxisDiscrete', 'lastAxisSource'):
+                  'lastAxisDelta', 'lastAxisDiscrete', 'lastAxisSource', 'pointerActivationAllowance',
+                  'pointerActivationRemainingMs', 'clientActivationEvents', 'pointerActivationAcknowledgements',
+                  'fullscreenActivationAcknowledgements'):
         fields.append(lua(json.dumps(field)+':')+'..tostring(count(result.'+field+'))')
     for name, members in (('rect', ('x', 'y', 'width', 'height')), ('lastLocal', ('x', 'y')), ('lastGlobal', ('x', 'y'))):
         rect = [lua(json.dumps(field)+':')+'..tostring(count((result.'+name+' or {}).'+field+'))' for field in members]
