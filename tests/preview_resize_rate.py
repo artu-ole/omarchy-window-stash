@@ -149,7 +149,7 @@ def settings(session):
 
 
 @desktop_test('Isolated continuous preview-resize cadence')
-def main(settings_only=False):
+def main(settings_only=False, cadence_only=False):
     assert os.environ.get('WINDOW_STASH_ISOLATED_TEST') == '1' and (Path.home()/'.window-stash-isolated').is_file(), \
         'Run resize cadence input only in an explicitly disposable compositor'
     assert not command('list')['windows'], 'Cadence proof requires an empty disposable stash'
@@ -174,7 +174,8 @@ def main(settings_only=False):
                 results.append(case(session, directory, 'realtime', 3, duration=.09, edge='bottom'))
                 print('PASS continuous pointer motion updates the app before release; release-only and rapid final flush preserve fresh frames and exact original geometry', flush=True)
                 print('Resize cadence measurements:', json.dumps(results), flush=True)
-            settings(session)
+            if not cadence_only:
+                settings(session)
             assert not shell('status')['error'], shell('status')['error']
         finally:
             pause_captures(session)
@@ -182,6 +183,8 @@ def main(settings_only=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--settings-only', action='store_true', help='Only exercise the actual preset selector and persistence')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--settings-only', action='store_true', help='Only exercise the actual preset selector and persistence')
+    modes.add_argument('--cadence-only', action='store_true', help='Only measure actual client reflow and final-frame correctness')
     options = parser.parse_args()
-    main(options.settings_only)
+    main(options.settings_only, options.cadence_only)
