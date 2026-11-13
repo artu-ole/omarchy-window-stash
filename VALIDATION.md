@@ -1,5 +1,40 @@
 # Validation
 
+## v1.34.0 — responsive side resizing — 13 November 2026
+
+Continuous side dragging now throttles source updates instead of restarting a
+debounce timer on every movement. Resize updates offers Responsive (default),
+Balanced and On release. Each source keeps its latest target; a final update
+flushes only that source and verifies readiness asynchronously. Snapshot previews
+temporarily update live during Responsive/Balanced side drags and retain their
+saved policy afterward. Repeated resize targets no longer rewrite unchanged
+ledger data after the initial resize marker is saved.
+
+The complete check passes **389 Python tests**, **16 Node suites**, **sixteen
+offscreen Qt suites**, **120 Python syntax checks**, manifest validation and
+warning-free QML lint. Sustained-event Qt tests verify dispatch during motion,
+bounded latest-only drafts, release-only behavior, per-source final flushing,
+continued timers for other sources, stale epochs and fresh-frame input gating.
+Defaults, validation and reset fixtures include all **44 preferences**.
+
+The private compositor's responsive GTK fixture received approximately 12 ms
+pointer events through a 1.088-second drag. The final run committed 13 app updates
+in Responsive, with the first at 81.8 ms; Balanced committed 11, first at 124.7 ms;
+On release committed none before mouse-up. Measurements describe this isolated
+fixture and remain dependent on application and machine performance. A rapid
+84 ms vertical drag retained its final target, native committed geometry and
+fresh capture. Original floating restoration geometry remained unchanged.
+
+Actual Settings dropdown interaction selected and persisted all three labels,
+hid the field under Preset sizing and restored it under Free sizing without
+losing its value. Both live presets returned to the saved Snapshot policy after
+release. The private desktop ended with no capture/input/render leases or pending
+cleanup and a healthy lifecycle.
+
+Native command: `python3 tests/preview_resize_rate.py` inside the explicit disposable
+desktop. `--cadence-only` repeats the drag proof without the Settings walkthrough.
+Native bridge version remains **1.29.6**.
+
 ## v1.33.0 — staged preview minimization — 13 November 2026
 
 Floating previews fold into icons when minimized under the pointer. Icon

@@ -62,6 +62,26 @@ the layer's configured dimensions, preserving saved positions across restarts.
 Fold/unfold motion follows the global animation settings, and input waits until
 an unfolding miniature has settled. No additional preferences are introduced.
 
+## Resize responsiveness
+
+`floatingPreviewResizeRate` controls source reflow during side dragging:
+`realtime` (Responsive, default), `balanced`, or `release` (On release).
+Responsive and Balanced use a non-restarting throttle with target intervals of
+16 and 60 ms. Each source retains only its latest draft and queued resize;
+continuous pointer events cannot postpone dispatch indefinitely. Actual updates
+depend on client/compositor response rather than a promised frame rate.
+
+On release defers the source change until that source's final gesture. Finalizing
+one source never flushes another source's held draft. Release flushes immediately
+and uses asynchronous committed-geometry polling and fresh capture before input
+is re-enabled; it does not block the action worker waiting for the client.
+The direct CLI `--settle` remains available for callers needing a bounded wait.
+
+Responsive/Balanced side drags temporarily request live capture even with Snapshot
+selected, then restore the saved update policy. Corners retain ordinary proportional
+scaling. Only the initial transition to `previewResized` writes the ledger; changing
+working dimensions does not repeatedly rewrite unchanged restoration metadata.
+
 ## Entering interaction
 
 Enabling interaction prepares native shortcut support when previews are visible,

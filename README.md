@@ -159,9 +159,13 @@ preview frame; use Stop/Manage before resizing an interactive miniature.
 | `floatingPreviewSizing` | `free` | `free`: resize directly; `preset`: use the scale dropdown |
 | `floatingPreviewScale` | `"100"` | Same nine percentage presets; 100% is 280 logical px wide, bounded by screen area |
 | `floatingPreviewUpdate` | `hover` | `still`: snapshot; `hover`: live on hover; `live`: always live |
+| `floatingPreviewResizeRate` | `realtime` | `realtime`: Responsive; `balanced`: fewer drag updates; `release`: reflow the app after release |
 | `floatingPreviewTitles` | `hidden` | `hidden`, `shown`; optional title strip and close button |
 | `floatingPreviewFrame` | `hidden` | `hidden`, `shown`; optional background and border |
 | `floatingPreviewLock` | `unlocked` | `unlocked`, `locked`; retain placement and dimensions |
+
+Snapshot previews temporarily update live during Responsive/Balanced side drags,
+then return to Snapshot on release. Corner resizing keeps its existing capture policy.
 
 Minimize while hovering a preview to fold it into a floating icon. Clicking that
 icon returns to the preview; restoring again returns the full window. Newest/FIFO
