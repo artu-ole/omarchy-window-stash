@@ -12,6 +12,11 @@ function aspect(record) {
   var size=record && record.size
   return size && finite(size[0],0)>0 && finite(size[1],0)>0 ? clamp(Number(size[0])/Number(size[1]),.02,50) : 1.6
 }
+function customAspect(value) {
+  value=Number(value)
+  return isFinite(value) && value>=.02 && value<=50 ? value : 0
+}
+function savedAspect(point) {return point && point.length>=4 ? customAspect(point[3]) : 0}
 function validSourceSize(size) {return !!size && finite(size[0],0)>0 && finite(size[1],0)>0}
 function sameAspect(first, second) {
   if(!validSourceSize(first) || !validSourceSize(second)) return false
@@ -26,31 +31,58 @@ function geometryGroups(groups, sizes) {
   return groups.map(function(group) {return Object.assign({},group,{windows:group.windows.map(function(record) {return geometryRecord(record,sizes)})})})
 }
 function chrome(titles, frame) { return {header:titles ? 32 : 0,inset:frame ? 2 : 0} }
-function dimensions(requested, record, area, titles, frame) {
+function dimensions(requested, record, area, titles, frame, aspectOverride) {
   area=rectangle(area)
-  var c=chrome(titles,frame),ratio=aspect(record)
+  var chosen=customAspect(aspectOverride),c=chrome(titles,frame),ratio=chosen || aspect(record)
   c.header=Math.min(c.header,Math.max(0,area.height-1))
   c.inset=Math.min(c.inset,Math.max(0,(area.width-1)/2),Math.max(0,(area.height-c.header-1)/2))
   var maximum=Math.max(1,Math.min(area.width,(area.height-c.header-c.inset*2)*ratio+c.inset*2))
   var minimum=Math.min(120,maximum)
   var width=clamp(finite(requested,280),minimum,maximum)
-  return {width:width,height:(width-c.inset*2)/ratio+c.header+c.inset*2,header:c.header,inset:c.inset,aspect:ratio,minimum:minimum,maximum:maximum}
+  return {width:width,height:(width-c.inset*2)/ratio+c.header+c.inset*2,header:c.header,inset:c.inset,aspect:ratio,aspectOverride:chosen,minimum:minimum,maximum:maximum}
 }
 function position(rect, area) {
   area=rectangle(area)
   return {x:clamp(finite(rect.x,area.x),area.x,area.x+area.width-rect.width),
     y:clamp(finite(rect.y,area.y),area.y,area.y+area.height-rect.height)}
 }
-function resize(rect, record, area, dx, dy, corner, titles, frame) {
+function resize(rect, record, area, dx, dy, corner, titles, frame, aspectOverride) {
   area=rectangle(area)
+  if(corner==="left" || corner==="right" || corner==="top" || corner==="bottom")
+    return reshape(rect,area,dx,dy,corner,titles,frame)
   var sx=corner.indexOf("left")>=0 ? -1 : 1,sy=corner.indexOf("top")>=0 ? -1 : 1
-  var ratio=aspect(record),anchorX=sx<0 ? rect.x+rect.width : rect.x,anchorY=sy<0 ? rect.y+rect.height : rect.y
+  var ratio=customAspect(aspectOverride) || aspect(record),anchorX=sx<0 ? rect.x+rect.width : rect.x,anchorY=sy<0 ? rect.y+rect.height : rect.y
   var widthDelta=Math.abs(dx)>=Math.abs(dy)*ratio ? sx*dx : sy*dy*ratio
   var available={x:0,y:0,width:sx<0 ? anchorX-area.x : area.x+area.width-anchorX,
     height:sy<0 ? anchorY-area.y : area.y+area.height-anchorY}
-  var d=dimensions(rect.width+widthDelta,record,available,titles,frame)
-  var result={x:sx<0 ? anchorX-d.width : anchorX,y:sy<0 ? anchorY-d.height : anchorY,width:d.width,height:d.height}
+  var d=dimensions(rect.width+widthDelta,record,available,titles,frame,aspectOverride)
+  var result={x:sx<0 ? anchorX-d.width : anchorX,y:sy<0 ? anchorY-d.height : anchorY,width:d.width,height:d.height,aspect:ratio}
   var point=position(result,area);result.x=point.x;result.y=point.y
+  return result
+}
+function reshape(rect, area, dx, dy, edge, titles, frame) {
+  area=rectangle(area)
+  var c=chrome(titles,frame),result={x:rect.x,y:rect.y,width:rect.width,height:rect.height}
+  c.header=Math.min(c.header,Math.max(0,rect.height-1))
+  c.inset=Math.min(c.inset,Math.max(0,(rect.width-1)/2),Math.max(0,(rect.height-c.header-1)/2))
+  if(edge==="left" || edge==="right") {
+    var left=edge==="left",anchor=left ? rect.x+rect.width : rect.x
+    var maximum=Math.max(1,left ? anchor-area.x : area.x+area.width-anchor)
+    var contentHeight=Math.max(1,rect.height-c.header-c.inset*2)
+    maximum=Math.min(maximum,contentHeight*50+c.inset*2)
+    var minimum=Math.min(maximum,Math.max(Math.min(120,rect.width,maximum),contentHeight*.02+c.inset*2))
+    result.width=clamp(rect.width+(left ? -dx : dx),minimum,maximum)
+    result.x=left ? anchor-result.width : anchor
+  } else {
+    var top=edge==="top",anchorY=top ? rect.y+rect.height : rect.y
+    var maximumHeight=Math.max(1,top ? anchorY-area.y : area.y+area.height-anchorY)
+    var contentWidth=Math.max(1,rect.width-c.inset*2),decoration=c.header+c.inset*2
+    maximumHeight=Math.min(maximumHeight,contentWidth/.02+decoration)
+    var minimumHeight=Math.min(maximumHeight,Math.max(Math.min(80,rect.height,maximumHeight),contentWidth/50+decoration))
+    result.height=clamp(rect.height+(top ? -dy : dy),minimumHeight,maximumHeight)
+    result.y=top ? anchorY-result.height : anchorY
+  }
+  result.aspect=clamp((result.width-c.inset*2)/Math.max(1,result.height-c.header-c.inset*2),.02,50)
   return result
 }
 function contains(rect, x, y) { return !!rect && x>=rect.x && y>=rect.y && x<=rect.x+rect.width && y<=rect.y+rect.height }
@@ -107,7 +139,7 @@ function layout(groups, saved, drafts, area, options) {
   groups.forEach(function(group) {
     var key="preview:"+group.key,value=drafts[key] || saved[key]
     var requested=options.sizing==="preset" ? 280*scale/100 : value && value.length>=3 ? finite(value[2],280) : 280
-    var d=dimensions(requested,group.windows[0],area,titles,frame)
+    var d=dimensions(requested,group.windows[0],area,titles,frame,savedAspect(value))
     sizes[key]=d;width=Math.max(width,d.width);height=Math.max(height,d.height)
   })
   var available=slots(area,width,height,options.edges!==false),capacity=Math.max(1,available.length),packed=[[]],result={}
@@ -124,7 +156,7 @@ function layout(groups, saved, drafts, area, options) {
       p=placement(preferred,d,packed[pageIndex],area,available,options.edges!==false);if(p) break
     }
     if(!p) {packed.push([]);pageIndex=packed.length-1;p=placement(preferred,d,[],area,available,options.edges!==false)}
-    var rect={x:p.x,y:p.y,width:d.width,height:d.height,page:pageIndex,index:entry.index}
+    var rect={x:p.x,y:p.y,width:d.width,height:d.height,aspectOverride:d.aspectOverride,page:pageIndex,index:entry.index}
     packed[pageIndex].push(rect);result[key]=rect
   })
   var pages=Math.max(1,packed.length),page=clamp(Math.floor(finite(options.page,0)),0,pages-1)

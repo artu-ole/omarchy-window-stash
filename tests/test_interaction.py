@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'controller'))
-from interaction import FULLSCREEN_REQUIRED, RESTORE_REASONS, InteractionBridge, InteractionKeeper, configure_exit_shortcut, exit_shortcut, monitor_contains, request, run_loop, status_json
+from interaction import FULLSCREEN_REQUIRED, GEOMETRY_PENDING, GEOMETRY_REQUIRED, RESTORE_REASONS, InteractionBridge, InteractionKeeper, configure_exit_shortcut, exit_shortcut, monitor_contains, request, run_loop, status_json
 from stash import DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, PLUGIN, SPECIAL, Stash, atomic_json, lua, main as controller_main
 from lifecycle import valid_preferences
 from test_controller import FakeHypr as ControllerHypr, client as controller_client, monitor as controller_monitor
@@ -142,7 +142,7 @@ class InteractionTests(unittest.TestCase):
         self.assertEqual(self.keeper.sync(target())['state'],'active')
         update = self.bridge.calls[-1]
         self.assertEqual(update[2],dict(id=IDENT,address='0x123',pid=42,stable_id='18000001',tag='window-stash-'+IDENT))
-        self.assertEqual(update[3],dict(target(),exitShortcut=dict(modmask=12,key='Escape')))
+        self.assertEqual(update[3],dict(target(),exitShortcut=dict(modmask=12,key='Escape'),requireSourceGeometry=False))
         self.assertEqual([call[0] for call in self.bridge.calls],['ensure','update'])
         self.assertEqual(self.stash.settings()['livePreviewCompatibility'],'standard')
 
@@ -210,6 +210,17 @@ class InteractionTests(unittest.TestCase):
         self.assertEqual(self.bridge.calls[-1],('release',self.keeper.owner))
         self.keeper.sync(target(serial=2,fullscreen='preview'))
         self.assertEqual(self.bridge.calls[-1][3]['fullscreen'],'desktop')
+
+    def test_resized_source_geometry_guard_comes_from_authoritative_record_not_ui(self):
+        self.saved[0]['previewResized'] = True;self.save()
+        self.keeper.sync(target())
+        self.assertTrue(self.bridge.calls[-1][3]['requireSourceGeometry'])
+        with self.assertRaises(ValueError):
+            request(target(requireSourceGeometry=False))
+        self.keeper.close()
+        self.saved[0].pop('previewResized');self.save()
+        self.keeper.sync(target(serial=2))
+        self.assertFalse(self.bridge.calls[-1][3]['requireSourceGeometry'])
 
     def test_workspace_scope_uses_fresh_target_monitor_and_releases_when_source_becomes_ineligible(self):
         self.saved[0]['origin'] = dict(id=3,name='3');self.save()
@@ -619,6 +630,34 @@ class InteractionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'Reload preview support') as failure:
             bridge.interaction_update(OTHER,identity,target())
         self.assertIn(FULLSCREEN_REQUIRED,str(failure.exception))
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_resized_source_requires_committed_native_geometry_before_input_acquisition(self):
+        version = (Path(__file__).resolve().parents[1]/'native/version.txt').read_text().strip()
+        identity = dict(id=IDENT,address='0x123',pid=42,stable_id='18000001',tag='window-stash-'+IDENT)
+        class Native:
+            def __init__(self, state):self.state=state
+            def call(self, method, code):
+                self_test.assertEqual(method,'repl')
+                geometry = ('source_geometry=function(value) assert(value.id=='+lua(IDENT)+' and value.stable_id=="18000001","Wrong source"); '
+                            + ('return nil,"Source identity changed"' if self.state=='changed' else 'return {ready='+lua(self.state=='ready')+'}')+' end,')
+                prelude = ('hl={plugin={window_stash_preview={status=function() return {protocol=1,version='+lua(version)
+                           +',capabilities={sourceGeometry='+lua(self.state!='unsupported')+'}} end,'
+                           +'update=function() end,interaction_release=function() end,interaction_status=function() end,'
+                           +(geometry if self.state!='missing' else '')
+                           +'interaction_update=function(value) '+('' if self.state=='ready' else 'error("UNEXPECTED_ACQUISITION");')
+                           +'return {active=true,id='+lua(IDENT)+',owner='+lua(OTHER)+'} end}}}\n')
+                result = subprocess.run(['lua','-'],input=prelude+'print((function()\n'+code+'\nend)())',text=True,capture_output=True)
+                if result.returncode:raise RuntimeError(result.stderr)
+                return result.stdout
+        self_test = self
+        for state, message in (('pending',GEOMETRY_PENDING),('missing',GEOMETRY_REQUIRED),
+                               ('unsupported',GEOMETRY_REQUIRED),('changed','Source identity changed')):
+            with self.subTest(state=state),self.assertRaisesRegex(RuntimeError,message) as failure:
+                InteractionBridge(Native(state)).interaction_update(OTHER,identity,target(fullscreen='desktop',requireSourceGeometry=True))
+            self.assertNotIn('UNEXPECTED_ACQUISITION',str(failure.exception))
+        self.assertTrue(InteractionBridge(Native('ready')).interaction_update(
+            OTHER,identity,target(fullscreen='desktop',requireSourceGeometry=True))['active'])
 
     def test_native_status_missing_or_malformed_active_flag_fails_closed(self):
         for value in ('{}','[]','{"active":1}','not-json'):

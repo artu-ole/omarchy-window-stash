@@ -20,6 +20,8 @@ MAX_EXCLUDES = 16
 RENEW_SECONDS = .5
 RESTART_REQUIRED = 'Reload preview support in Window Stash Settings to use interactive previews'
 FULLSCREEN_REQUIRED = 'Reload preview support in Window Stash Settings to keep fullscreen inside a preview, or choose Fullscreen: On desktop'
+GEOMETRY_REQUIRED = 'Reload preview support in Window Stash Settings to interact with a reshaped preview'
+GEOMETRY_PENDING = 'The application has not finished resizing its preview'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
 RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
@@ -161,7 +163,10 @@ class InteractionBridge(PreviewBridge):
         fullscreen = target.get('fullscreen', 'preview')
         capability = ('assert(info.capabilities and info.capabilities.constrainedFullscreen==true,'
                       +lua(FULLSCREEN_REQUIRED)+')\n') if fullscreen == 'preview' else ''
-        script = (self.interaction_probe+capability+'local result,err='+API+'.interaction_update({owner='+lua(owner)
+        geometry = ('assert(info.capabilities and info.capabilities.sourceGeometry==true and type('+API+'.source_geometry)=="function",'
+                    +lua(GEOMETRY_REQUIRED)+')\nlocal geometry,geometryError='+API+'.source_geometry('+identity+'); assert(geometry,geometryError); '
+                    +'assert(type(geometry)=="table" and geometry.ready==true,'+lua(GEOMETRY_PENDING)+')\n') if target.get('requireSourceGeometry') is True else ''
+        script = (self.interaction_probe+capability+geometry+'local result,err='+API+'.interaction_update({owner='+lua(owner)
             + ',window='+identity+',monitor='+lua(target['monitor'])+',rect='+lua_rectangle(target['rect'])
             + ',excludeRects='+excluded+',keyboard='+lua(target['keyboard'])+',fps='+lua(target['fps'])
             + ',exitShortcut='+exit_value
@@ -226,7 +231,8 @@ class InteractionKeeper:
             return None
         parameters = dict(target, keyboard=target['keyboard'] and settings['floatingPreviewKeyboard'] == 'click',
                           fps=int(settings['floatingPreviewInteractionFps']), exitShortcut=settings[EXIT_SHORTCUT_KEY],
-                          fullscreen=settings['floatingPreviewFullscreen'])
+                          fullscreen=settings['floatingPreviewFullscreen'],
+                          requireSourceGeometry=any(record.get('previewResized') is True for record in saved if record.get('id') == target['id']))
         return sources[0], parameters
 
     def _restore_handoff(self, target):
