@@ -18,6 +18,7 @@ Item {
   property bool stopping:false
   property bool lifecycleReady: false
   property string lifecycleError: ""
+  property string lifecycleFailureDetail: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
   property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
@@ -132,6 +133,7 @@ Item {
     if (value.owner && value.owner!==lifecycleOwner) return
     if (value.state==="error") {
       lifecycleError=value.error || "Window Stash lifecycle support is unavailable"
+      lifecycleFailureDetail=String(lifecycleError).slice(-1600)
       lastError=lifecycleError
       return
     }
@@ -157,11 +159,12 @@ Item {
         catch (error) { root.lifecycleError="Could not read lifecycle support status"; root.lastError=root.lifecycleError }
       }
     }
-    stderr:StdioCollector {}
+    stderr:StdioCollector {id:lifecycleStderr}
     onExited:function(code) {
       root.lifecycleReady=false
       if (code!==0) {
-        root.lifecycleError="Window Stash lifecycle support stopped unexpectedly"
+        root.lifecycleFailureDetail=String(lifecycleStderr.text || root.lifecycleError || "").slice(-1600)
+        if(!root.lifecycleError) root.lifecycleError="Window Stash lifecycle support stopped unexpectedly"
         root.lastError=root.lifecycleError
       }
       if (!root.stopping) lifecycleRestart.restart()
@@ -977,7 +980,7 @@ Item {
     target: "window-stash"
     function status(): string {
       return JSON.stringify({loaded: true, windows: root.snapshot.windows.length,
-        lifecycle:{ready:root.lifecycleReady,owner:root.lifecycleOwner,error:root.lifecycleError,warnings:root.lifecycleWarnings},activeShortcuts:root.activeShortcuts,
+        lifecycle:{ready:root.lifecycleReady,owner:root.lifecycleOwner,error:root.lifecycleError,detail:root.lifecycleFailureDetail,warnings:root.lifecycleWarnings},activeShortcuts:root.activeShortcuts,
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
