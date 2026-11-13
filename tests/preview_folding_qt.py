@@ -88,6 +88,14 @@ ShellRoot {
       area:({x:0,y:26,width:1280,height:774});coordinateRoot:window.contentItem;screenName:"test";monitor:({x:-1600,y:40})
       savedPositions:fake.saved;groups:[{key:"window:a",app:"test",windows:[root.first]}];active:true
     }
+    Item {id:startupCoordinates;width:0;height:0}
+    StashFoldedPreviews {
+      id:startup
+      stash:fake;config:previews.config
+      groups:[{key:"folded-preview:startup",app:"test",title:"Startup",windows:[Object.assign({},root.first,{previewFolded:true})]}]
+      savedPositions:({"folded-preview:startup":[506,336]})
+      area:previews.area;monitor:previews.monitor;coordinateRoot:startupCoordinates;screenName:"test";active:true
+    }
   }
   function check(value,message) {if(!value) throw new Error(message)}
   function near(a,b,message) {check(Math.abs(a-b)<1,message+": "+a+" vs "+b)}
@@ -105,6 +113,9 @@ ShellRoot {
       try {
         check(++root.ticks<150,"Folded preview UI did not settle")
         if(root.phase===0) {
+          check(!startup.sizingReady && startup.details().world.bodies.length===0 && startup.inputRegions.length===0,"Unconfigured layer registered a folded icon")
+          check(!fake.writes.some(function(write) {return write.key==="folded-preview:startup"}),"Unconfigured layer overwrote a persisted icon position")
+          startupCoordinates.width=1280;startupCoordinates.height=800
           check(card() && !icon(),"Initial preview was not a full card")
           remembered={x:card().x,y:card().y,width:card().width,height:card().height,aspect:card().aspectOverride}
           var at=pointer(card());target=previews.foldAt(at.x,at.y)
@@ -115,6 +126,11 @@ ShellRoot {
           fake.pendingPreviewFoldIds={}
           previews.prepareFold(target.key,target.origin);fold(true)
         } else if(root.phase===1) {
+          var restored= startup.details().icons[0]
+          check(startup.sizingReady && restored,"Configured layer did not restore its folded icon")
+          near(restored.x,506,"Startup clamped and overwrote the saved icon x")
+          near(restored.y,336,"Startup clamped and overwrote the saved icon y")
+          startup.active=false
           check(!card() && !!icon() && previews.present,"All-folded presentation disappeared")
           check(captures().length===0,"Folding retained a client capture")
           check(previews.inputRegions.length===1,"Folded icon was omitted from the input mask")

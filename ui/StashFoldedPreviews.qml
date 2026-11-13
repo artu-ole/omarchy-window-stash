@@ -28,11 +28,13 @@ Item {
   readonly property string animations:config.animations || "full"
   readonly property string animationSpeed:config.animationSpeed || "normal"
   readonly property real iconSize:Model.iconSize(config.sizePreset,true,area)
+  readonly property bool sizingReady:iconSize>0 && width>0 && height>0 && area.width>0 && area.height>0
+    && width>=area.x+area.width-.5 && height>=area.y+area.height-.5
   readonly property bool present:collection.count>0
   readonly property bool held:iconList().some(function(icon) {return icon.positionHeld})
   signal inputChanged()
   width:coordinateRoot.width;height:coordinateRoot.height
-  visible:active && present
+  visible:active && present && sizingReady
   z:60
   function iconList() {var result=[];for(var i=0;i<icons.count;i++) {var icon=icons.itemAt(i);if(icon) result.push(icon)}return result}
   function iconForKey(key) {return iconList().find(function(icon) {return icon.groupKey===key}) || null}
@@ -47,7 +49,7 @@ Item {
     return null
   }
   function save(icon) {
-    if(!icon || icon.retiring || !active || !monitor || typeof stash.recordPosition!=="function") return
+    if(!icon || icon.retiring || !active || !sizingReady || !monitor || typeof stash.recordPosition!=="function") return
     var point=[Math.round(icon.x),Math.round(icon.y)],next=Object.assign({},drafts)
     if(JSON.stringify(drafts[icon.groupKey] || savedPositions[icon.groupKey])===JSON.stringify(point)) return
     next[icon.groupKey]=point;drafts=next
@@ -68,17 +70,17 @@ Item {
     return Model.floatingPosition(Model.bubblePosition(null,index,width,height,collection.activeKeys.length,iconSize),width,height,area,config.floatingPlacement!=="free",iconSize,iconSize)
   }
   function updateRegions() {
-    inputRegions=active && !blocked ? iconList().filter(function(icon) {return !icon.retiring}).map(function(icon) {return icon.hitRegion}) : []
+    inputRegions=active && sizingReady && !blocked ? iconList().filter(function(icon) {return !icon.retiring}).map(function(icon) {return icon.hitRegion}) : []
     inputChanged()
   }
   function hit(globalX,globalY) {
-    if(!active || !monitor) return false
+    if(!active || !sizingReady || !monitor) return false
     var x=globalX-monitor.x,y=globalY-monitor.y
     return iconList().some(function(icon) {return !icon.retiring && Model.iconContains(x-icon.x,y-icon.y,icon.width,icon.inputShape,icon.hitRadius)})
   }
   function arrange() {
     iconList().forEach(function(icon,index) {
-      if(!active || icon.retiring) {icon.unregisterBody();return}
+      if(!active || !sizingReady || icon.retiring) {icon.unregisterBody();return}
       var frozen=blocked || stash.groupClosing(icon.group) || config.floatingPreviewLock==="locked"
       if(icon.registered) world.freeze(icon.groupKey,frozen)
       if(icon.positionHeld || icon.positionAnimating) return
@@ -101,13 +103,16 @@ Item {
     updateRegions()
   }
   function details() {
-    return {present:present,held:held,icons:iconList().filter(function(icon) {return !icon.retiring}).map(function(icon) {
+    return {present:present,held:held,sizingReady:sizingReady,icons:iconList().filter(function(icon) {return !icon.retiring}).map(function(icon) {
       return {key:icon.groupKey,recordIds:icon.group.windows.map(function(record) {return record.id}),
         rect:{x:icon.x,y:icon.y,width:icon.width,height:icon.height},x:icon.x,y:icon.y,width:icon.width,height:icon.height,
         held:icon.positionHeld,moving:icon.positionAnimating,retiring:icon.retiring,appearance:icon.appearance()}
     }),world:world.details()}
   }
   onActiveChanged:placement.restart()
+  onSizingReadyChanged:placement.restart()
+  onWidthChanged:placement.restart()
+  onHeightChanged:placement.restart()
   onBlockedChanged:placement.restart()
   onConfigChanged:placement.restart()
   onAreaChanged:placement.restart()
