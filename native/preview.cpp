@@ -106,6 +106,12 @@ struct Interaction {
     uint32_t exitModifiers = 0;
     std::vector<Identity> pendingChildren;
     std::set<uint64_t> initialWindows;
+    bool constrainFullscreen = true;
+};
+struct ConstrainedFullscreen {
+    Identity identity;
+    Fullscreen::eFullscreenMode originalClient = Fullscreen::FSMODE_NONE;
+    Fullscreen::eFullscreenMode client = Fullscreen::FSMODE_NONE;
 };
 struct EndedInteraction {
     std::string owner;
@@ -118,6 +124,7 @@ struct EndedInteraction {
     WP<CWLSurfaceResource> previousSurface;
     bool restoreRequested = false;
     bool handedOff = false;
+    bool constrainFullscreen = true;
     Clock::time_point handoffDeadline;
 };
 
@@ -134,6 +141,13 @@ CFunctionHook* dispatchFocusHook = nullptr;
 CFunctionHook* windowActivateHook = nullptr;
 CFunctionHook* warpCursorHook = nullptr;
 CFunctionHook* constraintActivateHook = nullptr;
+CFunctionHook* fullscreenModeHook = nullptr;
+CFunctionHook* fullscreenActionHook = nullptr;
+CFunctionHook* moveWorkspaceHook = nullptr;
+void* clientFullscreenFunction = nullptr;
+bool constrainedFullscreenSupported = false;
+std::string fullscreenError;
+std::unordered_map<std::string, ConstrainedFullscreen> fullscreenWindows;
 bool handoffSupported = false;
 bool endingInteraction = false;
 bool reloadPending = false;
@@ -175,6 +189,9 @@ void restoreVisibleFocus(const PHLWINDOWREF& previousWindow, const WP<CWLSurface
 void requestRestore(const std::string& reason, const PHLWINDOW& child = nullptr);
 bool grabbedPopupOutside(const PHLWINDOW& window);
 bool sourceHasConstraint(const Identity& identity);
+bool clearConstrainedFullscreen(const std::string& id);
+void clearAllConstrainedFullscreen();
+void synchronizeConstrainedFullscreen();
 
 bool currentOwner(const std::string& owner) {
     return interaction && interaction->owner == owner && !endingInteraction;
@@ -222,6 +239,135 @@ bool sameWindow(const Identity& identity, CWindow* window, bool parked) {
         return true;
     return window->m_workspace && window->m_workspace->m_name == WORKSPACE
         && window->m_ruleApplicator->m_tagKeeper.isTagged(identity.tag, true);
+}
+
+bool fullscreenTarget(const PHLWINDOW& window) {
+    if (!constrainedFullscreenSupported || reloadPending || !window)
+        return false;
+    if (interaction && !endingInteraction && interaction->constrainFullscreen
+        && sameWindow(interaction->identity, window.get(), true)
+        && !window->m_ruleApplicator->noScreenShare().valueOrDefault())
+        return true;
+    return std::any_of(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
+        return sameWindow(item.second.identity, window.get(), true)
+            && !window->m_ruleApplicator->noScreenShare().valueOrDefault();
+    });
+}
+
+void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mode) {
+    using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, Fullscreen::eFullscreenMode, bool);
+    const auto previous = Fullscreen::controller()->getFullscreenModes(window).client;
+    // Call only the client-state setter. The public setter synchronizes client
+    // and internal modes by default, resizing/recentering even when given NONE.
+    reinterpret_cast<Original>(clientFullscreenFunction)(Fullscreen::controller().get(), window, mode, false);
+    if (previous != mode)
+        window->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_FULLSCREENSTATE_CLIENT);
+    window->sendWindowSize(true);
+    g_pHyprRenderer->damageWindow(window, true);
+}
+
+bool clearConstrainedFullscreen(const std::string& id) {
+    const auto found = fullscreenWindows.find(id);
+    if (found == fullscreenWindows.end())
+        return false;
+    const auto previous = found->second;
+    fullscreenWindows.erase(found);
+    const auto window = previous.identity.window.lock();
+    if (clientFullscreenFunction && window && sameWindow(previous.identity, window.get(), false)) {
+        const auto modes = Fullscreen::controller()->getFullscreenModes(window);
+        if (modes.internal == Fullscreen::FSMODE_NONE && modes.client == previous.client)
+            setClientFullscreen(window, previous.originalClient);
+    }
+    return true;
+}
+
+void clearAllConstrainedFullscreen() {
+    std::vector<std::string> ids;
+    ids.reserve(fullscreenWindows.size());
+    for (const auto& [id, value] : fullscreenWindows)
+        ids.push_back(id);
+    for (const auto& id : ids)
+        clearConstrainedFullscreen(id);
+}
+
+void synchronizeConstrainedFullscreen() {
+    std::vector<std::string> stale;
+    for (const auto& [id, value] : fullscreenWindows) {
+        const auto window = value.identity.window.lock();
+        if (!window || !sameWindow(value.identity, window.get(), true)
+            || window->m_ruleApplicator->noScreenShare().valueOrDefault())
+            stale.push_back(id);
+    }
+    for (const auto& id : stale)
+        clearConstrainedFullscreen(id);
+}
+
+bool applyConstrainedFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mode) {
+    if (!fullscreenTarget(window))
+        return false;
+    mode = std::clamp(mode, Fullscreen::FSMODE_NONE, Fullscreen::FSMODE_FULLSCREEN);
+    auto found = std::find_if(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
+        return sameWindow(item.second.identity, window.get(), true);
+    });
+    const auto modes = Fullscreen::controller()->getFullscreenModes(window);
+    if (modes.internal != Fullscreen::FSMODE_NONE)
+        return false;
+    if (mode == Fullscreen::FSMODE_NONE && found != fullscreenWindows.end()) {
+        clearConstrainedFullscreen(found->first);
+        return true;
+    }
+    if (found == fullscreenWindows.end()) {
+        if (mode == modes.client) {
+            setClientFullscreen(window, mode);
+            return true;
+        }
+        if (!interaction || !sameWindow(interaction->identity, window.get(), true) || fullscreenWindows.size() >= MAX_WINDOWS)
+            return false;
+        ConstrainedFullscreen value{interaction->identity, modes.client, mode};
+        const auto id = value.identity.id;
+        found = fullscreenWindows.emplace(id, std::move(value)).first;
+    } else
+        found->second.client = mode;
+    setClientFullscreen(window, mode);
+    return true;
+}
+
+void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW window,
+                       std::optional<Fullscreen::eFullscreenMode> internal,
+                       std::optional<Fullscreen::eFullscreenMode> client, std::optional<bool> layoutAware) {
+    if (fullscreenTarget(window)) {
+        const auto modes = controller->getFullscreenModes(window);
+        if (applyConstrainedFullscreen(window, client.value_or(internal.value_or(modes.client))))
+            return;
+    }
+    using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, std::optional<Fullscreen::eFullscreenMode>,
+                              std::optional<Fullscreen::eFullscreenMode>, std::optional<bool>);
+    reinterpret_cast<Original>(fullscreenModeHook->m_original)(controller, window, internal, client, layoutAware);
+}
+
+Config::Actions::ActionResult fullscreenWindow(Fullscreen::eFullscreenMode mode, bool layoutAware, std::optional<PHLWINDOW> requested) {
+    const auto window = requested.value_or(Desktop::focusState()->window());
+    if (fullscreenTarget(window)) {
+        // Stock fullscreen bindings toggle against the internal mode. It stays
+        // NONE here, so use the client mode for this one exact hidden source.
+        const auto current = Fullscreen::controller()->getFullscreenModes(window).client;
+        if (applyConstrainedFullscreen(window, current == mode ? Fullscreen::FSMODE_NONE : mode))
+            return {};
+    }
+    using Original = Config::Actions::ActionResult (*)(Fullscreen::eFullscreenMode, bool, std::optional<PHLWINDOW>);
+    return reinterpret_cast<Original>(fullscreenActionHook->m_original)(mode, layoutAware, requested);
+}
+
+void moveWindowToWorkspace(const Desktop::CGlobalWindowController* controller, PHLWINDOW window, PHLWORKSPACE workspace) {
+    if (window && workspace && workspace->m_name != WORKSPACE) {
+        const auto found = std::find_if(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
+            return sameWindow(item.second.identity, window.get(), false);
+        });
+        if (found != fullscreenWindows.end())
+            clearConstrainedFullscreen(found->first);
+    }
+    using Original = void (*)(const Desktop::CGlobalWindowController*, PHLWINDOW, PHLWORKSPACE);
+    reinterpret_cast<Original>(moveWorkspaceHook->m_original)(controller, window, workspace);
 }
 
 bool leased(CWindow* window) {
@@ -466,6 +612,7 @@ void rememberEnd(const std::string& owner, const std::string& id, const std::str
         ended.initialWindows = previous->initialWindows;
         ended.previousWindow = previous->previousWindow;
         ended.previousSurface = previous->previousSurface;
+        ended.constrainFullscreen = previous->constrainFullscreen;
         ended.restoreRequested = restoreReason(reason);
         ended.handoffDeadline = Clock::now() + HANDOFF_TIME;
     }
@@ -484,6 +631,9 @@ void endInteraction(const std::string& reason, bool refocus) {
         g_layoutManager->endDragTarget();
     auto previous = std::move(*interaction);
     interaction.reset();
+    if (reason == "capture-unavailable" || reason == "keyboard-unavailable" || reason == "window-unavailable"
+        || reason == "surface-unavailable")
+        clearConstrainedFullscreen(previous.identity.id);
     rememberEnd(previous.owner, previous.identity.id, reason, &previous);
     restoreKeyboard(previous, refocus);
     if (g_pSeatManager) {
@@ -1036,6 +1186,7 @@ void naturalSuspension(const Identity& identity) {
 }
 
 void synchronize() {
+    synchronizeConstrainedFullscreen();
     auto previous = std::move(active);
     active.clear();
     const auto now = Clock::now();
@@ -1062,8 +1213,9 @@ void synchronize() {
     for (const auto& [window, identity] : active)
         window->setSuspended(false);
     if (frameTimer) {
-        const auto desired = interaction ? std::chrono::milliseconds((1000 + interaction->fps - 1) / interaction->fps) : FRAME_TIME;
-        if (owners.empty() && !interaction)
+        const auto desired = interaction ? std::chrono::milliseconds((1000 + interaction->fps - 1) / interaction->fps)
+            : owners.empty() && !fullscreenWindows.empty() ? std::chrono::milliseconds(500) : FRAME_TIME;
+        if (owners.empty() && !interaction && fullscreenWindows.empty())
             frameTimer->updateTimeout(std::nullopt);
         else if (!frameTimer->armed() || frameTimer->passed() || desired != frameInterval)
             frameTimer->updateTimeout(desired);
@@ -1193,6 +1345,9 @@ void interactionDetails(lua_State* state, const std::string& owner) {
     booleanField(state, "keyboard", matches && interaction->keyboard);
     booleanField(state, "keyboardFocused", matches && interaction->keyboardFocused);
     booleanField(state, "restoreRequested", false);
+    field(state, "fullscreen", matches ? interaction->constrainFullscreen ? "preview" : "desktop" : "");
+    booleanField(state, "previewFullscreen", matches && fullscreenWindows.contains(interaction->identity.id)
+                 && fullscreenWindows.at(interaction->identity.id).client == Fullscreen::FSMODE_FULLSCREEN);
     field(state, "heldKeys", matches ? interaction->keys.size() : 0);
     field(state, "keyEvents", matches ? interaction->keyEvents : 0);
     if (matches) {
@@ -1232,6 +1387,9 @@ void interactionDetails(lua_State* state, const std::string& owner) {
                 field(state, "id", it->id);
                 field(state, "reason", it->reason);
                 booleanField(state, "restoreRequested", it->restoreRequested && !it->handedOff);
+                field(state, "fullscreen", it->constrainFullscreen ? "preview" : "desktop");
+                booleanField(state, "previewFullscreen", fullscreenWindows.contains(it->id)
+                             && fullscreenWindows.at(it->id).client == Fullscreen::FSMODE_FULLSCREEN);
                 break;
             }
         }
@@ -1282,6 +1440,14 @@ int interactionUpdate(lua_State* state) {
         lua_pop(state, 1);
         if (keyboard && !keyboardSupported)
             throw std::invalid_argument("Keyboard interaction is unavailable: " + keyboardError);
+        lua_getfield(state, 1, "fullscreen");
+        const auto fullscreen = lua_isnil(state, -1) ? std::string("preview") : stringAt(state, -1);
+        lua_pop(state, 1);
+        if (fullscreen != "preview" && fullscreen != "desktop")
+            throw std::invalid_argument("Fullscreen policy must be preview or desktop");
+        const bool constrainFullscreen = fullscreen == "preview";
+        if (constrainFullscreen && !constrainedFullscreenSupported)
+            throw std::invalid_argument("Constrained fullscreen is unavailable: " + fullscreenError);
         lua_getfield(state, 1, "window");
         auto identity = readIdentity(state, -1);
         lua_pop(state, 1);
@@ -1295,6 +1461,10 @@ int interactionUpdate(lua_State* state) {
             throw std::invalid_argument("Release the current window before switching interaction targets");
         if (interaction && interaction->keyboard != keyboard)
             throw std::invalid_argument("Release the current interaction before changing keyboard mode");
+        if (interaction && interaction->constrainFullscreen != constrainFullscreen)
+            throw std::invalid_argument("Release the current interaction before changing fullscreen policy");
+        if (constrainFullscreen && Fullscreen::controller()->getFullscreenModes(identity.window.lock()).internal != Fullscreen::FSMODE_NONE)
+            throw std::invalid_argument("Restore this window before entering preview-constrained fullscreen");
         const auto name = stringField(state, 1, "monitor");
         PHLMONITOR monitor;
         for (const auto& candidate : State::monitorState()->monitors())
@@ -1344,6 +1514,8 @@ int interactionUpdate(lua_State* state) {
         }
         lua_pop(state, 1);
         if (!interaction) {
+            if (!constrainFullscreen)
+                clearConstrainedFullscreen(identity.id);
             interaction.emplace();
             interaction->previousWindow = Desktop::focusState()->window();
             interaction->previousSurface = g_pSeatManager->m_state.keyboardFocus;
@@ -1359,6 +1531,7 @@ int interactionUpdate(lua_State* state) {
         interaction->monitor = monitor;
         interaction->fps = fps;
         interaction->keyboard = keyboard;
+        interaction->constrainFullscreen = constrainFullscreen;
         interaction->exitSymbol = exitSymbol;
         interaction->exitModifiers = exitModifiers;
         interaction->expires = Clock::now() + LEASE_TIME;
@@ -1383,6 +1556,24 @@ int interactionRelease(lua_State* state) {
             rememberEnd(owner, "", "released");
         synchronize();
         lua_pushboolean(state, true);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
+
+int clearFullscreen(lua_State* state) {
+    try {
+        const auto identity = readIdentity(state, 1);
+        const auto found = fullscreenWindows.find(identity.id);
+        if (found != fullscreenWindows.end() && (found->second.identity.address != identity.address
+            || found->second.identity.pid != identity.pid || found->second.identity.stable != identity.stable
+            || found->second.identity.tag != identity.tag))
+            throw std::invalid_argument("The fullscreen preview identity changed");
+        lua_pushboolean(state, clearConstrainedFullscreen(identity.id));
+        synchronize();
         return 1;
     } catch (const std::exception& error) {
         lua_pushnil(state);
@@ -1468,6 +1659,17 @@ int status(lua_State* state) {
     field(state, "frames", frames);
     field(state, "preventedSuspends", preventedSuspends);
     field(state, "popupFrames", popupFrames);
+    field(state, "constrainedFullscreenWindows", fullscreenWindows.size());
+    lua_newtable(state);
+    int fullscreenOrdinal = 1;
+    for (const auto& [id, value] : fullscreenWindows) {
+        lua_newtable(state);
+        field(state, "id", id);
+        field(state, "client", value.client);
+        field(state, "originalClient", value.originalClient);
+        lua_rawseti(state, -2, fullscreenOrdinal++);
+    }
+    lua_setfield(state, -2, "fullscreenWindows");
     lua_newtable(state);
     int ordinal = 1;
     for (const auto& [window, identity] : active) {
@@ -1483,6 +1685,9 @@ int status(lua_State* state) {
     booleanField(state, "exitShortcut", keybindHook != nullptr);
     booleanField(state, "popups", popupsSupported);
     booleanField(state, "handoff", handoffSupported);
+    booleanField(state, "constrainedFullscreen", constrainedFullscreenSupported);
+    field(state, "fullscreenError", fullscreenError);
+    field(state, "fullscreenProtocol", 1);
     field(state, "keyboardError", keyboardError);
     field(state, "interactionProtocol", 1);
     lua_setfield(state, -2, "capabilities");
@@ -1492,6 +1697,7 @@ int status(lua_State* state) {
 int prepareReload(lua_State* state) {
     reloadPending = true;
     endInteraction("bridge-reload");
+    clearAllConstrainedFullscreen();
     owners.clear();
     for (auto& ended : endedInteractions) {
         ended.restoreRequested = false;
@@ -1658,8 +1864,42 @@ void fullscreenChanged(PHLWINDOW candidate) {
     if (!interaction || endingInteraction || !candidate || !sameWindow(interaction->identity, candidate.get(), true))
         return;
     const auto modes = Fullscreen::controller()->getFullscreenModes(candidate);
+    if (interaction->constrainFullscreen && constrainedFullscreenSupported && modes.internal == Fullscreen::FSMODE_NONE)
+        return;
     if (modes.internal != Fullscreen::FSMODE_NONE || modes.client != Fullscreen::FSMODE_NONE)
         requestRestore("source-fullscreen");
+}
+
+void setupFullscreen() {
+    try {
+        const auto functions = HyprlandAPI::findFunctionsByName(handle, "setWindowFullscreenModeClient");
+        const SFunctionMatch* target = nullptr;
+        for (const auto& function : functions) {
+            if (!function.demangled.starts_with("Fullscreen::CFullscreenController::setWindowFullscreenModeClient("))
+                continue;
+            if (target)
+                throw std::runtime_error("Ambiguous client fullscreen function");
+            target = &function;
+        }
+        if (!target)
+            throw std::runtime_error("Missing client fullscreen function");
+        clientFullscreenFunction = target->address;
+        fullscreenModeHook = optionalHook("setFullscreenMode", "Fullscreen::CFullscreenController::setFullscreenMode(",
+                                          reinterpret_cast<const void*>(&setFullscreenMode));
+        fullscreenActionHook = optionalHook("fullscreenWindow", "Config::Actions::fullscreenWindow(Fullscreen::eFullscreenMode, bool,",
+                                            reinterpret_cast<const void*>(&fullscreenWindow));
+        moveWorkspaceHook = optionalHook("moveWindowToWorkspace", "Desktop::CGlobalWindowController::moveWindowToWorkspace(",
+                                         reinterpret_cast<const void*>(&moveWindowToWorkspace));
+        constrainedFullscreenSupported = true;
+    } catch (const std::exception& error) {
+        fullscreenError = error.what();
+        for (auto** hook : {&moveWorkspaceHook, &fullscreenActionHook, &fullscreenModeHook}) {
+            if (*hook)
+                HyprlandAPI::removeFunctionHook(handle, *hook);
+            *hook = nullptr;
+        }
+        clientFullscreenFunction = nullptr;
+    }
 }
 
 void setupHandoff() {
@@ -1738,6 +1978,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "cancel_reload", cancelReload)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_update", interactionUpdate)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_release", interactionRelease)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "clear_fullscreen", clearFullscreen)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_handoff", interactionHandoff))
         throw std::runtime_error("Could not register the preview lease API");
@@ -1747,6 +1988,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
     setupKeyboard();
     setupPopups();
     setupHandoff();
+    setupFullscreen();
     keyboardFocusListener = g_pSeatManager->m_events.keyboardFocusChange.listen(keyboardFocusChanged);
     keyboardEventListener = Event::bus()->m_events.input.keyboard.key.listen(keyboardEvent);
     windowOpenListener = Event::bus()->m_events.window.openEarly.listen(windowOpened);
@@ -1763,6 +2005,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
 APICALL EXPORT void PLUGIN_EXIT() {
     reloadPending = true;
     endInteraction("unloaded");
+    clearAllConstrainedFullscreen();
     mouseMoveListener.reset();
     mouseButtonListener.reset();
     mouseAxisListener.reset();
