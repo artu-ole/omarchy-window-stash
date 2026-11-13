@@ -7,6 +7,13 @@ import live
 
 
 class LiveWaitTests(unittest.TestCase):
+    def test_surface_pointer_coordinates_include_other_outputs_and_scale(self):
+        monitors=[dict(name='left',x=-1280,y=-100,width=1600,height=900,scale=1.25),
+                  dict(name='main',x=0,y=0,width=1920,height=1080,scale=1)]
+        with patch.object(live.h,'read',return_value=monitors):
+            self.assertEqual(live.monitor_point({'name':'main'},120,180),(1400,280,3200,1180))
+            self.assertEqual(live.monitor_point({'name':'left'},120,180),(120,180,3200,1180))
+
     def test_xwayland_uses_nested_compositor_display_and_authority(self):
         for authority in ('/run/user/1000/private-Xauthority','__window_stash_unset__'):
             with self.subTest(authority=authority), \

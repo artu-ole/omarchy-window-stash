@@ -121,6 +121,16 @@ def stash(address):
     return ident
 
 
+def monitor_point(monitor,x,y):
+    """Map a surface-local logical point to the virtual pointer desktop."""
+    monitors=h.read('monitors')
+    current=next(value for value in monitors if value['name']==monitor['name'])
+    left=min(value['x'] for value in monitors);top=min(value['y'] for value in monitors)
+    right=max(value['x']+round(value['width']/value['scale']) for value in monitors)
+    bottom=max(value['y']+round(value['height']/value['scale']) for value in monitors)
+    return current['x']+x-left,current['y']+y-top,right-left,bottom-top
+
+
 def main():
     global original,origin_ws
     original=h.read('activewindow');origin_ws=h.read('activeworkspace')['id']
@@ -166,40 +176,42 @@ def main():
 
     h.dispatch('window.close',window='address:'+x11)
     x11=spawn('Window Stash second native test')
+    m=next(monitor for monitor in h.read('monitors') if monitor['focused'])
+    def surface():return next(value for value in shell('status')['surfaces'] if value['screen']==m['name'])
 
     # Both application windows must group together; per-window mode must not.
     first=stash(native);second=stash(x11)
     configure('grouping','app')
-    wait(lambda:shell('status')['surfaces'][0]['groups']==1,'App grouping failed')
+    wait(lambda:surface()['groups']==1,'App grouping failed')
     configure('grouping','window')
-    wait(lambda:shell('status')['surfaces'][0]['groups']==2,'Window grouping failed')
+    wait(lambda:surface()['groups']==2,'Window grouping failed')
     print('PASS grouping',flush=True)
 
     configure('presentation','bubbles')
-    status=wait(lambda:next((s for s in shell('status')['surfaces'] if len(s['bubbles'])==2),None),'Bubbles did not appear')
+    status=wait(lambda:surface() if len(surface()['bubbles'])==2 else None,'Bubbles did not appear')
     pointer=Pointer()
     try:
         bubble=status['bubbles'][0]
-        width,height=status['width'],status['height']
-        x,y=bubble['x']+24,bubble['y']+24
-        pointer.move(x,y,width,height);pointer.button(True)
+        x,y=bubble['x']+bubble['width']/2,bubble['y']+bubble['height']/2
+        pointer.move(*monitor_point(m,x,y));pointer.button(True)
         for step in range(1,6):
-            pointer.move(x-20*step,y+12*step,width,height);time.sleep(.03)
+            pointer.move(*monitor_point(m,x-20*step,y+12*step));time.sleep(.03)
         pointer.button(False)
         wait(lambda:bool(command('list')['positions']),'Bubble position not saved')
         assert len(command('list')['windows'])==2,'Dragging restored a window'
-        position=next(s for s in shell('status')['surfaces'] if s['screen']==m['name'])['bubbles'][0]
+        position=next(value for value in surface()['bubbles'] if value['key']==bubble['key'])
         assert abs(position['x']-bubble['x'])>30,(position,bubble)
         configure('presentation','dock')
         configure('presentation','bubbles')
-        wait(lambda:any(abs(b['x']-position['x'])<3 for s in shell('status')['surfaces'] for b in s['bubbles']),'Bubble position was not retained')
+        wait(lambda:any(b['key']==bubble['key'] and abs(b['x']-position['x'])<3 for b in surface()['bubbles']),'Bubble position was not retained')
         print('PASS bubble drag and position persistence',flush=True)
 
         configure('presentation','dock')
-        status=wait(lambda:next((s for s in shell('status')['surfaces'] if s['eligible']==2),None),'Dock missing')
+        status=wait(lambda:surface() if surface()['eligible']==2 and surface()['shelf']['icons'] else None,'Dock missing')
         shelf=status['shelf']
         # The first icon is the most recently minimized window.
-        pointer.click(shelf['x']+32,shelf['y']+32,status['width'],status['height'])
+        icon=shelf['icons'][0]
+        pointer.click(*monitor_point(m,icon['x']+icon['width']/2,icon['y']+icon['height']/2))
         wait(lambda:len(command('list')['windows'])==1,'Dock click did not restore')
         print('PASS dock click restoration',flush=True)
     finally:pointer.close()
