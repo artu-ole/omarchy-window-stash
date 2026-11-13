@@ -36,6 +36,7 @@ extern "C" {
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <dlfcn.h>
 #include <limits>
 #include <optional>
 #include <any>
@@ -47,6 +48,9 @@ extern "C" {
 
 #ifndef STASH_BRIDGE_VERSION
 #define STASH_BRIDGE_VERSION "development"
+#endif
+#ifndef STASH_BRIDGE_FINGERPRINT
+#define STASH_BRIDGE_FINGERPRINT "development"
 #endif
 
 namespace {
@@ -132,6 +136,8 @@ CFunctionHook* warpCursorHook = nullptr;
 CFunctionHook* constraintActivateHook = nullptr;
 bool handoffSupported = false;
 bool endingInteraction = false;
+bool reloadPending = false;
+std::string modulePath;
 bool popupsSupported = false;
 CWindow* captureWindow = nullptr;
 uint64_t popupFrames = 0;
@@ -1249,6 +1255,8 @@ int interactionStatus(lua_State* state) {
 
 int interactionUpdate(lua_State* state) {
     try {
+        if (reloadPending)
+            throw std::invalid_argument("Preview support is being reloaded");
         if (lua_type(state, 1) != LUA_TTABLE)
             throw std::invalid_argument("Expected an interaction lease table");
         if (endingInteraction)
@@ -1385,6 +1393,8 @@ int interactionRelease(lua_State* state) {
 
 int interactionHandoff(lua_State* state) {
     try {
+        if (reloadPending)
+            throw std::invalid_argument("Preview support is being reloaded");
         const auto owner = stringAt(state, 1);
         if (!hexadecimal(owner, 32))
             throw std::invalid_argument("Invalid interaction owner");
@@ -1439,7 +1449,18 @@ int status(lua_State* state) {
     lua_newtable(state);
     field(state, "protocol", 1);
     field(state, "version", STASH_BRIDGE_VERSION);
+    field(state, "fingerprint", STASH_BRIDGE_FINGERPRINT);
+    field(state, "modulePath", modulePath);
     field(state, "hyprlandHash", GIT_COMMIT_HASH);
+    field(state, "reloadProtocol", 1);
+    booleanField(state, "reloadPending", reloadPending);
+    field(state, "pendingButtons", releasedButtons.size());
+    field(state, "pendingKeys", releasedKeys.size());
+    // Keep filtering synthetic cleanup's later physical releases until they
+    // arrive. Removing hooks earlier could leak a release to another window or
+    // trigger an unrelated release-bound window-manager action.
+    booleanField(state, "reloadReady", reloadPending && !interaction && !endingInteraction
+                 && owners.empty() && active.empty() && releasedButtons.empty() && releasedKeys.empty());
     field(state, "owners", owners.size());
     field(state, "windows", active.size());
     field(state, "leaseTimeout", LEASE_TIME.count());
@@ -1468,8 +1489,27 @@ int status(lua_State* state) {
     return 1;
 }
 
+int prepareReload(lua_State* state) {
+    reloadPending = true;
+    endInteraction("bridge-reload");
+    owners.clear();
+    for (auto& ended : endedInteractions) {
+        ended.restoreRequested = false;
+        ended.handedOff = true;
+    }
+    synchronize();
+    return status(state);
+}
+
+int cancelReload(lua_State* state) {
+    reloadPending = false;
+    return status(state);
+}
+
 int update(lua_State* state) {
     try {
+        if (reloadPending)
+            throw std::invalid_argument("Preview support is being reloaded");
         if (lua_type(state, 1) != LUA_TTABLE)
             throw std::invalid_argument("Expected a preview lease table");
         const auto owner = stringField(state, 1, "owner");
@@ -1669,6 +1709,10 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
     handle = plugin;
+    Dl_info module{};
+    if (!dladdr(reinterpret_cast<const void*>(&status), &module) || !module.dli_fname)
+        throw std::runtime_error("Cannot identify the preview bridge module path");
+    modulePath = module.dli_fname;
     // Match both the commit and dependency ABI before touching any compositor
     // objects or hooking functions. The bridge is always compiled locally.
     if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash()
@@ -1690,6 +1734,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
     if (!HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "update", update)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "release", release)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "status", status)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "prepare_reload", prepareReload)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "cancel_reload", cancelReload)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_update", interactionUpdate)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_release", interactionRelease)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus)
@@ -1715,6 +1761,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    reloadPending = true;
     endInteraction("unloaded");
     mouseMoveListener.reset();
     mouseButtonListener.reset();
