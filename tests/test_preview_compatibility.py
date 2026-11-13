@@ -535,7 +535,7 @@ class PreviewCompatibilityTests(unittest.TestCase):
             version.write_text(expected+'\n')
             with patch('preview.ROOT', root):
                 probe = InteractionBridge(FakeHypr()).interaction_probe
-            for loaded, protocol in (('1.29.1', 1), ('1.29.0', 1), ('1.24.0', 1), ('1.29.2', 1), ('1.29.3', 1), ('1.29.4', 1), ('1.29.5', 1), ('1.29.1', 2)):
+            for loaded, protocol in (('1.29.1', 1), ('1.29.0', 1), ('1.24.0', 1), ('1.29.2', 1), ('1.29.3', 1), ('1.29.4', 1), ('1.29.5', 1), ('1.29.6', 1), ('1.29.1', 2)):
                 prelude = ('hl={plugin={window_stash_preview={status=function() return '
                            '{protocol='+str(protocol)+',version="'+loaded+'"} end,'
                            'update=function() end,interaction_update=function() end,'
@@ -544,7 +544,8 @@ class PreviewCompatibilityTests(unittest.TestCase):
                 compatible = {'1.29.2': ('1.29.1',), '1.29.3': ('1.29.1', '1.29.2'),
                               '1.29.4': ('1.29.1', '1.29.2', '1.29.3'),
                               '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4'),
-                              '1.29.6': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5')}
+                              '1.29.6': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5'),
+                              '1.29.7': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5', '1.29.6')}
                 allowed = protocol == 1 and (loaded == expected or loaded in compatible.get(expected, ()))
                 self.assertEqual(result.returncode == 0, allowed, (expected, loaded, protocol, result.stderr))
 

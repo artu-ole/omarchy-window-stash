@@ -53,12 +53,18 @@ an overwritten legacy cache entry is never guessed at. Cancellation before unloa
 preserves the old bridge; after unload replacement completes even if the shell
 closes its pipe. `--watch-stdin` binds pre-unload cancellation to that pipe.
 
-`capabilities.superClickActivation` enables Super+left-click entry from a preview.
-The existing mouse listener consumes a completed click only on the exact focused
-interactive-preview layer root, then reports the gesture over compositor IPC for
-QML to validate its selected source. It never modifies desktop mouse bindings or
-forwards the activating click to an app. `pendingSuperClick` tracks a held gesture;
-it contributes to `pendingButtons` and blocks `reloadReady` until released.
+`capabilities.superClickActivation` enables Super+left-click entry from a preview;
+`capabilities.superCornerResize` adds free-aspect Super+corner dragging. The existing
+mouse listener consumes a press only on the exact focused preview layer root,
+then reports `press`, `move` and a terminal `release`, `drag-release` or `cancel`
+over compositor IPC. QML pins and validates the selected source and corner. Motion
+can leave the original input region while its layer remains mapped and visible;
+focus loss still invalidates click activation, and movement beyond six logical
+pixels always produces a drag release. Lock, reload, workspace/monitor changes,
+other buttons or source-layer destruction cancel the gesture. Desktop mouse
+bindings remain unchanged and no activating click reaches an app.
+`pendingSuperClick` tracks the held physical pair; it contributes to
+`pendingButtons` and blocks `reloadReady` until released.
 
 The original render-only bridge drains through its lease timeout. The first
 experimental interactive bridge cannot expose pending physical-release filters;

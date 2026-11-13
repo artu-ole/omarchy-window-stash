@@ -110,10 +110,13 @@ int main() {
  g_pInputManager->modifiers = 64 | 2 | 16; // Lock modifiers do not change chord.
  assert(press()); assert(release() && lastPhase() == "release");
  g_pInputManager->modifiers = 64;
- // Maximum displacement survives returning to the exact initial coordinates.
- assert(press()); superClickMotion({307,200}); superClickMotion({300,200});
- assert(release() && lastPhase() == "cancel");
- assert(press()); superClickMotion({303,204});
+ // Motion belongs to the same serial. A drag never turns back into click
+ // activation after returning to its starting point.
+ assert(press()); auto dragSerial = superClickGesture->serial;
+ superClickMotion({307,200},true); assert(lastPhase() == "move" && superClickGesture->serial == dragSerial);
+ superClickMotion({300,200},true); assert(lastPhase() == "move");
+ assert(release() && lastPhase() == "drag-release");
+ assert(press()); superClickMotion({303,204},true); assert(lastPhase() == "move");
  assert(release() && lastPhase() == "release");
  // Another physical button can follow its normal route but cancels activation.
  assert(press()); Event::SCallbackInfo other;
@@ -132,11 +135,30 @@ int main() {
  wrapper->owner = std::make_shared<View>(); assert(!press()); wrapper->owner = layer;
  g_pSeatManager->m_state.pointerFocus = alternate; assert(!press());
  g_pSeatManager->m_state.pointerFocus = source;
- // Focus/source loss invalidates even when it returns before release.
- assert(press()); g_pSeatManager->m_state.pointerFocus = alternate; superClickMotion({300,200});
+ // A fast resize can outrun the previous frame's input region. The scoped
+ // stream continues while the original layer remains valid, without allowing
+ // focus loss to replay click activation if the pointer returns.
+ assert(press()); g_pSeatManager->m_state.pointerFocus = alternate; superClickMotion({340,240},true);
+ assert(lastPhase() == "move" && !superClickGesture->cancelled && superClickGesture->clickCancelled);
+ g_pSeatManager->m_state.pointerFocus = source; assert(release() && lastPhase() == "drag-release");
+ assert(press()); g_pSeatManager->m_state.pointerFocus = alternate; superClickMotion({300,200},true);
  g_pSeatManager->m_state.pointerFocus = source; assert(release() && lastPhase() == "cancel");
  assert(press()); cancelSuperClick(); assert(superClickGesture);
+ auto cancelledCount = g_pEventManager->events.size(); superClickMotion({350,250},true);
+ assert(g_pEventManager->events.size() == cancelledCount);
  assert(release() && lastPhase() == "cancel");
+ // Losing mapping, namespace or the exact root cancels a held drag even if
+ // ordinary pointer focus has already left it.
+ for (int change = 0; change < 3; ++change) {
+  assert(press()); g_pSeatManager->m_state.pointerFocus = alternate;
+  if (change == 0) source->m_mapped = false;
+  if (change == 1) layer->m_namespace = "other";
+  if (change == 2) layer->root->root = alternate;
+  superClickMotion({350,250},true); assert(superClickGesture->cancelled && lastPhase() == "press");
+  assert(release() && lastPhase() == "cancel");
+  source->m_mapped = true; layer->m_namespace = "omarchy-window-stash-interactive-previews";
+  layer->root->root = source; g_pSeatManager->m_state.pointerFocus = source;
+ }
  // Native reload/lock/exclusive/constraint/drag are fail-closed. A reload that
  // is cancelled while held must not replay the previously invalidated click.
  auto blocked = [&](bool& flag) { flag = true; assert(!press()); flag = false; };
@@ -160,6 +182,9 @@ int main() {
  assert(release() && lastPhase() == "release"); g_pKeybindManager->m_pressedKeys.clear();
  assert(press()); reloadPending = true; cancelSuperClick(); reloadPending = false;
  assert(superClickGesture && release() && lastPhase() == "cancel");
+ assert(press()); superClickMotion({350,250},true); assert(lastPhase() == "move");
+ reloadPending = true; superClickMotion({360,260},true);
+ assert(superClickGesture->cancelled && release() && lastPhase() == "cancel"); reloadPending = false;
  assert(press()); g_pSessionLockManager->locked = true;
  assert(release() && lastPhase() == "cancel"); g_pSessionLockManager->locked = false;
  // Even an expired weak surface cannot compare equal to an absent focus and
@@ -193,6 +218,7 @@ class SuperClickNativeTests(unittest.TestCase):
         structure = re.search(r'^struct SuperClickGesture \{.*?^\};', source, re.M | re.S)[0]
         state = '\nstd::optional<SuperClickGesture> superClickGesture;\nuint32_t superClickSerial = 0;\n'
         functions = ''.join(production_function(result, name)+'\n' for result, name in (
+            ('bool', 'superClickBlocked'), ('bool', 'superClickSurfaceValid'),
             ('SP<CWLSurfaceResource>', 'superClickSurface'), ('void', 'emitSuperClick'),
             ('void', 'cancelSuperClick'), ('void', 'superClickMotion'), ('bool', 'superClickButton')))
         with tempfile.TemporaryDirectory(prefix='stash-super-click-native-') as temporary:

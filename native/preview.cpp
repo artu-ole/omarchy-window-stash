@@ -223,6 +223,7 @@ struct SuperClickGesture {
     Vector2D position;
     double maximumDisplacement = 0;
     bool cancelled = false;
+    bool clickCancelled = false;
 };
 std::optional<SuperClickGesture> superClickGesture;
 uint32_t superClickSerial = 0;
@@ -1431,27 +1432,33 @@ bool focusPoint(const Vector2D& global, uint32_t time) {
     return true;
 }
 
-SP<CWLSurfaceResource> superClickSurface() {
-    if (endingInteraction || reloadPending || g_pSessionLockManager->isSessionLocked()
+bool superClickBlocked() {
+    return endingInteraction || reloadPending || g_pSessionLockManager->isSessionLocked()
         || !g_pInputManager->m_exclusiveLSes.empty() || g_pInputManager->isConstrained()
         || g_layoutManager->dragController()->target()
         || !releasedButtons.empty()
         || (interaction && (!interaction->buttons.empty() || contentHit(g_pInputManager->getMouseCoordsInternal())))
         || std::any_of(g_pKeybindManager->m_pressedKeys.begin(), g_pKeybindManager->m_pressedKeys.end(),
             [](const auto& key) { return key.keyName.starts_with("mouse:"); })
-        || (g_pSeatManager->m_seatGrab && g_pSeatManager->m_seatGrab->m_pointer))
+        || (g_pSeatManager->m_seatGrab && g_pSeatManager->m_seatGrab->m_pointer);
+}
+
+bool superClickSurfaceValid(const SP<CWLSurfaceResource>& surface) {
+    const auto owner = Desktop::View::CWLSurface::fromResource(surface);
+    const auto layer = owner ? Desktop::View::CLayerSurface::fromView(owner->view()) : nullptr;
+    return surface && surface->m_mapped && layer && layer->m_mapped && layer->aliveAndVisible()
+        && layer->m_namespace == "omarchy-window-stash-interactive-previews"
+        && layer->wlSurface() && layer->wlSurface()->resource() == surface;
+}
+
+SP<CWLSurfaceResource> superClickSurface() {
+    if (superClickBlocked())
         return nullptr;
     // A different miniature may be selected while one source is interactive.
     // Its actual layer focus must be outside that source's content/grab; leave
     // the old lease intact until Qt completes the ordinary replacement queue.
     const auto surface = g_pSeatManager->m_state.pointerFocus.lock();
-    const auto owner = Desktop::View::CWLSurface::fromResource(surface);
-    const auto layer = owner ? Desktop::View::CLayerSurface::fromView(owner->view()) : nullptr;
-    if (!surface || !surface->m_mapped || !layer || !layer->m_mapped || !layer->aliveAndVisible()
-        || layer->m_namespace != "omarchy-window-stash-interactive-previews"
-        || !layer->wlSurface() || layer->wlSurface()->resource() != surface)
-        return nullptr;
-    return surface;
+    return superClickSurfaceValid(surface) ? surface : nullptr;
 }
 
 void emitSuperClick(const SuperClickGesture& gesture, const std::string& phase, const Vector2D& position) {
@@ -1467,15 +1474,24 @@ void cancelSuperClick() {
         superClickGesture->cancelled = true;
 }
 
-void superClickMotion(const Vector2D& position) {
-    if (!superClickGesture)
+void superClickMotion(const Vector2D& position, bool report = false) {
+    if (!superClickGesture || superClickGesture->cancelled)
         return;
     auto& gesture = *superClickGesture;
     gesture.maximumDisplacement = std::max(gesture.maximumDisplacement,
         std::hypot(position.x - gesture.position.x, position.y - gesture.position.y));
     const auto surface = gesture.surface.lock();
-    if (gesture.maximumDisplacement > 6 || !surface || superClickSurface() != surface)
+    if (!surface || superClickBlocked() || !superClickSurfaceValid(surface)) {
         gesture.cancelled = true;
+        return;
+    }
+    // The physical press belongs to this exact layer until release, even if a
+    // fast corner drag outruns its input region. Focus loss still invalidates a
+    // click; only Qt's pinned resize target may use the continuing motion stream.
+    if (g_pSeatManager->m_state.pointerFocus.lock() != surface)
+        gesture.clickCancelled = true;
+    if (report)
+        emitSuperClick(gesture, "move", position);
 }
 
 bool superClickButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
@@ -1490,7 +1506,8 @@ bool superClickButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo&
         const auto gesture = *superClickGesture;
         superClickGesture.reset();
         info.cancelled = true;
-        emitSuperClick(gesture, gesture.cancelled ? "cancel" : "release", position);
+        emitSuperClick(gesture, gesture.cancelled ? "cancel"
+            : gesture.maximumDisplacement > 6 ? "drag-release" : gesture.clickCancelled ? "cancel" : "release", position);
         return true;
     }
     if (event.state != WL_POINTER_BUTTON_STATE_PRESSED || info.cancelled)
@@ -1517,7 +1534,7 @@ bool superClickButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo&
 }
 
 void mouseMove(const Vector2D& global, Event::SCallbackInfo& info) {
-    superClickMotion(global);
+    superClickMotion(global, true);
     if (!validateInteraction() || (!contentHit(global) && interaction->buttons.empty()))
         return;
     const auto owner = interaction->owner;
@@ -2345,6 +2362,7 @@ int status(lua_State* state) {
     booleanField(state, "constrainedFullscreen", constrainedFullscreenSupported);
     booleanField(state, "sourceGeometry", true);
     booleanField(state, "superClickActivation", true);
+    booleanField(state, "superCornerResize", true);
     field(state, "fullscreenError", fullscreenError);
     field(state, "fullscreenProtocol", 1);
     field(state, "keyboardError", keyboardError);
@@ -2653,8 +2671,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
     setupFullscreen();
     keyboardFocusListener = g_pSeatManager->m_events.keyboardFocusChange.listen(keyboardFocusChanged);
     superClickFocusListener = g_pSeatManager->m_events.pointerFocusChange.listen([] {
-        if (superClickGesture && superClickSurface() != superClickGesture->surface.lock())
-            cancelSuperClick();
+        if (superClickGesture && g_pSeatManager->m_state.pointerFocus.lock() != superClickGesture->surface.lock())
+            superClickGesture->clickCancelled = true;
     });
     keyboardEventListener = Event::bus()->m_events.input.keyboard.key.listen(keyboardEvent);
     windowOpenListener = Event::bus()->m_events.window.openEarly.listen(windowOpened);

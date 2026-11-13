@@ -24,6 +24,7 @@ FULLSCREEN_REQUIRED = 'Reload preview support in Window Stash Settings to keep f
 GEOMETRY_REQUIRED = 'Reload preview support in Window Stash Settings to interact with a reshaped preview'
 GEOMETRY_PENDING = 'The application has not finished resizing its preview'
 SHORTCUT_REQUIRED = 'Reload preview support in Window Stash Settings to use Super+left click'
+CORNER_RESIZE_REQUIRED = 'Reload preview support in Window Stash Settings to resize preview corners with Super'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
 RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
@@ -152,17 +153,18 @@ class InteractionBridge(PreviewBridge):
         super().ensure()
         self.hypr.eval(self.interaction_probe)
 
-    def prepare_shortcut(self):
+    def prepare_shortcut(self, resize=False):
         # Prepare interception before the first click, including Standard/Still
         # previews. This takes no input/rendering lease and never replaces a
         # loaded bridge. Older bridges retain their ordinary Interact control.
         self.ensure()
         with self.operation():
             supported = self.hypr.call('repl', self.interaction_probe
-                + 'return info.capabilities and info.capabilities.superClickActivation==true or false')
+                + 'return info.capabilities and info.capabilities.superClickActivation==true'
+                + (' and info.capabilities.superCornerResize==true' if resize else '')+' or false')
         if supported != 'true':
-            raise RuntimeError(SHORTCUT_REQUIRED)
-        return dict(state='ready')
+            raise RuntimeError(CORNER_RESIZE_REQUIRED if resize else SHORTCUT_REQUIRED)
+        return dict(state='ready', cornerResize=True) if resize else dict(state='ready')
 
     def interaction_update(self, owner, source, target):
         with self.operation():
@@ -406,7 +408,7 @@ def run_loop(stream, keeper, emit):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prepare', action='store_true',
-                        help='Prepare Super-click activation without acquiring input or rendering')
+                        help='Prepare preview Super-click/resize gestures without acquiring input or rendering')
     arguments = parser.parse_args()
 
     def emit(value):
@@ -420,10 +422,12 @@ def main():
     if arguments.prepare:
         try:
             settings = Stash().settings()
-            if settings['presentation'] != 'previews' or settings['floatingPreviewInteraction'] != 'on':
+            resize = (settings.get('floatingPreviewSizing', 'free') != 'preset'
+                      and settings.get('floatingPreviewLock', 'unlocked') != 'locked')
+            if settings['presentation'] != 'previews' or (settings['floatingPreviewInteraction'] != 'on' and not resize):
                 emit(dict(state='disabled'))
             else:
-                emit(InteractionBridge(progress=emit).prepare_shortcut())
+                emit(InteractionBridge(progress=emit).prepare_shortcut(resize=resize))
             return 0
         except PreviewStopped:
             return 0
