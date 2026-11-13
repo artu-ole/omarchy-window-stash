@@ -616,9 +616,13 @@ class Stash:
         requested = preview_source_size(before['size'], aspect, axis)
         changed = requested != before['size']
         if changed:
-            record['previewResized'] = True
+            # Persist the safety marker before the first source mutation. The
+            # working viewport is not restoration metadata, so later drag
+            # targets need no ledger rewrite or filesystem refresh traffic.
+            if record.get('previewResized') is not True:
+                record['previewResized'] = True
+                self.save()
             identity['previewResized'] = True
-            self.save()
             result = self.hypr.preview_geometry(identity, requested, expected_size=before['size'])
         else:
             result = before
