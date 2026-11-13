@@ -46,6 +46,10 @@ def number(session, key):
     return next(c for c in session.surface()['numberControls'] if c['key'] == key)
 
 
+def opacity(session, key):
+    return next(c for c in session.surface()['opacityControls'] if c['key'] == key)
+
+
 def wheel(session, steps):
     viewport = session.surface()['settingsScroll']['rect']
     session.move(viewport['x']+3, viewport['y']+viewport['height']/2)
@@ -201,6 +205,19 @@ def all_controls(session):
         session.keys('-M', 'ctrl', '-k', 'a', '-m', 'ctrl', str(entry['value']), '-k', 'Return')
         wait(lambda: shell('status')['settings'][key] == entry['value'], 'Editing an unchanged numeric field changed it: '+key)
         reached.add(key)
+    for entry in session.surface()['opacityControls']:
+        if not entry['visible']:
+            continue
+        key, value = entry['key'], entry['value']
+        session.click(reveal(session, lambda: opacity(session, key)['rect']))
+        assert session.surface()['settingsScroll']['focusedKey'] == key, 'Opacity slider could not receive focus: '+key
+        if value <= 50:
+            session.keys('-k', 'Home', *(['-k', 'Right']*value))
+        else:
+            session.keys('-k', 'End', *(['-k', 'Left']*(100-value)))
+        wait(lambda: shell('status')['settings'][key] == value and opacity(session, key)['liveValue'] == value,
+             'Keyboard slider adjustment did not preserve its saved value: '+key)
+        reached.add(key)
     for entry in session.surface()['shortcutControls']:
         if not entry.get('visible', True):
             continue
@@ -217,6 +234,7 @@ def all_controls(session):
 def tab_focus(session):
     expected = {c['key'] for c in session.surface()['settingControls'] if c['visible']}
     expected |= {c['key'] for c in session.surface()['numberControls'] if c['visible']}
+    expected |= {c['key'] for c in session.surface()['opacityControls'] if c['visible']}
     expected |= {c['key'] for c in session.surface()['shortcutControls'] if c.get('visible', True)}
     dropdown(session, 'presentation')
     seen = {'presentation'}

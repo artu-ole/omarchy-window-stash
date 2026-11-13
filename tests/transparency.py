@@ -86,9 +86,20 @@ def main():
         shell('settings');wait(lambda:surface()['dialog']['visible'],'Settings did not settle')
         for key,value in (('dockOpacity',30),('iconOpacity',35)):
             c=next(c for c in surface()['opacityControls'] if c['key']==key)
-            assert c['visible'];click(c['rect'])
-            subprocess.run(['wtype','-M','ctrl','-k','a','-m','ctrl',str(value),'-k','Return'],check=True)
-            wait(lambda:shell('status')['settings'][key]==value,'Numeric opacity did not save: '+key)
+            assert c['visible']
+            rect=c['rect'];left=rect['x']+c['knobSize']/2;span=rect['width']-c['knobSize']
+            assert span>100,'Opacity slider track is too narrow for this pointer test'
+            start=left+span*c['value']/100;target=left+span*value/100;y=rect['y']+rect['height']/2
+            move(round(start),round(y));pointer.button(True)
+            try:
+                for step in range(1,7):
+                    move(round(start+(target-start)*step/6),round(y));time.sleep(.02)
+                wait(lambda:any(item['key']==key and item['dragging'] and item['liveValue']==value
+                                for item in surface()['opacityControls']),'Opacity slider did not track the drag: '+key)
+                assert shell('status')['settings'][key]==c['value'],'Opacity drag wrote an intermediate preference'
+            finally:
+                pointer.button(False)
+            wait(lambda:shell('status')['settings'][key]==value,'Opacity slider did not save: '+key)
             assert type(command('list')['settings'][key]) is int
         shell('configure','iconOpacity','101')
         assert shell('status')['settings']['iconOpacity']==35 and shell('status')['error']
@@ -114,7 +125,7 @@ def main():
         mix_check(clear,opaque,dim,.3)
         hover(sample);alpha(frame_feedback,1);assert abs(icon_feedback()['opacity']-.35)<.001
         click(icon());wait(lambda:surface()['groups']==1,'Transparent static icon did not restore');park(windows[-1]);settle_static(2)
-        print('PASS native numeric settings, validation, actual independent pixel alpha, smooth full-opacity hover, zero-opacity hit area and restore',flush=True)
+        print('PASS native opacity sliders, release persistence, validation, actual independent pixel alpha, smooth full-opacity hover, zero-opacity hit area and restore',flush=True)
 
         configure('presentation','bubbles');configure('iconFrame','hidden')
         wait(lambda:len(surface()['bubbles'])==2 and not surface()['motion']['bubbleBusy'] and not any(b['animating'] for b in surface()['bubbles']),'Bubbles did not settle')

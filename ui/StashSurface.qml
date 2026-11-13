@@ -290,13 +290,14 @@ PanelWindow {
     }
   }
   function numberItems() {
-    var rows=[iconOpacityRow,radiusRow,dockOpacityRow]
+    var rows=[radiusRow]
     for (var i=0;i<previewTimingRows.count;i++) {
       var row=previewTimingRows.itemAt(i)
       if (row) rows.push(row)
     }
     return rows
   }
+  function opacityItems() { return [iconOpacityRow,dockOpacityRow] }
   function within(item,ancestor) {
     for (var current=item;current;current=current.parent) if (current===ancestor) return true
     return false
@@ -307,9 +308,10 @@ PanelWindow {
   }
   function settingsFocusTarget(item) {
     if (!item) return null
-    var choices=settingItems(),numbers=numberItems()
+    var choices=settingItems(),numbers=numberItems(),opacities=opacityItems()
     for (var i=0;i<choices.length;i++) if (within(item,choices[i].selector)) return choices[i].selector
     for (var j=0;j<numbers.length;j++) if (within(item,numbers[j].numberField.field)) return numbers[j].numberField.field
+    for (var k=0;k<opacities.length;k++) if (within(item,opacities[k].slider)) return opacities[k].slider
     var shortcuts=shortcutItems()
     for (var n=0;n<shortcuts.length;n++) {
       var row=shortcuts[n]
@@ -332,12 +334,15 @@ PanelWindow {
     var item=settingsFocusedItem(),target=settingsFocusTarget(item)
     var result={rect:target ? itemRect(target) : null,activeRect:item ? itemRect(item) : null,key:"",part:""}
     if (!item) return result
-    var choices=settingItems(),numbers=numberItems()
+    var choices=settingItems(),numbers=numberItems(),opacities=opacityItems()
     for (var i=0;i<choices.length;i++) {
       if (within(item,choices[i])) { result.key=choices[i].modelData.key;result.part="choice";return result }
     }
     for (var j=0;j<numbers.length;j++) {
       if (within(item,numbers[j])) { result.key=numbers[j].modelData.key;result.part="number";return result }
+    }
+    for (var p=0;p<opacities.length;p++) {
+      if (within(item,opacities[p])) { result.key=opacities[p].modelData.key;result.part="slider";return result }
     }
     var shortcuts=shortcutItems()
     for (var n=0;n<shortcuts.length;n++) {
@@ -489,7 +494,6 @@ PanelWindow {
     required property var modelData
     readonly property alias numberField:settingNumber
     visible:(modelData.key!=="dockCornerRadius" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible && surface.config.dockCorners==="custom"))
-      && (modelData.key!=="dockOpacity" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible))
       && (["previewDelay","previewHideDelay"].indexOf(modelData.key)<0 || surface.previewsEnabled)
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
@@ -511,6 +515,78 @@ PanelWindow {
       onModified:function(value) { surface.stash.setting(settingRow.modelData.key,value) }
     }
   }
+  component SettingOpacity:GridLayout {
+    id:settingRow
+    required property var modelData
+    readonly property alias slider:settingSlider
+    visible:modelData.key!=="dockOpacity" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible)
+    Layout.fillWidth:true; Layout.minimumWidth:0
+    columns:width<Style.space(400) ? 1 : 2
+    columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
+    function save(value) {
+      var next=Math.max(0,Math.min(100,Math.round(value)))
+      if (next!==settingSlider.value) surface.stash.setting(modelData.key,next)
+    }
+    Text {
+      text:settingRow.modelData.label; textFormat:Text.PlainText
+      wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
+      color:surface.popupColors.text
+      font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+    }
+    RowLayout {
+      Layout.minimumWidth:0; Layout.maximumWidth:Math.max(0,settingRow.width); Layout.fillWidth:settingRow.columns===1
+      Layout.preferredWidth:settingRow.columns===1 ? settingRow.width : Math.min(surface.metrics.dropdownWidth,settingRow.width*.55)
+      spacing:surface.metrics.sm
+      Ui.PanelSlider {
+        id:settingSlider
+        Layout.fillWidth:true; Layout.minimumWidth:0
+        minimum:0; maximum:100; step:1; integer:true
+        value:surface.config[settingRow.modelData.key]===undefined ? 100 : surface.config[settingRow.modelData.key]
+        bar:QtObject {
+          property color foreground:surface.popupColors.text
+          property color background:surface.popupColors.background
+        }
+        activeFocusOnTab:true
+        Accessible.role:Accessible.Slider
+        Accessible.name:settingRow.modelData.label
+        Accessible.description:Math.round(liveValue)+"%"
+        Accessible.onIncreaseAction:settingRow.save(value+1)
+        Accessible.onDecreaseAction:settingRow.save(value-1)
+        onDraggingChanged:if(dragging) forceActiveFocus(Qt.MouseFocusReason)
+        // Keep dragging local; writing each motion event would repeatedly
+        // persist the host settings and refresh the stash snapshot.
+        onReleased:function(value) { settingRow.save(value) }
+        Keys.onPressed:function(event) {
+          if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+          var next=value,step=event.modifiers & Qt.ShiftModifier ? 10 : 1
+          if (event.key===Qt.Key_Home) next=minimum
+          else if (event.key===Qt.Key_End) next=maximum
+          else if (event.key===Qt.Key_Right) next+=mirrored ? -step : step
+          else if (event.key===Qt.Key_Left) next+=mirrored ? step : -step
+          else if (event.key===Qt.Key_Up) next+=step
+          else if (event.key===Qt.Key_Down) next-=step
+          else if (event.key===Qt.Key_PageUp) next+=10
+          else if (event.key===Qt.Key_PageDown) next-=10
+          else return
+          settingRow.save(next);event.accepted=true
+        }
+        Rectangle {
+          anchors.fill:parent; radius:Style.cornerRadius
+          visible:settingSlider.activeFocus
+          color:"transparent"; border.width:Style.normalBorderWidth; border.color:surface.popupColors.text
+        }
+      }
+      TextMetrics { id:percentMeasure; font:percentLabel.font; text:"100%" }
+      Text {
+        id:percentLabel
+        Layout.preferredWidth:percentMeasure.advanceWidth
+        text:Math.round(settingSlider.liveValue)+"%"; textFormat:Text.PlainText
+        horizontalAlignment:Text.AlignRight
+        color:surface.popupColors.text
+        font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+      }
+    }
+  }
   function details() {
     var menuDetails=contextMenu.details()
     var currentDialog=menuDetails.opened ? {x:menuDetails.rect.x,y:menuDetails.rect.y,width:menuDetails.rect.width,height:menuDetails.rect.height,visible:menuDetails.visible,rendered:menuDetails.rendered,progress:menuDetails.progress}
@@ -530,10 +606,12 @@ PanelWindow {
         popupCurrentRect:row.selector.popupCurrentRect()})
     }
     var opacityControls=[]
-    var opacityItems=[iconOpacityRow,dockOpacityRow]
-    for (var k=0;k<opacityItems.length;k++) {
-      var opacityRow=opacityItems[k] as SettingNumber
-      if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
+    var opacityRows=opacityItems()
+    for (var k=0;k<opacityRows.length;k++) {
+      var opacityRow=opacityRows[k] as SettingOpacity
+      if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.slider.value,
+        liveValue:Math.round(opacityRow.slider.liveValue),visible:opacityRow.visible,rect:itemRect(opacityRow.slider),
+        knobSize:opacityRow.slider.knobSize,dragging:opacityRow.slider.dragging})
     }
     var shortcutControls=[]
     var shortcutFields=shortcutItems()
@@ -1108,6 +1186,7 @@ PanelWindow {
         contentWidth:width; contentHeight:settingsBody.implicitHeight
         boundsBehavior:Flickable.StopAtBounds
         flickableDirection:Flickable.VerticalFlick
+        interactive:!iconOpacityRow.slider.dragging && !dockOpacityRow.slider.dragging
         clip:true
         onHeightChanged:settingsFocusDelay.restart()
         onContentYChanged:if (!surface.stash.resetConfirmation && !surface.settingsScrollRestoring)
@@ -1217,7 +1296,7 @@ PanelWindow {
             ]
             delegate:SettingChoice {}
           }
-          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview and icon opacity (%)" : "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          SettingOpacity { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview and icon opacity" : "Icon opacity", section: "appearance"}) }
           Repeater {
             id:dockRows
             model:[
@@ -1227,7 +1306,7 @@ PanelWindow {
             delegate:SettingChoice {}
           }
           SettingNumber { id:radiusRow; modelData:({key: "dockCornerRadius", label: "Corner radius (px)", maximum: 64, defaultValue: 12, section: "appearance"}) }
-          SettingNumber { id:dockOpacityRow; modelData:({key: "dockOpacity", label: "Dock opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          SettingOpacity { id:dockOpacityRow; modelData:({key: "dockOpacity", label: "Dock opacity", section: "appearance"}) }
           Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
           Ui.PanelSectionHeader { id:motionHeader; text:"Motion"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
