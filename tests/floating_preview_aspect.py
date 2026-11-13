@@ -39,19 +39,38 @@ def require_isolated():
     assert not command('list')['windows'], 'Use an empty disposable stash'
 
 
-def spawn(session, log, workspace=None, app='org.windowstash.AspectFixture'):
+def spawn(session, log, workspace=None, app='org.windowstash.AspectFixture', xwayland=False):
     wanted = session.workspace if workspace is None else workspace
     h.dispatch('focus', workspace=str(wanted))
     title = 'Stash aspect '+str(os.getpid())+' '+str(len(session.addresses))
+    environment = dict(os.environ, GDK_BACKEND='x11' if xwayland else 'wayland')
+    if xwayland:
+        # The test launcher can inherit Cage's display before the nested
+        # compositor starts XWayland. Read only the actual compositor's env.
+        display = h.call('repl', "return os.getenv('DISPLAY') or '__window_stash_unset__'")
+        assert display.startswith(':') and display[1:].split('.', 1)[0].isdigit(), \
+            'The disposable compositor has no XWayland display'
+        environment['DISPLAY'] = display
+        authority = h.call('repl', "return os.getenv('XAUTHORITY') or '__window_stash_unset__'")
+        if authority == '__window_stash_unset__':
+            environment.pop('XAUTHORITY', None)
+        else:
+            environment['XAUTHORITY'] = authority
     with log.with_suffix('.stderr').open('w') as errors:
         process = subprocess.Popen(['/usr/bin/python3', str(ROOT/'tests/preview-aspect-window.py'), title, str(log), app],
-                                   env=dict(os.environ, GDK_BACKEND='wayland'),
+                                   env=environment,
                                    stdout=subprocess.DEVNULL, stderr=errors)
     session.processes.append(process)
-    client = wait(lambda: next((value for value in h.read('clients') if value['title'] == title), None),
-                  'Responsive fixture did not open')
+    try:
+        client = wait(lambda: next((value for value in h.read('clients') if value['title'] == title), None),
+                      'Responsive fixture did not open')
+    except AssertionError:
+        print('Responsive fixture startup:', {'backend': environment['GDK_BACKEND'], 'display': environment.get('DISPLAY'),
+              'exit': process.poll(), 'stderr': log.with_suffix('.stderr').read_text()[-2000:]}, flush=True)
+        raise
     address = client['address']
     session.addresses.append(address)
+    assert client['xwayland'] == xwayland, 'Responsive source used an unexpected display protocol'
     wait(lambda: events(log, 'allocation'), 'Responsive fixture did not paint')
     h.dispatch('window.float', window='address:'+address, action='on')
     h.dispatch('window.resize', window='address:'+address, x=800, y=600, relative=False)
@@ -211,9 +230,9 @@ def shell_ready():
     return value if isinstance(value, dict) and value.get('lifecycle', {}).get('ready') else None
 
 
-def floating(session, directory, witness, observer, proof_only=False):
+def floating(session, directory, witness, observer, proof_only=False, xwayland=False):
     log = directory/'responsive.jsonl'
-    address = spawn(session, log)
+    address = spawn(session, log, xwayland=xwayland)
     original = source_geometry({'address': address})
     record = park(session, address)
     saved = ledger(record)
@@ -227,7 +246,7 @@ def floating(session, directory, witness, observer, proof_only=False):
         circle(session, record)
         private(session, record, saved, observer, witness)
     if proof_only:
-        print('PASS physical right/bottom drags in Standard/Still reflow actual GTK allocations and preserve round pixels/private restoration metadata', flush=True)
+        print('PASS '+('XWayland' if xwayland else 'Wayland')+' physical right/bottom drags in Standard/Still reflow actual GTK allocations and preserve round pixels/private restoration metadata', flush=True)
         return record, saved, original, log
     value = shaped(session, record)
     ratio = value['aspectOverride']
@@ -544,7 +563,7 @@ def browser(session, directory, executable, witness, observer):
 
 
 @desktop_test('Isolated floating-preview aspect resizing acceptance')
-def main(restart_shell=False, apps=(), proof_only=False, browser_only=False):
+def main(restart_shell=False, apps=(), proof_only=False, browser_only=False, xwayland=False):
     require_isolated()
     PreviewBridge(h).ensure()
     manager = BridgeManager(h)
@@ -569,7 +588,7 @@ def main(restart_shell=False, apps=(), proof_only=False, browser_only=False):
             seed(session, witness, 1250, 170, 220)
             observer = Events()
             if not browser_only:
-                record, saved, original, log = floating(session, directory, witness, observer, proof_only)
+                record, saved, original, log = floating(session, directory, witness, observer, proof_only, xwayland)
                 if proof_only:
                     proof_input(session, record, saved, original, log, witness, observer)
                     return
@@ -595,7 +614,10 @@ if __name__ == '__main__':
     parser.add_argument('--proof-only', action='store_true', help='Only check right/bottom edges and fresh input under Standard/Still capture')
     parser.add_argument('--apps', nargs='*', choices=('chromium', 'brave'), default=[])
     parser.add_argument('--browser-only', action='store_true', help='Only exercise the browsers selected by --apps')
+    parser.add_argument('--xwayland', action='store_true', help='Use the private XWayland socket for the --proof-only source')
     options = parser.parse_args()
     if options.browser_only and (not options.apps or options.proof_only):
         parser.error('--browser-only requires --apps and cannot be combined with --proof-only')
-    main(options.restart_shell, options.apps, options.proof_only, options.browser_only)
+    if options.xwayland and not options.proof_only:
+        parser.error('--xwayland currently requires --proof-only')
+    main(options.restart_shell, options.apps, options.proof_only, options.browser_only, options.xwayland)
