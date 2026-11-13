@@ -185,6 +185,87 @@ int main() {
 }
 '''
 
+ACTIVATION_PRELUDE = r'''
+#include <cassert>
+#include <chrono>
+#include <memory>
+#include <optional>
+#include <string>
+using Clock = std::chrono::steady_clock;
+struct CWindow { std::weak_ptr<CWindow> m_self; };
+using PHLWINDOW = std::shared_ptr<CWindow>;
+struct Identity { CWindow* window; };
+struct Interaction {
+ Identity identity;
+ bool keyboard = true;
+ unsigned pointerActivationAllowance = 0;
+ Clock::time_point pointerActivationDeadline{};
+ std::string activationOrigin;
+ unsigned clientActivationEvents = 0;
+ unsigned keyboardActivationAcknowledgements = 0;
+ unsigned pointerActivationAcknowledgements = 0;
+ unsigned fullscreenActivationAcknowledgements = 0;
+};
+std::optional<Interaction> interaction;
+bool endingInteraction = false;
+PHLWINDOW actualKeyboardTarget;
+unsigned restores = 0, originalActivations = 0;
+bool lastForced = false;
+std::string lastOrigin;
+bool sameWindow(const Identity& identity, CWindow* window, bool) { return identity.window == window; }
+// Seat/surface validation is the existing keyboardWindow boundary; a null
+// result models focus moving to an independent visible application.
+PHLWINDOW keyboardWindow() { return actualKeyboardTarget; }
+bool consumeFullscreenTransition(const PHLWINDOW&) { return false; }
+bool guardActivation(const PHLWINDOW& candidate, bool forced, const std::string& origin) {
+ lastForced = forced; lastOrigin = origin;
+ if (interaction && sameWindow(interaction->identity,candidate.get(),true)) { ++restores; return true; }
+ return false;
+}
+void originalActivation(CWindow*, bool) { ++originalActivations; }
+struct Hook { void* m_original = reinterpret_cast<void*>(&originalActivation); } hook;
+Hook* windowActivateHook = &hook;
+'''
+
+ACTIVATION_CALLER = r'''
+int main() {
+ auto source = std::make_shared<CWindow>(); source->m_self = source;
+ auto other = std::make_shared<CWindow>(); other->m_self = other;
+ interaction = Interaction{Identity{source.get()}};
+ actualKeyboardTarget = source;
+ activateWindow(source.get(),false);
+ activateWindow(source.get(),false);
+ assert(interaction->keyboardActivationAcknowledgements == 2 && interaction->clientActivationEvents == 2);
+ assert(restores == 0 && originalActivations == 0);
+ // A forced request remains explicit even when the seat still owns source.
+ activateWindow(source.get(),true);
+ assert(restores == 1 && lastForced && lastOrigin == "forced-client-activate");
+ assert(interaction->keyboardActivationAcknowledgements == 2);
+ // Independent focus loss removes the no-op condition immediately.
+ actualKeyboardTarget.reset();
+ activateWindow(source.get(),false);
+ assert(restores == 2 && !lastForced && lastOrigin == "client-activate");
+ // Mouse-only controls retain their bounded acknowledgements without
+ // acquiring a keyboard target or using the new keyboard acknowledgement.
+ interaction->keyboard = false;
+ interaction->pointerActivationAllowance = 2;
+ interaction->pointerActivationDeadline = Clock::now()+std::chrono::seconds(1);
+ activateWindow(source.get(),false);
+ assert(restores == 2 && interaction->pointerActivationAllowance == 1);
+ assert(interaction->pointerActivationAcknowledgements == 1 && !actualKeyboardTarget);
+ interaction->pointerActivationDeadline = Clock::now()-std::chrono::seconds(1);
+ activateWindow(source.get(),false);
+ assert(restores == 3 && interaction->keyboardActivationAcknowledgements == 2);
+ // A different or replaced identity never acquires this acknowledgement.
+ activateWindow(other.get(),false);
+ assert(originalActivations == 1);
+ actualKeyboardTarget = source;
+ interaction->identity.window = other.get();
+ activateWindow(source.get(),false);
+ assert(originalActivations == 2 && interaction->keyboardActivationAcknowledgements == 2);
+}
+'''
+
 CALLER = r'''
 int main() {
  for (size_t index = 0; index < 10000; ++index) {
@@ -206,6 +287,19 @@ int main() {
 
 @unittest.skipUnless(shutil.which('c++'), 'Native memory regression requires a C++ compiler')
 class FullscreenNativeMemoryTests(unittest.TestCase):
+    def test_focused_activation_preserves_independent_restore_and_mouse_only_paths(self):
+        function = production_function('void', 'activateWindow')
+        with tempfile.TemporaryDirectory(prefix='stash-focused-activation-') as temporary:
+            source, binary = Path(temporary)/'test.cpp', Path(temporary)/'test'
+            source.write_text(ACTIVATION_PRELUDE+function+ACTIVATION_CALLER)
+            compiled = subprocess.run(['c++', '-std=c++20', '-O1', '-g', '-fsanitize=address',
+                                       '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+                                       str(source), '-o', str(binary)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10,
+                                    env=dict(os.environ, ASAN_OPTIONS='detect_leaks=0:halt_on_error=1'))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_passive_exit_consumes_one_owned_maximize_echo_without_changing_client_state(self):
         function = production_function('bool', 'consumePassiveMaximizeEcho')
         caller = r'''
