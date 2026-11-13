@@ -189,7 +189,9 @@ def acceptance(old_root, expect_refusal=False, skip_failures=False):
     require_isolated()
     assert not loaded_paths() and not native(), 'Start a fresh disposable compositor with no native bridge'
     current_version = (ROOT/'native/version.txt').read_text().strip()
-    old_version = (old_root/'native/version.txt').read_text().strip()
+    version_file=old_root/'native/version.txt'
+    old_version=version_file.read_text().strip() if version_file.exists() \
+        else json.loads((old_root/'manifest.json').read_text())['version']
     assert current_version != old_version, 'Use a historical source or a changed-version fixture'
     with tempfile.TemporaryDirectory(prefix='stash-bridge-upgrade-') as temporary, NativeSession() as session:
         directory = Path(temporary)
