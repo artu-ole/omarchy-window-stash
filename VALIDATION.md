@@ -8,7 +8,7 @@ source and preview geometry stay fixed. The **On desktop** option retains normal
 fullscreen restoration. Stock fullscreen bindings are observed without replacing
 user shortcuts; keyboard shortcuts require the miniature to own keyboard focus.
 
-The complete check passes **319 Python tests**, **15 Node suites**, **eleven
+The complete check passes **326 Python tests**, **15 Node suites**, **eleven
 offscreen Qt suites**, syntax checks for **104 Python files**, manifest validation
 and warning-free QML lint. Native bridge **1.29.3** compiles without warnings
 against the running compositor's matching headers.
@@ -36,6 +36,19 @@ The desktop option defers the request until verified public restoration, keeping
 video DOM fullscreen intact instead of briefly configuring the client normal.
 Both browsers pass this path, including sources maximized before stashing.
 
+Native-triggered config reload can reset the Lua shortcut registry between IPC
+calls. Synchronization retries only a vacant registry, atomically retaining the
+same owner and rechecking settings, bindings and conflicts. Successor ownership
+is never reclaimed. Interact reflects lifecycle readiness instead of silently
+rejecting a click while its helper restarts; status retains bounded failure details.
+
+An actual native replacement round trip uses a temporary version-labelled build
+of the same source and then returns to the final artifact. Both swaps drain
+passive video fullscreen, unload the old module and resume moving video at fixed
+geometry. Explicit interaction works again after each replacement. The lifecycle
+owner stays healthy, shortcuts and stash/preferences/positions stay unchanged,
+and the final module has no remaining input, rendering or cleanup owners.
+
 Existing pointer/keyboard input, Ghostty/Chromium/Brave application input, all
 four popup focus modes, modal/activation handoffs and scrolling-width restoration
 pass in the private desktop. All 43 settings remain reachable at 640×480 and
@@ -43,6 +56,14 @@ pass in the private desktop. All 43 settings remain reachable at 640×480 and
 The independent headless output is explicitly focused before these tests, since
 the nested Wayland output can stall frame callbacks. Native tests retain the
 five-second notice and use disposable applications, profiles and session data.
+
+Stress teardown exposed a separate [Hyprland toplevel-export
+race](https://github.com/hyprwm/Hyprland/blob/v0.56.2/src/protocols/ToplevelExport.cpp):
+if a window closes before an outstanding capture request is handled, the server
+can skip allocating the requested frame object and reject its later destruction.
+This can disconnect Quickshell. The affected stress fixture pauses captures before
+terminating sources. External source self-closure remains subject to that compositor bug;
+this change does not patch the system compositor.
 
 Commands include `python3 tools/check.py`,
 `python3 tests/interactive_fullscreen.py`,
