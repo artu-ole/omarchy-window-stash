@@ -12,6 +12,7 @@
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/managers/EventManager.hpp>
 #include <hyprland/src/managers/XWaylandManager.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
@@ -112,6 +113,17 @@ struct ConstrainedFullscreen {
     Identity identity;
     Fullscreen::eFullscreenMode originalClient = Fullscreen::FSMODE_NONE;
     Fullscreen::eFullscreenMode client = Fullscreen::FSMODE_NONE;
+    Clock::time_point restoreRequested{};
+};
+struct FullscreenTransition {
+    Identity identity;
+    Fullscreen::eFullscreenMode client = Fullscreen::FSMODE_NONE;
+    Clock::time_point expires;
+    Clock::time_point restoreRequested;
+    unsigned activationAllowance = 1;
+    bool waitingAck = false;
+    uint32_t configureSerial = 0;
+    CHyprSignalListener ackListener{};
 };
 struct EndedInteraction {
     std::string owner;
@@ -148,6 +160,7 @@ void* clientFullscreenFunction = nullptr;
 bool constrainedFullscreenSupported = false;
 std::string fullscreenError;
 std::unordered_map<std::string, ConstrainedFullscreen> fullscreenWindows;
+std::unordered_map<std::string, FullscreenTransition> fullscreenTransitions;
 bool handoffSupported = false;
 bool endingInteraction = false;
 bool reloadPending = false;
@@ -189,6 +202,8 @@ void restoreVisibleFocus(const PHLWINDOWREF& previousWindow, const WP<CWLSurface
 void requestRestore(const std::string& reason, const PHLWINDOW& child = nullptr);
 bool grabbedPopupOutside(const PHLWINDOW& window);
 bool sourceHasConstraint(const Identity& identity);
+PHLWINDOW keyboardWindow();
+bool contentHit(const Vector2D& global);
 bool clearConstrainedFullscreen(const std::string& id);
 void clearAllConstrainedFullscreen();
 void synchronizeConstrainedFullscreen();
@@ -257,16 +272,49 @@ bool fullscreenTarget(const PHLWINDOW& window) {
 void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mode) {
     using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, Fullscreen::eFullscreenMode, bool);
     const auto previous = Fullscreen::controller()->getFullscreenModes(window).client;
+    if (previous != mode && (previous == Fullscreen::FSMODE_FULLSCREEN || mode == Fullscreen::FSMODE_FULLSCREEN)
+        && interaction && !endingInteraction && !reloadPending && interaction->constrainFullscreen
+        && sameWindow(interaction->identity, window.get(), true)
+        && (keyboardWindow() == window || contentHit(g_pInputManager->getMouseCoordsInternal()))) {
+        // Browser fullscreen entry/exit can issue a new xdg-activation token.
+        // Attribute one acknowledgement to this exact, recent input transition;
+        // never grant a lasting activation exemption to a passive miniature.
+        std::erase_if(fullscreenTransitions, [](const auto& item) { return !item.second.waitingAck && item.second.expires <= Clock::now(); });
+        if (fullscreenTransitions.size() < MAX_WINDOWS || fullscreenTransitions.contains(interaction->identity.id))
+            fullscreenTransitions[interaction->identity.id] = {interaction->identity, mode, Clock::now() + std::chrono::seconds(1), {}, 1};
+    }
     // Call only the client-state setter. The public setter synchronizes client
     // and internal modes by default, resizing/recentering even when given NONE.
     reinterpret_cast<Original>(clientFullscreenFunction)(Fullscreen::controller().get(), window, mode, false);
     if (previous != mode)
         window->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_FULLSCREENSTATE_CLIENT);
     window->sendWindowSize(true);
+    if (previous != mode && window->m_xdgSurface) {
+        const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+            return item.second.client == mode && sameWindow(item.second.identity, window.get(), true);
+        });
+        if (found != fullscreenTransitions.end()) {
+            const auto id = found->first;
+            const auto identity = found->second.identity;
+            const auto serial = window->m_xdgSurface->scheduleConfigure();
+            found->second.waitingAck = true;
+            found->second.configureSerial = serial;
+            found->second.ackListener = window->m_xdgSurface->m_events.ack.listen([id, identity, serial](uint32_t acknowledged) {
+                const auto current = fullscreenTransitions.find(id);
+                if (current == fullscreenTransitions.end() || current->second.configureSerial != serial
+                    || current->second.identity.stable != identity.stable || current->second.identity.address != identity.address
+                    || static_cast<int32_t>(acknowledged - serial) < 0)
+                    return;
+                current->second.waitingAck = false;
+                current->second.expires = Clock::now() + std::chrono::seconds(1);
+            });
+        }
+    }
     g_pHyprRenderer->damageWindow(window, true);
 }
 
 bool clearConstrainedFullscreen(const std::string& id) {
+    fullscreenTransitions.erase(id);
     const auto found = fullscreenWindows.find(id);
     if (found == fullscreenWindows.end())
         return false;
@@ -275,8 +323,14 @@ bool clearConstrainedFullscreen(const std::string& id) {
     const auto window = previous.identity.window.lock();
     if (clientFullscreenFunction && window && sameWindow(previous.identity, window.get(), false)) {
         const auto modes = Fullscreen::controller()->getFullscreenModes(window);
-        if (modes.internal == Fullscreen::FSMODE_NONE && modes.client == previous.client)
+        if (modes.internal == Fullscreen::FSMODE_NONE && modes.client == previous.client) {
+            if (previous.client == Fullscreen::FSMODE_FULLSCREEN && sameWindow(previous.identity, window.get(), true)) {
+                std::erase_if(fullscreenTransitions, [](const auto& item) { return !item.second.waitingAck && item.second.expires <= Clock::now(); });
+                if (fullscreenTransitions.size() < MAX_WINDOWS)
+                    fullscreenTransitions[id] = {previous.identity, previous.originalClient, Clock::now() + std::chrono::seconds(1), {}, 1};
+            }
             setClientFullscreen(window, previous.originalClient);
+        }
     }
     return true;
 }
@@ -300,16 +354,21 @@ void synchronizeConstrainedFullscreen() {
     }
     for (const auto& id : stale)
         clearConstrainedFullscreen(id);
+    std::erase_if(fullscreenTransitions, [](const auto& item) {
+        const auto window = item.second.identity.window.lock();
+        return (!item.second.waitingAck && item.second.expires <= Clock::now())
+            || !window || !sameWindow(item.second.identity, window.get(), true);
+    });
 }
 
 bool applyConstrainedFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mode) {
     if (!fullscreenTarget(window))
         return false;
     mode = std::clamp(mode, Fullscreen::FSMODE_NONE, Fullscreen::FSMODE_FULLSCREEN);
+    const auto modes = Fullscreen::controller()->getFullscreenModes(window);
     auto found = std::find_if(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
         return sameWindow(item.second.identity, window.get(), true);
     });
-    const auto modes = Fullscreen::controller()->getFullscreenModes(window);
     if (modes.internal != Fullscreen::FSMODE_NONE)
         return false;
     if (mode == Fullscreen::FSMODE_NONE && found != fullscreenWindows.end()) {
@@ -335,10 +394,17 @@ bool applyConstrainedFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreen
 void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW window,
                        std::optional<Fullscreen::eFullscreenMode> internal,
                        std::optional<Fullscreen::eFullscreenMode> client, std::optional<bool> layoutAware) {
+    if (reloadPending && window && std::any_of(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+        return sameWindow(item.second.identity, window.get(), true);
+    }))
+        return; // Do not turn an application's cleanup echo into real fullscreen.
     if (fullscreenTarget(window)) {
         const auto modes = controller->getFullscreenModes(window);
-        if (applyConstrainedFullscreen(window, client.value_or(internal.value_or(modes.client))))
-            return;
+        if (!applyConstrainedFullscreen(window, client.value_or(internal.value_or(modes.client))))
+            endInteraction("fullscreen-unavailable");
+        // Containment failure must not fall through to the real compositor
+        // fullscreen path and expose or resize an owned hidden source.
+        return;
     }
     using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, std::optional<Fullscreen::eFullscreenMode>,
                               std::optional<Fullscreen::eFullscreenMode>, std::optional<bool>);
@@ -351,8 +417,9 @@ Config::Actions::ActionResult fullscreenWindow(Fullscreen::eFullscreenMode mode,
         // Stock fullscreen bindings toggle against the internal mode. It stays
         // NONE here, so use the client mode for this one exact hidden source.
         const auto current = Fullscreen::controller()->getFullscreenModes(window).client;
-        if (applyConstrainedFullscreen(window, current == mode ? Fullscreen::FSMODE_NONE : mode))
-            return {};
+        if (!applyConstrainedFullscreen(window, current == mode ? Fullscreen::FSMODE_NONE : mode))
+            endInteraction("fullscreen-unavailable");
+        return {};
     }
     using Original = Config::Actions::ActionResult (*)(Fullscreen::eFullscreenMode, bool, std::optional<PHLWINDOW>);
     return reinterpret_cast<Original>(fullscreenActionHook->m_original)(mode, layoutAware, requested);
@@ -777,7 +844,57 @@ void requestRestore(const std::string& reason, const PHLWINDOW& child) {
     endInteraction(reason);
 }
 
-bool guardActivation(const PHLWINDOW& candidate) {
+bool consumeFullscreenTransition(const PHLWINDOW& candidate) {
+    const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+        return (item.second.waitingAck || item.second.expires > Clock::now()) && item.second.activationAllowance
+            && sameWindow(item.second.identity, candidate.get(), true);
+    });
+    if (found == fullscreenTransitions.end())
+        return false;
+    const auto identity = found->second.identity;
+    const auto expected = found->second.client;
+    const auto modes = Fullscreen::controller()->getFullscreenModes(candidate);
+    if (modes.internal != Fullscreen::FSMODE_NONE || modes.client != expected)
+        return false;
+    const auto current = fullscreenTransitions.find(identity.id);
+    if (current == fullscreenTransitions.end() || (!current->second.waitingAck && current->second.expires <= Clock::now())
+        || !current->second.activationAllowance || !sameWindow(current->second.identity, candidate.get(), true))
+        return false;
+    --current->second.activationAllowance;
+    return true;
+}
+
+bool guardPassiveFullscreenActivation(const PHLWINDOW& candidate, bool explicitFocus) {
+    if (!candidate || (interaction && sameWindow(interaction->identity, candidate.get(), true)))
+        return false;
+    if (!explicitFocus && consumeFullscreenTransition(candidate))
+        return true;
+    const auto fullscreen = std::find_if(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
+        return sameWindow(item.second.identity, candidate.get(), true);
+    });
+    const auto transition = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+        return (item.second.waitingAck || item.second.expires > Clock::now()) && sameWindow(item.second.identity, candidate.get(), true);
+    });
+    if (fullscreen == fullscreenWindows.end() && transition == fullscreenTransitions.end())
+        return false;
+    const auto identity = fullscreen != fullscreenWindows.end() ? fullscreen->second.identity : transition->second.identity;
+    const auto requested = fullscreen != fullscreenWindows.end() ? fullscreen->second.restoreRequested : transition->second.restoreRequested;
+    // The source has no input helper after Stop. Ask the ordinary controller to
+    // restore only its UUID; never open the private workspace as a shortcut.
+    if (interaction)
+        endInteraction("replaced");
+    if (sameWindow(identity, candidate.get(), true) && Clock::now() - requested >= std::chrono::seconds(1)) {
+        // Update before emitting, and keep no map iterators across callbacks.
+        if (const auto found = fullscreenWindows.find(identity.id); found != fullscreenWindows.end())
+            found->second.restoreRequested = Clock::now();
+        if (const auto found = fullscreenTransitions.find(identity.id); found != fullscreenTransitions.end())
+            found->second.restoreRequested = Clock::now();
+        g_pEventManager->postEvent({"window-stash-restore", identity.id});
+    }
+    return true;
+}
+
+bool guardActivation(const PHLWINDOW& candidate, bool explicitFocus = false) {
     if (privateWindow(candidate)) {
         if (interaction) {
             const auto source = interaction->identity.window.lock();
@@ -795,12 +912,14 @@ bool guardActivation(const PHLWINDOW& candidate) {
         for (auto& ended : endedInteractions)
             if (pendingRelative(ended, candidate))
                 return true;
+        if (guardPassiveFullscreenActivation(candidate, explicitFocus))
+            return true;
     }
     return false;
 }
 
 Config::Actions::ActionResult dispatchFocus(PHLWINDOW candidate) {
-    if (guardActivation(candidate))
+    if (guardActivation(candidate, true))
         return {};
     // The focus dispatcher changes workspaces before rawWindowFocus. Guarding
     // here prevents even a transient exposure of every other stashed window.
@@ -809,8 +928,14 @@ Config::Actions::ActionResult dispatchFocus(PHLWINDOW candidate) {
 }
 
 void activateWindow(CWindow* window, bool force) {
-    if (window && guardActivation(window->m_self.lock()))
-        return;
+    if (window) {
+        const auto candidate = window->m_self.lock();
+        if (!force && interaction && interaction->constrainFullscreen && !endingInteraction
+            && sameWindow(interaction->identity, window, true) && consumeFullscreenTransition(candidate))
+            return;
+        if (guardActivation(candidate, force))
+            return;
+    }
     // CWindow::activate otherwise returns early when the source is already
     // reported as our keyboard target, masking explicit switcher activation.
     using Original = void (*)(CWindow*, bool);
@@ -882,6 +1007,15 @@ void rawWindowFocus(Desktop::CFocusState* state, PHLWINDOW candidate, Desktop::e
                 }
             }
         }
+        if (reason == Desktop::FOCUS_REASON_FFM) {
+            if (std::any_of(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
+                return sameWindow(item.second.identity, candidate.get(), true);
+            }) || std::any_of(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+                return (item.second.waitingAck || item.second.expires > Clock::now()) && sameWindow(item.second.identity, candidate.get(), true);
+            }))
+                return;
+        } else if (guardPassiveFullscreenActivation(candidate, true))
+            return;
     }
     reinterpret_cast<Original>(rawFocusHook->m_original)(state, candidate, reason, surface);
 }
@@ -1202,6 +1336,14 @@ void synchronize() {
         }
         ++it;
     }
+    // A hidden client must be allowed to process the configure acknowledging
+    // fullscreen cleanup before native hooks can be removed. This is scoped to
+    // verified sources and ends at ACK, independently of capture/input leases.
+    for (const auto& [id, transition] : fullscreenTransitions) {
+        const auto window = transition.identity.window.lock();
+        if (transition.waitingAck && window && sameWindow(transition.identity, window.get(), true))
+            active.emplace(window.get(), transition.identity);
+    }
     if (validateInteraction()) {
         const auto window = interaction->identity.window.lock();
         active.emplace(window.get(), interaction->identity);
@@ -1214,8 +1356,8 @@ void synchronize() {
         window->setSuspended(false);
     if (frameTimer) {
         const auto desired = interaction ? std::chrono::milliseconds((1000 + interaction->fps - 1) / interaction->fps)
-            : owners.empty() && !fullscreenWindows.empty() ? std::chrono::milliseconds(500) : FRAME_TIME;
-        if (owners.empty() && !interaction && fullscreenWindows.empty())
+            : active.empty() && (!fullscreenWindows.empty() || !fullscreenTransitions.empty()) ? std::chrono::milliseconds(500) : FRAME_TIME;
+        if (owners.empty() && !interaction && fullscreenWindows.empty() && fullscreenTransitions.empty())
             frameTimer->updateTimeout(std::nullopt);
         else if (!frameTimer->armed() || frameTimer->passed() || desired != frameInterval)
             frameTimer->updateTimeout(desired);
@@ -1465,6 +1607,8 @@ int interactionUpdate(lua_State* state) {
             throw std::invalid_argument("Release the current interaction before changing fullscreen policy");
         if (constrainFullscreen && Fullscreen::controller()->getFullscreenModes(identity.window.lock()).internal != Fullscreen::FSMODE_NONE)
             throw std::invalid_argument("Restore this window before entering preview-constrained fullscreen");
+        if (constrainFullscreen && fullscreenWindows.size() >= MAX_WINDOWS && !fullscreenWindows.contains(identity.id))
+            throw std::invalid_argument("Too many fullscreen previews; leave fullscreen in another preview before interacting");
         const auto name = stringField(state, 1, "monitor");
         PHLMONITOR monitor;
         for (const auto& candidate : State::monitorState()->monitors())
@@ -1651,7 +1795,9 @@ int status(lua_State* state) {
     // arrive. Removing hooks earlier could leak a release to another window or
     // trigger an unrelated release-bound window-manager action.
     booleanField(state, "reloadReady", reloadPending && !interaction && !endingInteraction
-                 && owners.empty() && active.empty() && releasedButtons.empty() && releasedKeys.empty());
+                 && owners.empty() && active.empty() && releasedButtons.empty() && releasedKeys.empty()
+                 && fullscreenTransitions.empty());
+    field(state, "pendingFullscreen", fullscreenTransitions.size());
     field(state, "owners", owners.size());
     field(state, "windows", active.size());
     field(state, "leaseTimeout", LEASE_TIME.count());
