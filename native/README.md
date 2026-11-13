@@ -19,9 +19,10 @@ checks the full Hyprland and dependency ABI. Rebuild after compositor updates.
 `native/version.txt` identifies the native implementation independently of the
 manifest. Bump it when native code changes; UI-only releases retain it. The builder
 includes it in the cache fingerprint, and helpers require an exact version match.
-The sole transitional exception lets helpers expecting `1.29.2` continue using
-the unchanged render/input API of experimental `1.29.1` until the next login;
-upgrade detection and its unsafe-unload refusal remain active.
+Explicit compatibility pairs retain ordinary render/input support during a deferred
+upgrade. New capabilities are checked separately: contained fullscreen requires
+`capabilities.constrainedFullscreen`, and never falls back to desktop fullscreen.
+Upgrade detection and the early interactive bridge's unsafe-unload refusal remain active.
 Automatic artifacts use immutable `<Hyprland hash>/<version>-<fingerprint>/`
 directories. The explicit developer `--output FILE` option remains replaceable.
 
@@ -35,10 +36,11 @@ interrupts input. `controller/bridge.py reload` performs the explicit replacemen
 1. Build and verify a new immutable artifact before changing the loaded module.
 2. Pause capture helpers and finish acknowledged interaction. A session-scoped
    file lock excludes new acquisitions, including restoration handoffs.
-3. Call `prepare_reload()`, which stops rendering/input, refuses new leases and
-   cancels pending restoration handoffs. Wait for `reloadReady`, including every
-   held physical key/button release filter. Timeout/cancellation calls
-   `cancel_reload()` and retains the old module.
+3. Call `prepare_reload()`, which stops rendering/input, exits contained fullscreen,
+   refuses new leases and cancels pending restoration handoffs. Wait for
+   `reloadReady`, including held physical key/button release filters, client
+   configure acknowledgements and bounded fullscreen activation cleanup.
+   Timeout/cancellation calls `cancel_reload()` and retains the old module.
 4. Unload only the verified Window Stash module in its owned cache. Load the new
    pathname and verify its protocol, version, compositor hash and fingerprint.
 5. Resume rendering. Input requires a new explicit activation. Windows, geometry,
@@ -100,6 +102,7 @@ local session, err = api.interaction_update({
   rect = { x = 1200, y = 180, width = 400, height = 280 },
   excludeRects = {}, -- at most 16 overlay-control rectangles
   keyboard = true, -- permit keyboard focus on a content click
+  fullscreen = "preview", -- default; "desktop" retains restoration handoff
   fps = 60, -- 30 or 60
   exitShortcut = { modmask = 12, key = "Escape" }, -- nil disables
 })
@@ -131,6 +134,43 @@ requests fail with the native setup reason.
 
 Interaction rejects `no_screen_share` sources; keyboard routing also respects
 `no_focus`. Enabling either applicable rule during a session ends its input lease.
+
+## Contained fullscreen
+
+The `preview` policy intercepts fullscreen requests for the exact owned source
+before compositor layout or monitor geometry changes. It sends real client
+fullscreen state while the internal mode remains None, including when the user's
+fullscreen binding invokes the ordinary window dispatcher. No shortcut is
+overwritten. Super+F targets the miniature only after it owns keyboard focus.
+
+The bounded identity registry retains fullscreen after input ends, allowing a
+passive picture-in-picture card without retaining keyboard or pointer ownership.
+Capture still follows its configured update policy. Application Escape/toggle
+exits fullscreen; `desktop` restores the ordinary fullscreen handoff.
+Desktop requests are applied after the exact source is restored and verified
+public, preserving browser video fullscreen through the handoff.
+
+`clear_fullscreen({id,address,pid,stable_id,tag})` removes only an exact owned
+override. The controller calls it and rechecks identity before snapshotting current
+fullscreen during restoration. Saved pre-stash fullscreen and scrolling geometry
+are preserved. Moving a source public, identity/rule loss, bridge preparation and
+unload clear temporary client state. Status exposes `constrainedFullscreenWindows`,
+`fullscreenWindows`, `interaction.fullscreen` and `interaction.previewFullscreen`.
+
+Some Wayland browsers wait for a content resize before completing fullscreen exit.
+An acknowledged, height-only client configure sequence unblocks that path, then
+returns to the original client dimensions. Compositor window geometry, preview
+geometry and saved restoration width remain fixed. The controller waits for exact
+source cleanup through `fullscreen_cleanup_pending(identity)` before restoring;
+an unresponsive client remains stashed rather than interrupting the sequence.
+Pending cleanup cannot promote the source to desktop fullscreen. Tag loss cancels
+the client-size override before relinquishing the exact verified window.
+
+Browsers can request activation while entering or leaving fullscreen. A bounded
+transition guard consumes that request for the exact interacting source; explicit
+desktop focus still restores it. Passive activation emits `window-stash-restore`
+with only the verified record ID. The shell validates that intent and uses normal
+controller restoration, keeping the private workspace hidden throughout.
 
 The stdin-owned helper `controller/interaction.py` validates every requested record
 against the locked ledger and fresh compositor state, including current workspace

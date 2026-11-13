@@ -1,5 +1,58 @@
 # Validation
 
+## v1.30.0 — fullscreen inside previews — 13 November 2026
+
+Interactive floating previews default to **Fullscreen → Inside preview**. Client
+fullscreen state changes while compositor fullscreen remains disabled and the
+source and preview geometry stay fixed. The **On desktop** option retains normal
+fullscreen restoration. Stock fullscreen bindings are observed without replacing
+user shortcuts; keyboard shortcuts require the miniature to own keyboard focus.
+
+The complete check passes **319 Python tests**, **15 Node suites**, **eleven
+offscreen Qt suites**, syntax checks for **104 Python files**, manifest validation
+and warning-free QML lint. Native bridge **1.29.3** compiles without warnings
+against the running compositor's matching headers.
+
+The disposable compositor verifies application buttons, F11, stock Super+F,
+Escape, passive fullscreen after Stop/outside click, source closure and exact
+restoration, including a 1.5-scale output. Chromium and Brave hide the fixture
+website UI through the real video fullscreen API, return to that UI on exit and
+produce nine distinct passive video frames. Passive app-initiated exit also preserves
+video playback and original geometry. Source and preview geometry are sampled
+throughout. A bounded, acknowledged client-height
+configure sequence handles Chromium's assumption that fullscreen exit resizes
+content; the compositor window, source width and restoration record remain fixed.
+
+Restoration waits for exact-source cleanup before snapshotting fullscreen or
+moving the window public. Timeout leaves it stashed. A shared bridge gate spans
+the entire restore operation. Unit checks execute the actual adapter Lua and
+verify identity, legacy compatibility, pending/ready, errors and timeout. Three
+AddressSanitizer fixtures execute production native cleanup and resize-stage
+functions, covering map-key lifetime, acknowledgement ordering, unresponsive
+clients, changed geometry, tag loss, passive maximize echoes and reentrant
+ownership loss.
+
+The desktop option defers the request until verified public restoration, keeping
+video DOM fullscreen intact instead of briefly configuring the client normal.
+Both browsers pass this path, including sources maximized before stashing.
+
+Existing pointer/keyboard input, Ghostty/Chromium/Brave application input, all
+four popup focus modes, modal/activation handoffs and scrolling-width restoration
+pass in the private desktop. All 43 settings remain reachable at 640×480 and
+400×300 with 1.25 scale; confirmed reset preserves windows, placement and geometry.
+The independent headless output is explicitly focused before these tests, since
+the nested Wayland output can stall frame callbacks. Native tests retain the
+five-second notice and use disposable applications, profiles and session data.
+
+Commands include `python3 tools/check.py`,
+`python3 tests/interactive_fullscreen.py`,
+`python3 tests/interactive_keyboard.py`,
+`python3 tests/interactive_handoff.py`,
+`python3 tests/interactive_previews.py`,
+`python3 tests/scrolling_width.py --installed`,
+`python3 tests/settings_fit.py` and `python3 tests/reset_settings.py`.
+The fullscreen suite requires its isolated-desktop marker and an empty test stash.
+
 ## v1.29.1 — native bridge updates — 13 November 2026
 
 Updates offer **Reload preview support / Later** without restarting Hyprland.

@@ -11,7 +11,7 @@ windows retain size and position; scrolling layouts retain window width.
 | Static dock | Four edges, bar clearance and overflow scrolling. Unlock to drag along the edge; lock to retain placement. |
 | Floating icons | Individual draggable icons, initially at the middle right. Edge gravity or free placement. |
 | Floating dock | Draggable stack. One window restores directly; multiple windows unfold into a row or column. |
-| Floating previews | Resizable window miniatures; app groups expand into individual thumbnails. Optional pointer and keyboard interaction. |
+| Floating previews | Resizable window miniatures; app groups expand into individual thumbnails. Optional mouse/keyboard input and fullscreen within the preview. |
 
 All modes follow Omarchy's theme. Visibility is global across monitors or filtered
 by original workspace; icons and previews represent individual windows or application groups.
@@ -169,6 +169,7 @@ Optional interaction is configured under **Preview interaction**:
 | `floatingPreviewInteraction` | `off` | `off`, `on`; floating previews only |
 | `floatingPreviewActivation` | `explicit` | `explicit`: Interact control/context action; `click`: first click enters interaction without forwarding that click |
 | `floatingPreviewKeyboard` | `mouse` | `mouse`: pointer only; `click`: content click also acquires keyboard focus; hover never does |
+| `floatingPreviewFullscreen` | `preview` | `preview`: fullscreen stays inside the miniature; `desktop`: restore the window for fullscreen |
 | `floatingPreviewInteractionFps` | `"60"` | `"30"`, `"60"`; active preview rendering limit |
 | `floatingPreviewControls` | `hover` | `hover`, `always`; controls stay visible during interaction |
 | `floatingPreviewExitShortcut` | `CTRL + ALT + Escape` | Session-only exit chord; empty disables it. Occupied desktop shortcuts are rejected. |
@@ -177,6 +178,15 @@ Interact makes one window receive normal left/right/middle clicks, wheel input a
 content dragging. App groups require choosing an individual window. Keyboard mode
 supports typing, selection, native copy/paste and application shortcuts. In-bounds
 application popups are rendered and receive input at the miniature's scale.
+
+**Fullscreen → Inside preview** is the default. A video's fullscreen button fills
+the miniature with the player; F11 or Super+F uses application fullscreen while
+the preview has keyboard focus. The window stays stashed at its saved dimensions.
+Fullscreen content remains expanded after Stop or an outside click. Restore clears
+this temporary state and reapplies the original window geometry/fullscreen state.
+For continuous picture-in-picture, choose **Preview updates → Always live** and
+**Live preview support → Enhanced**. Player controls and aspect ratio remain
+application-controlled. **Fullscreen → On desktop** retains normal restoration.
 
 An active miniature has a themed outline and Stop/Restore/Manage controls. The
 toolbar sits outside the image when space permits; its inline fallback excludes
@@ -192,8 +202,8 @@ cross-window drag-and-drop and input-method popup positioning require the restor
 window. Interaction respects `no_screen_share`; keyboard input also respects
 `no_focus` window rules.
 
-Modal dialogs, fullscreen requests and out-of-bounds popups restore the full window
-using the configured destination. New dialogs follow their parent; pre-existing
+Modal dialogs, desktop fullscreen requests and out-of-bounds popups restore the full
+window using the configured destination. New dialogs follow their parent; pre-existing
 windows remain in place. Application activation and window-management requests also
 leave miniature interaction. See [VALIDATION.md](VALIDATION.md) for acceptance checks.
 
@@ -230,8 +240,8 @@ previews releases rendering leases; no global rendering rules or app profiles
 change. Application-level throttling can still limit updates. Updating an already
 loaded native bridge shows **Reload preview support / Later** in a notification
 and Settings. Reload replaces only the bridge, preserving applications and the
-stash; active interaction ends and can be entered again afterward. Fresh installs
-load support on demand. Older experimental bridges without safe reload support,
+stash; interaction and temporary preview fullscreen end and can be entered again.
+Fresh installs load support on demand. Older experimental bridges without safe reload support,
 or headers from a newer compositor than the running session, require logout/login.
 See [native/README.md](native/README.md) for the bridge implementation and build API.
 
