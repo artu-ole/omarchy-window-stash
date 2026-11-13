@@ -64,6 +64,7 @@ constexpr auto WORKSPACE = "special:window-stash";
 constexpr auto LUA_NAMESPACE = "window_stash_preview";
 constexpr size_t MAX_OWNERS = 32;
 constexpr size_t MAX_WINDOWS = 256;
+constexpr unsigned POINTER_ACTIVATION_CREDITS = 2;
 
 struct Identity {
     std::string id;
@@ -110,6 +111,10 @@ struct Interaction {
     bool constrainFullscreen = true;
     Clock::time_point pointerActivationDeadline{};
     unsigned pointerActivationAllowance = 0;
+    std::string activationOrigin;
+    uint64_t clientActivationEvents = 0;
+    uint64_t pointerActivationAcknowledgements = 0;
+    uint64_t fullscreenActivationAcknowledgements = 0;
 };
 struct ConstrainedFullscreen {
     Identity identity;
@@ -139,6 +144,12 @@ struct EndedInteraction {
     bool restoreRequested = false;
     bool handedOff = false;
     bool constrainFullscreen = true;
+    std::string activationOrigin;
+    unsigned pointerActivationAllowance = 0;
+    int64_t pointerActivationRemainingMs = 0;
+    uint64_t clientActivationEvents = 0;
+    uint64_t pointerActivationAcknowledgements = 0;
+    uint64_t fullscreenActivationAcknowledgements = 0;
     Clock::time_point handoffDeadline;
 };
 
@@ -303,7 +314,7 @@ void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mo
             found->second.configureSerial = serial;
             found->second.ackListener = window->m_xdgSurface->m_events.ack.listen([id, identity, serial](uint32_t acknowledged) {
                 const auto current = fullscreenTransitions.find(id);
-                if (current == fullscreenTransitions.end() || current->second.configureSerial != serial
+                if (current == fullscreenTransitions.end() || !current->second.waitingAck || current->second.configureSerial != serial
                     || current->second.identity.stable != identity.stable || current->second.identity.address != identity.address
                     || static_cast<int32_t>(acknowledged - serial) < 0)
                     return;
@@ -682,6 +693,12 @@ void rememberEnd(const std::string& owner, const std::string& id, const std::str
         ended.previousWindow = previous->previousWindow;
         ended.previousSurface = previous->previousSurface;
         ended.constrainFullscreen = previous->constrainFullscreen;
+        ended.activationOrigin = previous->activationOrigin;
+        ended.pointerActivationAllowance = previous->pointerActivationAllowance;
+        ended.pointerActivationRemainingMs = std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(previous->pointerActivationDeadline - Clock::now()).count());
+        ended.clientActivationEvents = previous->clientActivationEvents;
+        ended.pointerActivationAcknowledgements = previous->pointerActivationAcknowledgements;
+        ended.fullscreenActivationAcknowledgements = previous->fullscreenActivationAcknowledgements;
         ended.restoreRequested = restoreReason(reason);
         ended.handoffDeadline = Clock::now() + HANDOFF_TIME;
     }
@@ -891,17 +908,19 @@ bool guardPassiveFullscreenActivation(const PHLWINDOW& candidate, bool explicitF
             found->second.restoreRequested = Clock::now();
         if (const auto found = fullscreenTransitions.find(identity.id); found != fullscreenTransitions.end())
             found->second.restoreRequested = Clock::now();
-        g_pEventManager->postEvent({"window-stash-restore", identity.id});
+        if (g_pEventManager)
+            g_pEventManager->postEvent({"window-stash-restore", identity.id});
     }
     return true;
 }
 
-bool guardActivation(const PHLWINDOW& candidate, bool explicitFocus = false) {
+bool guardActivation(const PHLWINDOW& candidate, bool explicitFocus = false, const std::string& origin = "") {
     if (privateWindow(candidate)) {
         if (interaction) {
             const auto source = interaction->identity.window.lock();
             if (source && sameWindow(interaction->identity, source.get(), true)) {
                 if (candidate == source) {
+                    interaction->activationOrigin = origin;
                     requestRestore("source-activation");
                     return true;
                 }
@@ -921,7 +940,7 @@ bool guardActivation(const PHLWINDOW& candidate, bool explicitFocus = false) {
 }
 
 Config::Actions::ActionResult dispatchFocus(PHLWINDOW candidate) {
-    if (guardActivation(candidate, true))
+    if (guardActivation(candidate, true, "dispatcher-focus"))
         return {};
     // The focus dispatcher changes workspaces before rawWindowFocus. Guarding
     // here prevents even a transient exposure of every other stashed window.
@@ -933,18 +952,24 @@ void activateWindow(CWindow* window, bool force) {
     if (window) {
         const auto candidate = window->m_self.lock();
         if (!force && interaction && !endingInteraction && sameWindow(interaction->identity, window, true)) {
-            if (consumeFullscreenTransition(candidate))
+            ++interaction->clientActivationEvents;
+            interaction->activationOrigin = "client-activate";
+            if (consumeFullscreenTransition(candidate)) {
+                ++interaction->fullscreenActivationAcknowledgements;
                 return;
+            }
             if (interaction->constrainFullscreen && !interaction->keyboard && interaction->pointerActivationAllowance
                 && interaction->pointerActivationDeadline > Clock::now()) {
                 // Mouse-only browser controls can request activation before
-                // their following fullscreen request. Acknowledge one trusted
-                // routed press without granting keyboard focus or promotion.
+                // their following fullscreen request. Chromium emits two
+                // tokens for one press; bound acknowledgements per routed
+                // press/release without granting keyboard focus or promotion.
                 --interaction->pointerActivationAllowance;
+                ++interaction->pointerActivationAcknowledgements;
                 return;
             }
         }
-        if (guardActivation(candidate, force))
+        if (guardActivation(candidate, force, force ? "forced-client-activate" : "client-activate"))
             return;
     }
     // CWindow::activate otherwise returns early when the source is already
@@ -986,6 +1011,7 @@ void rawWindowFocus(Desktop::CFocusState* state, PHLWINDOW candidate, Desktop::e
                             restoreVisibleFocus(interaction->previousWindow, interaction->previousSurface);
                         return;
                     }
+                    interaction->activationOrigin = "raw-focus-" + std::to_string(reason);
                     requestRestore("source-activation");
                     return;
                 }
@@ -1270,7 +1296,7 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
         }
         const bool newPress = interaction->buttons.insert(event.button).second;
         if (newPress && interaction->constrainFullscreen && !interaction->keyboard) {
-            interaction->pointerActivationAllowance = 1;
+            interaction->pointerActivationAllowance = POINTER_ACTIVATION_CREDITS;
             interaction->pointerActivationDeadline = Clock::now() + std::chrono::milliseconds(500);
         }
     }
@@ -1279,7 +1305,7 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
     if (event.state == WL_POINTER_BUTTON_STATE_RELEASED) {
         const bool matchingRelease = interaction->buttons.erase(event.button) != 0;
         if (matchingRelease && interaction->constrainFullscreen && !interaction->keyboard) {
-            interaction->pointerActivationAllowance = 1;
+            interaction->pointerActivationAllowance = POINTER_ACTIVATION_CREDITS;
             interaction->pointerActivationDeadline = Clock::now() + std::chrono::milliseconds(500);
         }
         if (interaction->buttons.empty())
@@ -1509,6 +1535,13 @@ void interactionDetails(lua_State* state, const std::string& owner) {
     field(state, "fullscreen", matches ? interaction->constrainFullscreen ? "preview" : "desktop" : "");
     booleanField(state, "previewFullscreen", matches && fullscreenWindows.contains(interaction->identity.id)
                  && fullscreenWindows.at(interaction->identity.id).client == Fullscreen::FSMODE_FULLSCREEN);
+    field(state, "activationOrigin", matches ? interaction->activationOrigin : "");
+    field(state, "pointerActivationAllowance", matches ? interaction->pointerActivationAllowance : 0);
+    field(state, "pointerActivationRemainingMs", matches ? std::max<int64_t>(0,
+          std::chrono::duration_cast<std::chrono::milliseconds>(interaction->pointerActivationDeadline - Clock::now()).count()) : 0);
+    field(state, "clientActivationEvents", matches ? interaction->clientActivationEvents : 0);
+    field(state, "pointerActivationAcknowledgements", matches ? interaction->pointerActivationAcknowledgements : 0);
+    field(state, "fullscreenActivationAcknowledgements", matches ? interaction->fullscreenActivationAcknowledgements : 0);
     field(state, "heldKeys", matches ? interaction->keys.size() : 0);
     field(state, "keyEvents", matches ? interaction->keyEvents : 0);
     if (matches) {
@@ -1551,6 +1584,12 @@ void interactionDetails(lua_State* state, const std::string& owner) {
                 field(state, "fullscreen", it->constrainFullscreen ? "preview" : "desktop");
                 booleanField(state, "previewFullscreen", fullscreenWindows.contains(it->id)
                              && fullscreenWindows.at(it->id).client == Fullscreen::FSMODE_FULLSCREEN);
+                field(state, "activationOrigin", it->activationOrigin);
+                field(state, "pointerActivationAllowance", it->pointerActivationAllowance);
+                field(state, "pointerActivationRemainingMs", it->pointerActivationRemainingMs);
+                field(state, "clientActivationEvents", it->clientActivationEvents);
+                field(state, "pointerActivationAcknowledgements", it->pointerActivationAcknowledgements);
+                field(state, "fullscreenActivationAcknowledgements", it->fullscreenActivationAcknowledgements);
                 break;
             }
         }
