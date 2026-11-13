@@ -55,10 +55,10 @@ overrides are preserved.
 
 | Input | Action |
 |---|---|
-| Super+D | Stash focused window. |
+| Super+D | Minimize the focused window, or fold the hovered preview into an icon. |
 | Super+Z | Restore newest eligible window: last in, first out. |
 | Super+Alt+Z | Restore oldest eligible window: first in, first out. |
-| Click icon | Restore; multi-window app groups open a searchable chooser. Floating stacks unfold first. |
+| Click icon | Restore; folded previews unfold first. App groups open a chooser; floating stacks unfold. |
 | Click preview | Restore; app covers expand into individual window thumbnails. |
 | Preview Interact control | Enter interaction; optional first-click activation consumes the activating click. |
 | Super+left click preview content | Enter interaction without restoring or clicking the app; app covers open their window choices first. |
@@ -162,6 +162,12 @@ preview frame; use Stop/Manage before resizing an interactive miniature.
 | `floatingPreviewTitles` | `hidden` | `hidden`, `shown`; optional title strip and close button |
 | `floatingPreviewFrame` | `hidden` | `hidden`, `shown`; optional background and border |
 | `floatingPreviewLock` | `unlocked` | `unlocked`, `locked`; retain placement and dimensions |
+
+Minimize while hovering a preview to fold it into a floating icon. Clicking that
+icon returns to the preview; restoring again returns the full window. Newest/FIFO
+shortcuts follow the same stages without changing stash order. Icon and preview
+positions persist separately; folded icons use the existing appearance, size and
+placement settings. App covers fold as a group; individual thumbnails fold separately.
 
 Click restores; dragging moves; middle-click closes; right-click opens the window
 menu. Grouped cards expand into a bounded grid for exact-window selection.

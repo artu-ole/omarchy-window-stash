@@ -29,7 +29,34 @@ separate: interaction automatically acquires live rendering at the chosen 30/60 
 without changing Standard/Enhanced or Still/Hover/Live preferences. Other enhanced
 live sources retain their 15 FPS budget.
 
-## Input and controls
+## Folding previews
+
+Floating previews have a second minimized stage: a floating application icon.
+The minimize shortcut queries fresh compositor pointer coordinates and folds the
+frontmost hovered preview. It consumes hits on an already folded icon or busy
+preview; a hover miss retains focused-window minimization. App covers fold their
+visible members together, while an expanded thumbnail selects its exact window.
+
+`previewFolded` is a strict per-record boolean in the runtime ledger. Folding
+waits for acknowledged input release, then validates the exact private source
+before changing that flag. It preserves phase, order, original restoration data,
+working source geometry and contained fullscreen. Folded views stop capture,
+render requests and geometry polling; authoritative helpers reject stale requests
+under the same ledger lock as their final native acquisition.
+
+Icon activation clears the flag and returns the preview at its remembered size,
+position and aspect ratio. Newest/FIFO shortcut restoration uses `--stage`, so
+the first action unfolds and the next fully restores the same ordered record.
+Plain CLI restoration, explicit context restoration, native handoff, removal and
+recovery remain full restoration. Other presentation modes ignore folded state.
+
+Folded icon positions use separate `folded-preview:` keys and inherit existing
+icon appearance, size, placement and physics. Their initial placement waits for
+the layer's configured dimensions, preserving saved positions across restarts.
+Fold/unfold motion follows the global animation settings, and input waits until
+an unfolding miniature has settled. No additional preferences are introduced.
+
+## Entering interaction
 
 Enabling interaction prepares native shortcut support when previews are visible,
 including Standard/Still previews. `controller/interaction.py --prepare` loads
