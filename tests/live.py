@@ -86,8 +86,23 @@ def require_empty_stash(snapshot):
                            'existing stashed windows were left untouched')
 
 
-def spawn(title,xwayland=False):
+def fixture_environment(xwayland=False):
     env=dict(os.environ,GDK_BACKEND='x11' if xwayland else 'wayland')
+    if xwayland:
+        # Nested compositors inherit their parent's DISPLAY. XWayland clients
+        # must connect to the compositor under test, with its own authority.
+        display=h.call('repl',"return os.getenv('DISPLAY') or '__window_stash_unset__'")
+        assert display.startswith(':') and display[1:].split('.',1)[0].isdigit(), \
+            'The compositor under test has no XWayland display'
+        env['DISPLAY']=display
+        authority=h.call('repl',"return os.getenv('XAUTHORITY') or '__window_stash_unset__'")
+        if authority=='__window_stash_unset__':env.pop('XAUTHORITY',None)
+        else:env['XAUTHORITY']=authority
+    return env
+
+
+def spawn(title,xwayland=False):
+    env=fixture_environment(xwayland)
     log=open('/tmp/window-stash-test-windows.log','a')
     p=subprocess.Popen(['/usr/bin/python3',str(ROOT/'tests/test-window.py'),title],env=env,
                        stdout=log,stderr=log,start_new_session=True)
@@ -111,6 +126,11 @@ def main():
     original=h.read('activewindow');origin_ws=h.read('activeworkspace')['id']
     assert not command('list')['windows'],'Restore your stash before running live tests'
     fixture_settings()
+    configure('minimizeShortcut','SUPER + D')
+    configure('restoreLastShortcut','SUPER + Z')
+    wait(lambda:all(shell('status')['activeShortcuts'].get(key)==value for key,value in
+                   {'minimizeShortcut':'SUPER + D','restoreLastShortcut':'SUPER + Z'}.items()),
+         'Live fixture shortcuts did not register')
     shell('dismiss')
     native=spawn('Window Stash native test')
     target='address:'+native
@@ -209,12 +229,12 @@ def main():
     matching=h.call('repl','return hl.get_config("input.resolve_binds_by_sym")')
     try:
         h.eval('hl.config({input={resolve_binds_by_sym=true}})')
-        subprocess.run(['wtype','-M','logo','-s','60','-k','a','-s','60','-m','logo'],check=True)
-        wait(lambda:h.client(native)['workspace']['name']=='special:window-stash','Super+A did not minimize')
+        subprocess.run(['wtype','-M','logo','-s','60','-k','d','-s','60','-m','logo'],check=True)
+        wait(lambda:h.client(native)['workspace']['name']=='special:window-stash','Super+D did not minimize')
         subprocess.run(['wtype','-M','logo','-s','60','-k','z','-s','60','-m','logo'],check=True)
         wait(lambda:h.client(native)['workspace']['id']==10,'Super+Z did not restore')
     finally:h.eval('hl.config({input={resolve_binds_by_sym='+matching+'}})')
-    print('PASS Super+A / Super+Z through virtual-keyboard keysym matching',flush=True)
+    print('PASS Super+D / Super+Z through virtual-keyboard keysym matching',flush=True)
 
     ident=stash(native)
     subprocess.run(['omarchy','restart','shell'],check=True,timeout=30)

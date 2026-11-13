@@ -7,6 +7,31 @@ import live
 
 
 class LiveWaitTests(unittest.TestCase):
+    def test_xwayland_uses_nested_compositor_display_and_authority(self):
+        for authority in ('/run/user/1000/private-Xauthority','__window_stash_unset__'):
+            with self.subTest(authority=authority), \
+                    patch.dict(live.os.environ,{'DISPLAY':':1','XAUTHORITY':'/parent/authority'}), \
+                    patch.object(live.h,'call',side_effect=[':7',authority]):
+                environment=live.fixture_environment(True)
+            self.assertEqual(environment['GDK_BACKEND'],'x11')
+            self.assertEqual(environment['DISPLAY'],':7')
+            if authority=='__window_stash_unset__':self.assertNotIn('XAUTHORITY',environment)
+            else:self.assertEqual(environment['XAUTHORITY'],authority)
+
+    def test_missing_xwayland_display_aborts_before_starting_client(self):
+        with patch.object(live.h,'call',return_value='__window_stash_unset__'), \
+                patch.object(live.subprocess,'Popen') as start:
+            with self.assertRaisesRegex(AssertionError,'no XWayland display'):
+                live.spawn('Owned XWayland fixture',True)
+        start.assert_not_called()
+
+    def test_wayland_fixture_does_not_query_or_replace_x11_environment(self):
+        with patch.dict(live.os.environ,{'DISPLAY':':1','XAUTHORITY':'/parent/authority'}), \
+                patch.object(live.h,'call') as compositor:
+            environment=live.fixture_environment()
+        self.assertEqual(environment['GDK_BACKEND'],'wayland')
+        compositor.assert_not_called()
+
     def test_transient_shell_status_failure_retries_within_deadline(self):
         for command in (['omarchy-shell','window-stash','status'],
                         ('omarchy-shell','window-stash','status'),
