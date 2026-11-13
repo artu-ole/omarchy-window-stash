@@ -86,8 +86,11 @@ ShellRoot {
       var next=Object.assign({},states);next[id]={epoch:++serial,requestedAspect:aspect,axis:axis,pending:true,ready:false};states=next;return true
     }
     function ready(aspect,size) {
-      var next=Object.assign({},states),state=Object.assign({},next.first)
-      state.ready=true;state.pending=false;state.aspect=aspect;state.size=size;state.captureRevision=state.epoch;next.first=state;states=next
+      readyFor("first",aspect,size)
+    }
+    function readyFor(id,aspect,size) {
+      var next=Object.assign({},states),state=Object.assign({},next[id])
+      state.ready=true;state.pending=false;state.aspect=aspect;state.size=size;state.captureRevision=state.epoch;next[id]=state;states=next
     }
   }
   Window {
@@ -186,6 +189,21 @@ ShellRoot {
           var tile=previews.tileList().find(function(item) {return item.record.id==="second"})
           check(tile && fake.verifications===1 && !!tile.sourceGeometryState,"A resized non-lead tile did not verify native geometry")
           check(!tile.geometryReady && !tile.details().interaction.interactEnabled,"An unverified resized tile enabled input")
+          previews.closeExpansion()
+          previews.groups=[{key:"window:first",windows:[{id:"restashed",phase:"stashed",size:[800,600],title:"Restashed",app:"test"}]}]
+        } else if(root.phase===11) {
+          image().sourceSize=Qt.size(800,600);image().hasFrame=true
+          one().aspectOverride=2
+          check(!one().sourceGeometryState && !one().geometryReady && !one().beginNativeInteraction(),"A new UUID enabled input against the old natural frame before saved-aspect reflow")
+          var next=Object.assign({},fake.saved);next[one().key]=[200,180,280,2];fake.saved=next
+          previews.applySavedShape(one())
+          check(fake.requests[fake.requests.length-1].id==="restashed" && fake.requests[fake.requests.length-1].aspect===2,"Saved custom proportions were not reapplied to the new exact UUID")
+          fake.readyFor("restashed",2,[800,400])
+        } else if(root.phase===12) {
+          check(!one().geometryReady && !image().hasContent,"Re-stash enabled input before replacing its old capture")
+          image().sourceSize=Qt.size(800,400);image().hasFrame=true
+        } else if(root.phase===13) {
+          check(one().record.id==="restashed" && one().geometryReady && one().aspectOverride===2,"Re-stash did not recover saved proportions and fresh-frame readiness")
           console.log("PREVIEW_ASPECT_CARDS_QT_PASS");Qt.quit()
         }
         root.phase++

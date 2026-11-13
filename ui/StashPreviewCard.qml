@@ -55,10 +55,10 @@ Item {
   readonly property var desktop:DesktopEntries.heuristicLookup(displayRecord ? String(displayRecord.app || "") : "")
   readonly property var dimensions:Geometry.dimensions(width,geometryRecord,{x:0,y:0,width:Math.max(1,width),height:Math.max(1,maximumHeight)},titleVisible,frameVisible,aspectOverride)
   readonly property var sourceGeometryState:displayRecord && typeof stash.previewGeometryState==="function" ? stash.previewGeometryState(displayRecord.id) : null
-  readonly property bool geometryReady:!resizing && ((!sourceGeometryState && !(displayRecord && displayRecord.previewResized)) || (sourceGeometryState && sourceGeometryState.ready && appliedGeometryEpoch===sourceGeometryState.captureRevision
+  readonly property bool geometryReady:!resizing && ((!sourceGeometryState && !(displayRecord && displayRecord.previewResized) && customFrameMatches()) || (sourceGeometryState && sourceGeometryState.ready && appliedGeometryEpoch===sourceGeometryState.captureRevision
     && !awaitingGeometryCapture && frameMatchesGeometry()))
-  readonly property string geometryReason:resizing ? "Finish resizing to interact" : sourceGeometryState && !geometryReady
-    ? sourceGeometryState.reason || "Waiting for a fresh preview frame…" : ""
+  readonly property string geometryReason:resizing ? "Finish resizing to interact" : !geometryReady
+    ? sourceGeometryState ? sourceGeometryState.reason || "Waiting for a fresh preview frame…" : "Updating preview proportions…" : ""
   readonly property bool interactionEnabled:config.floatingPreviewInteraction==="on" && typeof stash.beginPreviewInteraction==="function"
   readonly property bool lifecycleAvailable:typeof stash.lifecycleReady!=="boolean" || stash.lifecycleReady
   readonly property bool interactionOwned:typeof stash.endPreviewInteraction==="function" && !!stash.previewInteractionRequest
@@ -220,6 +220,13 @@ Item {
     if(!thumbnail.hasContent || !thumbnail.eligible || !Number.isFinite(aspect) || aspect<=0 || size.width<=0 || size.height<=0) return false
     var scale=goal && goal[0]>0 ? Math.max(1,size.width/goal[0]) : 1
     return Math.abs(size.width-size.height*aspect)<=2*scale
+  }
+  function customFrameMatches() {
+    if(aspectOverride<=0) return true
+    var size=thumbnail.sourceSize,original=displayRecord && displayRecord.size
+    if(!thumbnail.hasContent || !thumbnail.eligible || size.width<=0 || size.height<=0) return false
+    var scale=original && original[0]>0 && original[1]>0 ? Math.max(1,size.width/original[0],size.height/original[1]) : 1
+    return Math.abs(size.width-size.height*aspectOverride)<=2*scale
   }
   function syncSourceGeometry() {
     var state=sourceGeometryState
