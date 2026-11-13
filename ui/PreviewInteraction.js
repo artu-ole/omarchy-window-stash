@@ -56,10 +56,11 @@ function request(serial,id,monitor,key,rect,excludeRects,settings) {
       || typeof monitor!=="string" || !monitor || !validRect(rect)) return null
   return {serial:serial,id:id,monitor:monitor,viewKey:key,rect:rectCopy(rect),
     excludeRects:(excludeRects || []).filter(validRect).slice(0,16).map(rectCopy),
-    keyboard:settings.floatingPreviewKeyboard==="click",fps:settings.floatingPreviewInteractionFps==="30" ? 30 : 60}
+    keyboard:settings.floatingPreviewKeyboard==="click",fps:settings.floatingPreviewInteractionFps==="30" ? 30 : 60,
+    fullscreen:settings.floatingPreviewFullscreen==="desktop" ? "desktop" : "preview"}
 }
 function wire(request) {
   if(!request) return null
   return {serial:request.serial,id:request.id,monitor:request.monitor,rect:request.rect,
-    excludeRects:request.excludeRects,keyboard:request.keyboard,fps:request.fps}
+    excludeRects:request.excludeRects,keyboard:request.keyboard,fps:request.fps,fullscreen:request.fullscreen}
 }

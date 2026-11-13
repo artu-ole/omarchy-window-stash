@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
-from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PLUGIN, DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
+from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PREFIX, PLUGIN, DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
 import shortcuts
 
 
@@ -37,6 +37,7 @@ class FakeHypr:
         self.fail=None
         self.on_read=None
         self.on_close=None
+        self.preview_fullscreen={}
 
     def read(self, name):
         if self.on_read: self.on_read(name)
@@ -66,6 +67,15 @@ class FakeHypr:
 
     def close_stashed(self, record):
         self.dispatch_owned("window.close", record, parked=True)
+
+    def clear_preview_fullscreen(self, record):
+        current = self.client(record['address'])
+        if (not current or current['pid'] != record['pid'] or current.get('stableId') != record['stableId']
+                or record['tag'] not in current.get('tags', []) or current['workspace']['name'] != SPECIAL):
+            raise RuntimeError('Stashed window identity changed')
+        stable = current.get('stableId')
+        if stable in self.preview_fullscreen:
+            current['fullscreenClient'] = self.preview_fullscreen.pop(stable)
 
     def park_owned(self, record, parked=False):
         # The production adapter sends one guarded Lua transaction. This fake
@@ -1056,7 +1066,7 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
-            floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",
+            floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",floatingPreviewFullscreen="preview",
             floatingPreviewExitShortcut="CTRL + ALT + Escape",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
 
@@ -1493,6 +1503,67 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         self.stash.restore(ident)
         self.assertEqual(self.hypr.clients[0]["fullscreen"],2)
         self.assertTrue(self.hypr.clients[0]["pinned"])
+
+    def test_preview_fullscreen_clears_before_restore_and_preserves_original_real_fullscreen(self):
+        for number, (floating, original_mode, legacy) in enumerate(((True,0,False),(False,0,True),(True,2,False))):
+            with self.subTest(floating=floating, original=original_mode, legacy=legacy):
+                hypr, stash = self.race_fixture('preview-fullscreen-'+str(number))
+                hypr.clients[0].update(floating=floating,fullscreen=original_mode,fullscreenClient=original_mode)
+                ident = stash.minimize()['id']
+                saved = copy.deepcopy(stash.state['windows'][0])
+                if legacy:
+                    del stash.state['windows'][0]['stableId']
+                current = hypr.clients[0]
+                current['fullscreenClient'] = 2
+                hypr.preview_fullscreen[current['stableId']] = 0
+                self.assertEqual(stash.restore(ident)['action'],'restored')
+                self.assertEqual((current['fullscreen'],current['fullscreenClient']),(original_mode,original_mode))
+                self.assertEqual(current['size'],saved['size'])
+                self.assertEqual(hypr.preview_fullscreen,{})
+                self.assertEqual(stash.state['windows'],[])
+
+    def test_preview_fullscreen_clear_is_not_saved_as_a_fullscreen_retry_request(self):
+        self.hypr.clients[0]['floating'] = True
+        ident = self.stash.minimize()['id']
+        current = self.hypr.clients[0]
+        self.hypr.preview_fullscreen[current['stableId']] = 0
+        current['fullscreenClient'] = 2
+        self.hypr.fail = 'window.resize'
+        with self.assertRaisesRegex(RuntimeError,'Injected IPC failure'):
+            self.stash.restore(ident)
+        retained = self.stash.state['windows'][0]
+        self.assertNotIn('restoreFullscreen',retained)
+        self.assertEqual((retained['fullscreen'],retained['fullscreenClient']),(0,0))
+        self.hypr.fail = None
+        self.stash.restore(ident)
+        self.assertEqual((current['fullscreen'],current['fullscreenClient']),(0,0))
+
+    def test_preview_fullscreen_cleanup_rechecks_source_identity_before_any_restore_mutation(self):
+        ident = self.stash.minimize()['id']
+        replacement = client(pid=200)
+        replacement['stableId'] = '0x222'
+        def replace(_record):
+            self.hypr.clients = [replacement]
+        self.hypr.clear_preview_fullscreen = replace
+        before = len(self.hypr.commands)
+        self.assertEqual(self.stash.restore(ident)['action'],'noop')
+        self.assertEqual(self.hypr.commands[before:],[])
+        self.assertEqual(replacement,client(pid=200) | dict(stableId='0x222'))
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_clear_lua_checks_optional_api_and_exact_identity(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        class Capture:
+            def eval(self, script):self.script=script
+        capture = Capture()
+        Hyprland.clear_preview_fullscreen(capture,record)
+        for api, success in (('',True),
+            ('clear_fullscreen=function(v) assert(v.id=="'+record['id']+'" and v.address=="0x123" and v.pid==73 '
+             'and v.stable_id=="18000001" and v.tag=="'+record['tag']+'"); return false end',True),
+            ('clear_fullscreen=function() return nil,"changed identity" end',False)):
+            prelude = 'hl={plugin={window_stash_preview={'+api+'}}}\n'
+            result = subprocess.run(['lua','-'],input=prelude+capture.script,text=True,capture_output=True)
+            self.assertEqual(result.returncode==0,success,result.stderr)
 
     def test_fullscreen_requested_while_hidden_is_cleared_for_restore_then_reapplied(self):
         for floating, internal, client_mode in ((False,2,2),(True,1,0),(True,0,2)):

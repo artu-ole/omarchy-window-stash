@@ -20,7 +20,7 @@ Item {
   property string lifecycleError: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -806,7 +806,7 @@ Item {
     options.floatingPreviewFrame=["shown","hidden"]; options.floatingPreviewLock=["locked","unlocked"]
     options.floatingPreviewInteraction=["off","on"]; options.floatingPreviewActivation=["explicit","click"]
     options.floatingPreviewKeyboard=["mouse","click"]; options.floatingPreviewInteractionFps=["30","60"]
-    options.floatingPreviewControls=["hover","always"]
+    options.floatingPreviewControls=["hover","always"]; options.floatingPreviewFullscreen=["preview","desktop"]
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
     if (numericLimits[key] !== undefined) {
       if (!/^(0|[1-9][0-9]{0,3})$/.test(String(value)) || Number(value) > numericLimits[key]) {

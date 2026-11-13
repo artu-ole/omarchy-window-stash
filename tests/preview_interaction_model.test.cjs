@@ -22,11 +22,12 @@ assert.deepEqual(plain(model.exclusions(image, [{x:-1500,y:50,width:100,height:3
 const request = plain(model.request(7, 'exact-window', 'DP-2', 'preview:window:1', image, excluded, settings));
 assert.equal(request.fps, 60);
 assert.equal(request.keyboard, false);
+assert.equal(request.fullscreen, 'preview');
 assert.deepEqual(request.rect, image);
 assert(model.matches(request, 'exact-window', 'DP-2', 'preview:window:1'));
 assert(!model.matches(request, 'exact-window', 'DP-1', 'preview:window:1'));
 assert(!model.matches(request, 'exact-window', 'DP-2', 'preview:window:2'));
-assert.deepEqual(Object.keys(plain(model.wire(request))).sort(), ['excludeRects','fps','id','keyboard','monitor','rect','serial']);
+assert.deepEqual(Object.keys(plain(model.wire(request))).sort(), ['excludeRects','fps','fullscreen','id','keyboard','monitor','rect','serial']);
 
 for (const invalid of [{...image,width:0}, {...image,height:-1}, {...image,x:NaN}, {...image,y:Infinity}]) {
   assert.equal(model.request(8, 'exact-window', 'DP-2', 'card', invalid, [], settings), null);
@@ -36,6 +37,8 @@ assert.equal(model.request(1,'window','DP-2','card',image,[],{...settings,floati
 assert.equal(model.request(1,'window','DP-2','card',image,[],{...settings,presentation:'dock'}),null);
 const keyboard = plain(model.request(8,'window','DP-2','card',image,[],{...settings,floatingPreviewKeyboard:'click',floatingPreviewInteractionFps:'30'}));
 assert.equal(keyboard.keyboard,true);assert.equal(keyboard.fps,30);
+assert.equal(plain(model.request(8,'window','DP-2','card',image,[],{...settings,floatingPreviewFullscreen:'desktop'})).fullscreen,'desktop');
+assert.equal(plain(model.request(8,'window','DP-2','card',image,[],{...settings,floatingPreviewFullscreen:'invalid'})).fullscreen,'preview');
 assert.equal(plain(model.request(9,'window','DP-2','card',image,Array(25).fill(image),settings)).excludeRects.length,16);
 for(const imageRect of [{x:200,y:200,width:280,height:180},{x:0,y:0,width:280,height:180},
   {x:0,y:600,width:280,height:200},{x:0,y:26,width:280,height:774}]) {

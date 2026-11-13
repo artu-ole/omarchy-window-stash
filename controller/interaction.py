@@ -19,6 +19,7 @@ MAX_REQUEST = 8192
 MAX_EXCLUDES = 16
 RENEW_SECONDS = .5
 RESTART_REQUIRED = 'Reload preview support in Window Stash Settings to use interactive previews'
+FULLSCREEN_REQUIRED = 'Reload preview support in Window Stash Settings to keep fullscreen inside a preview, or choose Fullscreen: On desktop'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
 RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
@@ -68,7 +69,7 @@ def rectangle(value):
 def request(value):
     if value is None:
         return None
-    fields = {'serial', 'id', 'monitor', 'rect', 'excludeRects', 'keyboard', 'fps'}
+    fields = {'serial', 'id', 'monitor', 'rect', 'excludeRects', 'keyboard', 'fps', 'fullscreen'}
     if not isinstance(value, dict) or set(value)-fields:
         raise ValueError('Use one preview interaction request, or null to stop')
     ident = value.get('id')
@@ -85,11 +86,14 @@ def request(value):
     fps = value.get('fps', 60)
     if type(keyboard) is not bool or type(fps) is not int or fps not in (30, 60):
         raise ValueError('Use a boolean keyboard policy and a 30 or 60 FPS limit')
+    fullscreen = value.get('fullscreen', 'preview')
+    if not isinstance(fullscreen, str) or fullscreen not in ('preview', 'desktop'):
+        raise ValueError('Fullscreen must stay inside the preview or open on the desktop')
     excluded = value.get('excludeRects', [])
     if not isinstance(excluded, list) or len(excluded) > MAX_EXCLUDES:
         raise ValueError('Interaction accepts at most 16 control exclusion rectangles')
     return dict(id=ident, serial=serial, monitor=monitor, rect=rectangle(value.get('rect')),
-                excludeRects=[rectangle(item) for item in excluded], keyboard=keyboard, fps=fps)
+                excludeRects=[rectangle(item) for item in excluded], keyboard=keyboard, fps=fps, fullscreen=fullscreen)
 
 
 def monitor_contains(monitor, rect):
@@ -118,9 +122,9 @@ def status_json(expression):
         + ',string.byte(c)) end)..\'"\' end\n'
         + 'local function count(value) return type(value)=="table" and #value or tonumber(value) or 0 end\n')
     fields = []
-    for field in ('active', 'keyboard', 'keyboardFocused', 'restoreRequested'):
+    for field in ('active', 'keyboard', 'keyboardFocused', 'restoreRequested', 'previewFullscreen'):
         fields.append(lua(json.dumps(field)+':')+'..tostring(result.'+field+'==true)')
-    for field in ('owner', 'id', 'reason'):
+    for field in ('owner', 'id', 'reason', 'fullscreen'):
         fields.append(lua(json.dumps(field)+':')+'..quote(result.'+field+')')
     for field in ('fps', 'heldButtons', 'heldKeys', 'motionEvents', 'buttonEvents', 'axisEvents', 'keyEvents',
                   'lastAxisDelta', 'lastAxisDiscrete', 'lastAxisSource'):
@@ -152,10 +156,14 @@ class InteractionBridge(PreviewBridge):
         exit_binding = target.get('exitShortcut')
         exit_value = ('{modmask='+lua(exit_binding['modmask'])+',key='+lua(exit_binding['key'])+'}'
                       if exit_binding else 'nil')
-        script = (self.interaction_probe+'local result,err='+API+'.interaction_update({owner='+lua(owner)
+        fullscreen = target.get('fullscreen', 'preview')
+        capability = ('assert(info.capabilities and info.capabilities.constrainedFullscreen==true,'
+                      +lua(FULLSCREEN_REQUIRED)+')\n') if fullscreen == 'preview' else ''
+        script = (self.interaction_probe+capability+'local result,err='+API+'.interaction_update({owner='+lua(owner)
             + ',window='+identity+',monitor='+lua(target['monitor'])+',rect='+lua_rectangle(target['rect'])
             + ',excludeRects='+excluded+',keyboard='+lua(target['keyboard'])+',fps='+lua(target['fps'])
             + ',exitShortcut='+exit_value
+            + ',fullscreen='+lua(fullscreen)
             + '}); assert(result,err); '+status_json('result'))
         return self._status(self.hypr.call('repl', script))
 
@@ -191,6 +199,7 @@ class InteractionKeeper:
         self.exit_binding = None
         self.bound_source = None
         self.keyboard_policy = None
+        self.fullscreen_policy = None
 
     def _source(self, target):
         with self.stash.locked():
@@ -214,7 +223,8 @@ class InteractionKeeper:
         if not all(monitor_contains(monitors[0], rect) for rect in [target['rect'], *target['excludeRects']]):
             return None
         parameters = dict(target, keyboard=target['keyboard'] and settings['floatingPreviewKeyboard'] == 'click',
-                          fps=int(settings['floatingPreviewInteractionFps']), exitShortcut=settings[EXIT_SHORTCUT_KEY])
+                          fps=int(settings['floatingPreviewInteractionFps']), exitShortcut=settings[EXIT_SHORTCUT_KEY],
+                          fullscreen=settings['floatingPreviewFullscreen'])
         return sources[0], parameters
 
     def _restore_handoff(self, target):
@@ -269,6 +279,7 @@ class InteractionKeeper:
             self.terminal = None
             self.bound_source = None
             self.keyboard_policy = None
+            self.fullscreen_policy = None
         self.target = target
         if self.terminal:
             return self.terminal
@@ -295,6 +306,8 @@ class InteractionKeeper:
             return self._finish(target, dict(active=False, reason='window-unavailable'))
         if self.acquired and self.keyboard_policy != parameters['keyboard']:
             return self._finish(target, dict(active=False, reason='keyboard-policy-changed'))
+        if self.acquired and self.fullscreen_policy != parameters['fullscreen']:
+            return self._finish(target, dict(active=False, reason='fullscreen-policy-changed'))
         chord = parameters.pop('exitShortcut')
         if not self.acquired or chord != self.exit_chord:
             _, self.exit_binding = exit_shortcut(chord, self.stash.hypr.read('binds') if chord else [])
@@ -302,6 +315,7 @@ class InteractionKeeper:
         parameters['exitShortcut'] = self.exit_binding
         self.bound_source = dict(identity)
         self.keyboard_policy = parameters['keyboard']
+        self.fullscreen_policy = parameters['fullscreen']
         self.acquired = True  # Also release an acquisition that fails halfway.
         status = self.bridge.interaction_update(self.owner, identity, parameters)
         self._verify_status(status, target)

@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'controller'))
-from interaction import RESTORE_REASONS, InteractionBridge, InteractionKeeper, configure_exit_shortcut, exit_shortcut, monitor_contains, request, run_loop, status_json
+from interaction import FULLSCREEN_REQUIRED, RESTORE_REASONS, InteractionBridge, InteractionKeeper, configure_exit_shortcut, exit_shortcut, monitor_contains, request, run_loop, status_json
 from stash import DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, PLUGIN, SPECIAL, Stash, atomic_json, lua, main as controller_main
 from lifecycle import valid_preferences
 from test_controller import FakeHypr as ControllerHypr, client as controller_client, monitor as controller_monitor
@@ -28,7 +28,7 @@ def record(ident=IDENT):
 
 def target(**values):
     return dict(dict(id=IDENT, serial=1, monitor='HEADLESS-1', rect=dict(x=100,y=150,width=300,height=200),
-                     excludeRects=[], keyboard=False, fps=60), **values)
+                     excludeRects=[], keyboard=False, fps=60, fullscreen='preview'), **values)
 
 
 class FakeHypr:
@@ -107,6 +107,7 @@ class InteractionTests(unittest.TestCase):
     def test_defaults_are_explicit_opt_in_and_invalid_values_fall_back(self):
         expected = dict(floatingPreviewInteraction='off',floatingPreviewActivation='explicit',
                         floatingPreviewKeyboard='mouse',floatingPreviewInteractionFps='60',floatingPreviewControls='hover',
+                        floatingPreviewFullscreen='preview',
                         floatingPreviewExitShortcut='CTRL + ALT + Escape')
         self.assertEqual({key:DEFAULTS[key] for key in expected},expected)
         self.settings(**{key:True for key in expected})
@@ -115,9 +116,12 @@ class InteractionTests(unittest.TestCase):
     def test_requests_have_one_exact_id_bounded_numbers_and_control_regions(self):
         self.assertEqual(request(None),None)
         self.assertEqual(request(target()),target())
+        legacy = target();del legacy['fullscreen']
+        self.assertEqual(request(legacy)['fullscreen'],'preview')
         invalid = [[], {}, target(id='../'+IDENT),target(serial=True),target(serial=-1),target(serial=2147483648),
                    target(monitor=''),target(monitor='HEADLESS-1\n'),target(keyboard=1),target(fps='60'),
-                   target(fps=120),target(extra='unrecognized'),target(excludeRects=[target()['rect']]*17)]
+                   target(fps=120),target(fullscreen=True),target(fullscreen='fullscreen'),target(fullscreen=None),
+                   target(extra='unrecognized'),target(excludeRects=[target()['rect']]*17)]
         for number in (True,float('nan'),float('inf'),-1,0,32769):
             invalid.append(target(rect=dict(x=0,y=0,width=number,height=200)))
         invalid.append(target(rect=dict(x=0,y=0,width=300)))
@@ -196,6 +200,16 @@ class InteractionTests(unittest.TestCase):
         self.bridge.current = dict(active=True,reason='active')
         self.keeper.sync(target(serial=2,keyboard=True))
         self.assertTrue(self.bridge.calls[-1][3]['keyboard'])
+
+    def test_saved_fullscreen_policy_overrides_stale_ui_and_changes_end_the_lease(self):
+        self.keeper.sync(target(fullscreen='desktop'))
+        self.assertEqual(self.bridge.calls[-1][3]['fullscreen'],'preview')
+        self.settings(floatingPreviewFullscreen='desktop')
+        state = self.keeper.sync(target(fullscreen='preview'))
+        self.assertEqual((state['state'],state['reason']),('ended','fullscreen-policy-changed'))
+        self.assertEqual(self.bridge.calls[-1],('release',self.keeper.owner))
+        self.keeper.sync(target(serial=2,fullscreen='preview'))
+        self.assertEqual(self.bridge.calls[-1][3]['fullscreen'],'desktop')
 
     def test_workspace_scope_uses_fresh_target_monitor_and_releases_when_source_becomes_ineligible(self):
         self.saved[0]['origin'] = dict(id=3,name='3');self.save()
@@ -564,7 +578,7 @@ class InteractionTests(unittest.TestCase):
     def test_native_status_marshaling_is_json_with_control_chars_rectangles_and_counts(self):
         reason = 'outside "quoted" \\ slash\nnext\ttext\x00'
         source = ('local status={active=true,keyboard=false,keyboardFocused=true,restoreRequested=true,keyEvents=12,owner="'+IDENT+'",id="'+OTHER+'",reason='+lua(reason)
-                  + ',heldButtons={272,273},fps=60,rect={x=-200,y=50,width=300,height=200}}\n'
+                  + ',previewFullscreen=true,fullscreen="preview",heldButtons={272,273},fps=60,rect={x=-200,y=50,width=300,height=200}}\n'
                   + 'print((function()\n'+status_json('status')+'\nend)())')
         result = subprocess.run(['lua','-'],input=source,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
@@ -572,8 +586,34 @@ class InteractionTests(unittest.TestCase):
         self.assertIs(value['active'],True);self.assertIs(value['keyboard'],False)
         self.assertIs(value['keyboardFocused'],True);self.assertEqual(value['keyEvents'],12)
         self.assertIs(value['restoreRequested'],True)
+        self.assertIs(value['previewFullscreen'],True);self.assertEqual(value['fullscreen'],'preview')
         self.assertEqual(value['reason'],reason);self.assertEqual(value['heldButtons'],2)
         self.assertEqual(value['rect'],dict(x=-200,y=50,width=300,height=200))
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_constrained_fullscreen_requires_native_capability_before_any_acquisition(self):
+        version = (Path(__file__).resolve().parents[1]/'native/version.txt').read_text().strip()
+        class Native:
+            def __init__(self, capability, policy):self.capability=capability;self.policy=policy
+            def call(self, method, code):
+                self_test.assertEqual(method,'repl')
+                prelude = ('hl={plugin={window_stash_preview={'
+                    'status=function() return {protocol=1,version='+lua(version)+',capabilities={constrainedFullscreen='+lua(self.capability)+'}} end,'
+                    'update=function() end,interaction_release=function() end,interaction_status=function() end,'
+                    'interaction_update=function(value) assert(value.fullscreen=='+lua(self.policy)+',"Wrong fullscreen policy");'
+                    'return {active=true,id='+lua(IDENT)+',owner='+lua(OTHER)+'} end}}}\n')
+                result = subprocess.run(['lua','-'],input=prelude+'print((function()\n'+code+'\nend)())',text=True,capture_output=True)
+                if result.returncode:raise RuntimeError(result.stderr)
+                return result.stdout
+        self_test = self
+        identity = dict(id=IDENT,address='0x123',pid=42,stable_id='18000001',tag='window-stash-'+IDENT)
+        for capability, policy in ((True,'preview'),(False,'desktop')):
+            bridge = InteractionBridge(Native(capability,policy))
+            self.assertTrue(bridge.interaction_update(OTHER,identity,target(fullscreen=policy))['active'])
+        bridge = InteractionBridge(Native(False,'preview'))
+        with self.assertRaisesRegex(RuntimeError,'Reload preview support') as failure:
+            bridge.interaction_update(OTHER,identity,target())
+        self.assertIn(FULLSCREEN_REQUIRED,str(failure.exception))
 
     def test_native_status_missing_or_malformed_active_flag_fails_closed(self):
         for value in ('{}','[]','{"active":1}','not-json'):

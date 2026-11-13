@@ -30,7 +30,7 @@ DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="cur
                 floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
                 floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked",
                 floatingPreviewInteraction="off", floatingPreviewActivation="explicit", floatingPreviewKeyboard="mouse",
-                floatingPreviewInteractionFps="60", floatingPreviewControls="hover")
+                floatingPreviewInteractionFps="60", floatingPreviewControls="hover", floatingPreviewFullscreen="preview")
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 DEFAULTS.update(LOCAL_SHORTCUT_DEFAULTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=("global", "workspace"),
@@ -50,7 +50,7 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=(
                floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),
                floatingPreviewInteraction=("off", "on"), floatingPreviewActivation=("explicit", "click"),
                floatingPreviewKeyboard=("mouse", "click"), floatingPreviewInteractionFps=("30", "60"),
-               floatingPreviewControls=("hover", "always"))
+               floatingPreviewControls=("hover", "always"), floatingPreviewFullscreen=("preview", "desktop"))
 
 
 def lua(value):
@@ -168,6 +168,15 @@ class Hyprland:
         fields = ["window = w"] + [k + " = " + lua(v) for k, v in args.items() if k != "window"]
         self.eval(owned_window_guard(record, parked)
                   + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
+
+    def clear_preview_fullscreen(self, record):
+        """Drop only an exact registered miniature fullscreen override, if loaded."""
+        api = 'hl.plugin.window_stash_preview'
+        identity = dict(id=record['id'], address=record['address'], pid=record['pid'],
+                        stable_id=record['stableId'], tag=record['tag'])
+        payload = '{'+','.join(key+'='+lua(value) for key, value in identity.items())+'}'
+        self.eval('if hl.plugin and '+api+' and type('+api+'.clear_fullscreen)=="function" then\n'
+                  +'local cleared,err='+api+'.clear_fullscreen('+payload+'); assert(cleared~=nil,err)\nend')
 
     def park_owned(self, record, parked=False):
         width, height = map(lua, record["size"])
@@ -477,6 +486,16 @@ class Stash:
         if not self.matches(expected, current):
             self.reconcile(self.hypr.read("clients"))
             return {"ok": True, "action": "noop", "id": ident, "reason": "Window identity changed"}
+        # A client can remain fullscreen inside a passive miniature after its
+        # input lease ends. Remove that private override before interpreting
+        # current fullscreen state as a real desktop restoration request.
+        identity = dict(expected, stableId=expected.get('stableId') or current.get('stableId'))
+        if current['workspace']['name'] == SPECIAL and identity.get('stableId'):
+            self.hypr.clear_preview_fullscreen(identity)
+            current = self.hypr.client(record['address'])
+            if not self.matches(expected, current):
+                self.reconcile(self.hypr.read('clients'))
+                return {"ok": True, "action": "noop", "id": ident, "reason": "Window identity changed"}
         def dispatch(dispatcher, **args):
             if "window" in args:
                 return self.hypr.dispatch_owned(dispatcher, expected, **args)

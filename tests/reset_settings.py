@@ -113,7 +113,7 @@ def main():
                       floatingPreviewSizing='preset', floatingPreviewScale='150', floatingPreviewUpdate='live',
                       floatingPreviewTitles='shown', floatingPreviewFrame='shown', floatingPreviewLock='locked',
                       floatingPreviewInteraction='on', floatingPreviewActivation='click', floatingPreviewKeyboard='click',
-                      floatingPreviewInteractionFps='30', floatingPreviewControls='always', floatingPreviewExitShortcut=chords[3],
+                      floatingPreviewInteractionFps='30', floatingPreviewControls='always', floatingPreviewFullscreen='desktop', floatingPreviewExitShortcut=chords[3],
                       minimizeShortcut=chords[0], restoreLastShortcut=chords[1], restoreOldestShortcut=chords[2])
         assert set(custom) == set(DEFAULTS), 'Reset fixture does not exercise every current preference'
         assert all(custom[key] != DEFAULTS[key] for key in DEFAULTS), 'Reset fixture contains an unchanged default'
