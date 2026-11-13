@@ -231,6 +231,17 @@ def activate(application):
     activate_button.set_size_request(150, 44)
     activate_button.connect('clicked', lambda widget: (emit('activate-request'), window.get_surface().focus(Gdk.CURRENT_TIME)))
     fixed.put(activate_button, 820, 84)
+    delayed_activate = Gtk.Button(label='Delayed activation')
+    delayed_activate.set_size_request(150, 44)
+    def activate_later(_button):
+        emit('activate-delayed-scheduled')
+        def activate_source():
+            emit('activate-delayed-request')
+            window.get_surface().focus(Gdk.CURRENT_TIME)
+            return False
+        GLib.timeout_add(800, activate_source)
+    delayed_activate.connect('clicked', activate_later)
+    fixed.put(delayed_activate, 820, 144)
     edge_button = Gtk.Button(label='Oversized popup')
     edge_button.set_size_request(150, 44)
 

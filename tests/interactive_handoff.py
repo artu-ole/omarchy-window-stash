@@ -10,7 +10,7 @@ import time
 from desktop_test import desktop_test
 from floating_previews import card, park, ready, seed
 from interactive_bridge import events, spawn_fixture
-from interactive_previews import active, source_click, start, stopped
+from interactive_previews import active, assert_source, interaction, source_click, start, stopped
 from live import command, configure, h, shell, wait
 from native_session import NativeSession
 from stash import SPECIAL
@@ -208,13 +208,36 @@ def main(handoff_only=False):
             record = park(session, address)
             ready(session, record)
             start(session, record)
+            client = h.client(address)
+            before = client['workspace'], client['at'], client['size'], client['floating']
+            acknowledgements = interaction()['status'].get('status', {}).get('keyboardActivationAcknowledgements', 0)
             source_point(session, record, 890, 106)
             wait(lambda: events(log, 'activate-request'), 'Application activation request was not emitted')
-            wait(lambda: h.client(address)['workspace']['name'] != SPECIAL,
-                 'Client activation did not restore its keyboard-owned source', timeout=12)
-            wait(stopped, 'Client activation retained miniature input')
+            wait(lambda: interaction()['status'].get('status', {}).get('keyboardActivationAcknowledgements', 0) > acknowledgements,
+                 'A redundant activation of the keyboard-focused source was not acknowledged')
+            assert active(record), 'A redundant source activation ended miniature input'
+            assert_source(record, before)
             monitor.check();monitor_records(witness)
-            print('PASS a real application activation request restores its keyboard-owned source without exposing unrelated stashes', flush=True)
+            print('PASS a genuine redundant application activation preserves its already keyboard-focused preview and geometry', flush=True)
+
+            h.dispatch('focus', window='address:'+address)
+            wait(lambda: h.client(address)['workspace']['name'] != SPECIAL,
+                 'Explicit WM activation was ignored while the source owned keyboard focus')
+            wait(stopped, 'Explicit WM activation retained miniature input')
+            record = park(session, address)
+            ready(session, record)
+            start(session, record)
+            source_point(session, record, 890, 166)
+            wait(lambda: events(log, 'activate-delayed-scheduled'), 'Delayed application activation was not scheduled')
+            h.dispatch('focus', window='address:'+control)
+            wait(lambda: active(record) and not interaction()['status'].get('status', {}).get('keyboardFocused'),
+                 'The public control did not take keyboard focus while the input lease remained active')
+            wait(lambda: events(log, 'activate-delayed-request'), 'Delayed application activation request was not emitted')
+            wait(lambda: h.client(address)['workspace']['name'] != SPECIAL,
+                 'A real application activation did not restore the source after external keyboard focus', timeout=12)
+            wait(stopped, 'Client activation retained miniature input after external focus')
+            monitor.check();monitor_records(witness)
+            print('PASS explicit WM activation and genuine application activation after external keyboard focus still restore normally', flush=True)
         finally:
             shell('dismiss')
             h.eval('hl.config({input={follow_mouse='+following+'}})')
