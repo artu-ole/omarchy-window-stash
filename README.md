@@ -154,7 +154,8 @@ Reshaping preserves the window's original restoration geometry and scrolling wid
 App-group covers reflow only their displayed window; expanded thumbnails keep
 automatic sizing. Stashing another window or starting live updates does not reshape
 existing sources. Interaction waits for the app's resized content and a fresh
-preview frame; use Stop/Manage before resizing an interactive miniature.
+preview frame. Resize handles remain available during interaction: app input
+pauses during the drag and resumes when the resized preview is ready.
 
 | Key | Default | Values / meaning |
 |---|---|---|

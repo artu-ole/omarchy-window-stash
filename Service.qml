@@ -89,6 +89,7 @@ Item {
   property var previewInteractionStatus:({state:"idle"})
   property string previewInteractionError:""
   property int previewInteractionSerial:0
+  property int previewInteractionIntentEpoch:0
   property var previewGeometryStates:({})
   property var previewGeometryDrafts:({})
   property var previewGeometryWatchers:({})
@@ -204,6 +205,7 @@ Item {
   function resetPointerHold() { root.pressedPointerButtons={}; clickObserver.resetHeld() }
 
   readonly property bool previewCornerResizeReady:previewShortcut.cornerReady
+  readonly property bool previewInteractiveResizeReady:previewShortcut.cornerReady && previewShortcut.status.interactiveResize===true
   StashPreviewShortcut {
     id:previewShortcut
     stash:root
@@ -434,6 +436,7 @@ Item {
     return true
   }
   function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
+    previewInteractionIntentEpoch++
     if(!record || bridgeReloadBusy || pendingCloseIds[record.id] || pendingPreviewFoldIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
         || !snapshot.windows.some(function(window) {return window.id===record.id && window.phase==="stashed" && window.previewFolded!==true})) return false
     var request=PreviewInteraction.request(previewInteractionSerial+1,record.id,monitor,key,rect,excludeRects,snapshot.settings)
@@ -459,6 +462,7 @@ Item {
     if(JSON.stringify(request)!==JSON.stringify(previewInteractionRequest)) previewInteractionRequest=request
   }
   function endPreviewInteraction(reason) {
+    if(reason!=="preview-resize") previewInteractionIntentEpoch++
     if(reason!=="replaced") previewInteractionPendingRequest=null
     if(!previewInteractionRequest) return
     if(previewInteractionStopping) return
@@ -466,6 +470,11 @@ Item {
     previewInteractionStatus={state:"stopping",id:previewInteractionRequest.id,serial:previewInteractionRequest.serial,reason:previewInteractionStopReason}
     if(previewInteractionWorker) previewInteractionWorker.stop()
     interactionStopDeadline.restart()
+  }
+  function beginPreviewResize() {
+    previewInteractionIntentEpoch++
+    previewInteractionPendingRequest=null
+    return previewInteractionIntentEpoch
   }
   function finishPreviewInteraction(value) {
     interactionStopDeadline.stop();interactionKillDeadline.stop();interactionExpiryDeadline.stop()

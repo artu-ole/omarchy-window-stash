@@ -90,7 +90,7 @@ def main():
         before = len(events(log, 'press'))
         start(session, record)
         assert len(events(log, 'press')) == before, 'Interact control also clicked the hidden application'
-        assert not card(session, record)['resizable'], 'Active miniature allowed accidental content resizing'
+        assert card(session, record)['resizable'], 'Active miniature lost its management resize handles'
         for button in (272, 273, 274):
             before = len(events(log, 'press'))
             source_click(session, record, button=button)

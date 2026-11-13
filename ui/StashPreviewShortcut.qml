@@ -31,7 +31,8 @@ Item {
     } else prepareDelay.restart()
   }
   onBridgeStampChanged: {
-    if(stash.bridgeSupportStatus.state==="current" && status.state!=="ready") {
+    if(stash.bridgeSupportStatus.state==="current") {
+      status={state:"idle"};error=""
       attempted=false
       if(wanted) prepareDelay.restart()
     }

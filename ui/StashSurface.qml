@@ -108,7 +108,7 @@ PanelWindow {
         || !group || !group.windows || !group.windows.length) return false
     var card=floatingPreviews.cardForKey("preview:"+group.key)
     return !!card && card.visible && !card.retiring && card.aspectOverride>0 && !!card.displayRecord
-      && card.displayRecord.id===group.windows[0].id
+      && card.displayRecord.id===group.windows[0].id && !card.interactionBusy && !card.resizeResumePending
   }
   function resetPreviewProportions(id) {return floatingPreviews.resetPreviewProportions(id)}
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name

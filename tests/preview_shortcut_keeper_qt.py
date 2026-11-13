@@ -126,6 +126,13 @@ ShellRoot {
           check(process().starts===7,"Enabling free sizing while interaction stayed on did not recheck corner support")
           shortcut.message({state:"ready",cornerResize:true});process().finish(0)
           check(shortcut.cornerReady,"Rechecked free-corner gestures were unavailable")
+          fake.bridgeSupportStatus={state:"current",loadedVersion:"newer"}
+          check(!shortcut.cornerReady,"Reloading a bridge kept stale capability readiness")
+          root.phase=10;root.ticks=0
+        } else if(root.phase===10 && root.ticks>=6) {
+          check(process().starts===8,"A native upgrade did not recheck an already-ready shortcut")
+          shortcut.message({state:"ready",cornerResize:true,interactiveResize:true});process().finish(0)
+          check(shortcut.cornerReady && shortcut.status.interactiveResize,"Rechecked native upgrade lost interactive resizing support")
           fake.snapshot={settings:{presentation:"previews",floatingPreviewInteraction:"off",floatingPreviewLock:"locked"},windows:[{id:"one",phase:"stashed"}]}
           check(!shortcut.wanted,"Locked view-only previews prepared corner gestures")
           fake.stopping=true

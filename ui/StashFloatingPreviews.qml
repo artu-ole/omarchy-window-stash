@@ -260,7 +260,7 @@ Item {
     collection.entries.forEach(function(group) {group.windows.forEach(function(record) {owned[record.id]=true})})
     Object.keys(pending).forEach(function(id) {
       if(!owned[id]) {delete pending[id];return}
-      if(cardList().some(function(card) {return card.displayRecord && card.displayRecord.id===id && (card.held || card.resizing || card.moving || card.interactionBusy)})) return
+      if(cardList().some(function(card) {return card.displayRecord && card.displayRecord.id===id && (card.held || card.resizing || card.moving || card.interactionBusy || card.resizeResumePending)})) return
       if(!Geometry.sameAspect(next[id],pending[id])) {next[id]=pending[id];changed=true}
       delete pending[id]
     })
@@ -296,7 +296,7 @@ Item {
     return stash.requestPreviewAspect(card.record.id,aspect,axis,settle)
   }
   function applySavedShape(card) {
-    if(!card || !card.visible || card.retiring || card.resizing || card.interactionBusy || card.expandedTile
+    if(!card || !card.visible || card.retiring || card.resizing || card.interactionBusy || card.resizeResumePending || card.expandedTile
         || !card.record || !card.imageReadyForShape()) return
     var size=card.capturedSourceSize(),state=typeof stash.previewGeometryState==="function" ? stash.previewGeometryState(card.record.id) : null
     if(state && state.ready && Math.abs(Number(state.aspect)-card.aspectOverride)<=Math.max(Number(state.aspect),card.aspectOverride)*.0001 && card.frameMatchesGeometry()) return
@@ -333,11 +333,11 @@ Item {
       card.shapeAnchor=null
     }
     world.remove(card.key);world.add(card.key,card.x,card.y,card.width,card.height);card.registered=true
-    world.freeze(card.key,blocked || config.floatingPreviewLock==="locked")
+    world.freeze(card.key,blocked || config.floatingPreviewLock==="locked" || card.interactionBusy || card.resizeResumePending)
     save(card);scheduleLayout()
   }
   function resetShape(card) {
-    if(!card || !card.canResize || !card.record || card.expandedTile) return
+    if(!card || !card.canResize || !card.record || card.expandedTile || card.interactionBusy || card.resizeResumePending) return
     card.shapeAnchor={x:card.x,y:card.y,width:card.width,height:card.height,axis:"height",edge:"bottom",recordId:card.record.id,reset:true}
     card.aspectOverride=0
     save(card);requestShape(card,Geometry.aspect(card.record),"height",true);scheduleLayout()
@@ -383,7 +383,7 @@ Item {
       if(!target || !target.visible || card.retiring) {world.remove(card.key);card.registered=false;return}
       if(card.held || card.resizing) return
       var body=world.body(card.key)
-      if(card.interactionBusy) {world.freeze(card.key,true);card.syncNativeInteraction();return}
+      if(card.interactionBusy || card.resizeResumePending) {world.freeze(card.key,true);card.syncNativeInteraction();return}
       if(body && body.moving) return
       var changed=!body || Math.abs(body.width-target.width)>.05 || Math.abs(body.height-target.height)>.05
       card.aspectOverride=target.aspectOverride || 0
@@ -511,6 +511,7 @@ Item {
       onSourceGeometryAccepted:function(state) {previews.acceptShape(card,state)}
       onProportionsResetRequested:previews.resetShape(card)
       onGeometryReleased:sourceGeometryDelay.restart()
+      onResizeResumePendingChanged: {previews.scheduleLayout();previews.scheduleRegions();sourceGeometryDelay.restart()}
       onMovePressed: {previews.closeExpansion();world.press(key)}
       onMoveRequested:function(x,y) {world.drag(key,x,y)}
       onMoveReleased:world.release(key)
@@ -536,10 +537,16 @@ Item {
         resizeOrigin=null
         if(!record || origin.recordId!==record.id) {shapeAnchor=null;previews.scheduleLayout();return}
         world.add(key,x,y,width,height);registered=true
-        world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked")
+        world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked" || card.interactionBusy || card.resizeResumePending)
         previews.save(card)
         if(reshape) previews.requestShape(card,aspectOverride,origin.axis,true)
         else shapeAnchor=null
+        previews.scheduleLayout()
+      }
+      onResizeCanceled: {
+        resizeOrigin=null;shapeAnchor=null
+        world.remove(key);world.add(key,x,y,width,height);registered=true
+        world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked" || card.interactionBusy || card.resizeResumePending)
         previews.scheduleLayout()
       }
       onActivated:previews.activate(card)

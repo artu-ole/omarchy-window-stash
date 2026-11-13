@@ -141,6 +141,28 @@ leave alone does not stop interaction. Interruption releases held buttons/keys a
 consumes stale corresponding physical releases. Native ended-owner tokens prevent
 automatic renewals from reactivating a session; explicit activation uses a new owner.
 
+## Resizing during interaction
+
+Free, unlocked previews retain their side and corner handles while interacting.
+All enabled handle rectangles are reserved from application input, including
+before activation and outside the captured image. Native management grabs retain
+the complete pointer gesture across the asynchronous input-release handshake.
+An application drag begun in content retains its own implicit grab across handles.
+
+A resize pins the exact source and view, pauses the input owner and buffers the
+latest pointer delta. Preview and source geometry change only after acknowledged
+release; a fast mouse-up still applies the final buffered target. After release
+and matching fresh geometry, the same preview automatically acquires a new owner.
+Keyboard input retains its normal click-to-focus policy.
+
+An interaction intent epoch cancels stale resumption on Stop, outside actions,
+other activations or resize gestures, source replacement, hidden/disabled views,
+configuration/lifecycle changes and errors. The pending toolbar retains Stop.
+Physics and movement remain frozen until resumption or cancellation. A failed
+or unacknowledged release never unlocks early; a missing fresh frame leaves the
+preview view-only after a bounded wait. Older native bridges preserve ordinary
+interaction and expose the existing safe preview-support update action.
+
 ## Restoration fallback
 
 The implementation requests restoration for modal dialogs, fullscreen, overflowing
@@ -175,7 +197,8 @@ helper exit, expiry or unload. `no_screen_share` sources are rejected; keyboard
 interaction also respects `no_focus`. Enabling either rule mid-session ends the
 affected routing. Ordinary previews remain available when native setup fails.
 
-Interaction preserves source geometry and original restoration metadata. A fallback
+Resize gestures change working source dimensions while preserving original
+restoration metadata. A fallback
 deliberately restores the full window when its requested UI needs that environment.
 Pointer-locked applications, cross-window drag-and-drop and input-method popup
 positioning require the restored application; broader compatibility is not inferred

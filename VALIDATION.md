@@ -1,5 +1,39 @@
 # Validation
 
+## v1.36.0 — resizing during interaction — 13 November 2026
+
+Active, free and unlocked previews keep eight resize handles. Handle presses
+pause input; geometry waits for acknowledged release, including a mouse-up that
+arrives before acknowledgment. The latest target wins, and the exact preview
+resumes with a fresh owner after its matching frame arrives. Stop, outside
+actions, replacement, policy/lifecycle changes and errors cancel stale intent.
+Application drags retain their implicit grab when crossing a resize handle.
+
+The complete check passes **393 Python tests**, **16 Node suites**, **seventeen
+offscreen Qt suites**, **123 Python syntax checks**, manifest validation and
+warning-free QML lint. Qt coverage includes delayed acknowledgments, early
+release, same-turn movement/release after acknowledgment, fresh-frame gating,
+initial handle exclusion before capability readiness, explicit cancellation,
+source replacement and Service intent epochs.
+
+`python3 tests/preview_interactive_resize.py` passed in the disposable compositor:
+ordinary corners, sides and Super corners; fresh-owner input mapping; same-frame
+inward movement and release; focused keyboard input with held Super cleanup;
+application drags across handles; locked/preset restrictions; release-only
+updates; Stop while an owned suspended client delays its new frame; and exact
+original restoration. No management clicks reached the application.
+
+Native **1.29.8** compiled without warnings. Production-code ASAN tests verify
+Qt management ownership across input teardown, additional physical buttons,
+reload barriers, source implicit grabs, continuing Super motion and teardown
+that would otherwise refocus and cancel the held gesture. Older bridges retain
+ordinary interaction; active resizing waits for verified support.
+
+The existing four-corner and Super-click native suites also pass, including
+public-window dragging, grouped target replacement and held-Super cleanup. The
+private session finishes with no clients, stash records, captures, owners, held
+or pending input, and a healthy lifecycle.
+
 ## v1.35.0 — Super corner resizing — 13 November 2026
 
 Super + corner drag resizes both preview dimensions independently around the
