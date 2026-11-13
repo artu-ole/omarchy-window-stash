@@ -156,6 +156,41 @@ class FakeHypr:
                 self.monitors[0]["activeWorkspace"]=dict(id=int(kw["workspace"]),name=kw["workspace"])
 
 
+class FullscreenCleanupIPC:
+    """Run the production adapter against a small stateful native Lua API."""
+    def __init__(self, record, pending, capability=True, query=True, on_clear=None):
+        self.record = record
+        self.pending = pending
+        self.capability = capability
+        self.query = query
+        self.on_clear = on_clear
+        self.clears = 0
+        self.queries = 0
+
+    def eval(self, script):
+        value = self.pending[min(self.queries,len(self.pending)-1)]
+        response = ('return nil,'+lua(str(value))) if isinstance(value,Exception) else 'return '+lua(value)
+        identity = dict(id=self.record['id'],address=self.record['address'],pid=self.record['pid'],
+                        stable_id=self.record['stableId'],tag=self.record['tag'])
+        checks = ';'.join('assert(v.'+key+'=='+lua(value)+',"Changed cleanup identity")' for key,value in identity.items())
+        functions = ('status=function() return {capabilities={constrainedFullscreen='+lua(self.capability)+'}} end,'
+                     'clear_fullscreen=function(v) '+checks+';clears=clears+1;return true end')
+        if self.query:
+            functions += ',fullscreen_cleanup_pending=function(v) '+checks+';queries=queries+1;'+response+' end'
+        prelude = ('local clears='+str(self.clears)+';local queries='+str(self.queries)+'\n'
+                   'hl={plugin={window_stash_preview={'+functions+'}}}\n')
+        program = (prelude+'local ok,err=pcall(function()\n'+script+'\nend)\n'
+                   'print(tostring(ok));print(clears);print(queries);print(tostring(err))')
+        result = subprocess.run(['lua','-'],input=program,text=True,capture_output=True,check=True)
+        lines = result.stdout.splitlines()
+        cleared_before = self.clears
+        self.clears,self.queries = int(lines[1]),int(lines[2])
+        if self.clears != cleared_before and self.on_clear:
+            self.on_clear()
+        if lines[0] != 'true':
+            raise RuntimeError('\n'.join(lines[3:]))
+
+
 class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
@@ -1589,7 +1624,8 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
     def test_preview_fullscreen_clear_lua_checks_optional_api_and_exact_identity(self):
         record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
         class Capture:
-            def eval(self, script):self.script=script
+            def __init__(self):self.scripts=[]
+            def eval(self, script):self.scripts.append(script)
         capture = Capture()
         Hyprland.clear_preview_fullscreen(capture,record)
         for api, success in (('',True),
@@ -1597,8 +1633,62 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
              'and v.stable_id=="18000001" and v.tag=="'+record['tag']+'"); return false end',True),
             ('clear_fullscreen=function() return nil,"changed identity" end',False)):
             prelude = 'hl={plugin={window_stash_preview={'+api+'}}}\n'
-            result = subprocess.run(['lua','-'],input=prelude+capture.script,text=True,capture_output=True)
+            program = prelude+';\n'.join('(function()\n'+script+'\nend)()' for script in capture.scripts)
+            result = subprocess.run(['lua','-'],input=program,text=True,capture_output=True)
             self.assertEqual(result.returncode==0,success,result.stderr)
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_waits_for_exact_original_configure_ack(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        ipc = FullscreenCleanupIPC(record,[True,True,False])
+        with patch('stash.time.sleep') as sleep:
+            Hyprland.clear_preview_fullscreen(ipc,record)
+        self.assertEqual((ipc.clears,ipc.queries),(1,3))
+        self.assertEqual(sleep.call_args_list,[unittest.mock.call(.05),unittest.mock.call(.05)])
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_missing_ack_api_is_refused_before_clear(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        ipc = FullscreenCleanupIPC(record,[False],query=False)
+        with self.assertRaisesRegex(RuntimeError,'Reload preview support'):
+            Hyprland.clear_preview_fullscreen(ipc,record)
+        self.assertEqual((ipc.clears,ipc.queries),(0,0))
+        ipc.capability = False
+        Hyprland.clear_preview_fullscreen(ipc,record)
+        self.assertEqual((ipc.clears,ipc.queries),(1,0),'A legacy bridge with no cleanup API should remain optional')
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_invalid_or_stale_query_never_retries(self):
+        record = dict(id='a'*32,address='0x123',pid=73,stableId='18000001',tag=PREFIX+'a'*32)
+        for response, message in (('pending','Could not read'),(RuntimeError('Changed cleanup identity'),'Changed cleanup identity')):
+            ipc = FullscreenCleanupIPC(record,[response])
+            with self.subTest(response=response),patch('stash.time.sleep') as sleep,self.assertRaisesRegex(RuntimeError,message):
+                Hyprland.clear_preview_fullscreen(ipc,record)
+            self.assertEqual((ipc.clears,ipc.queries),(1,1))
+            sleep.assert_not_called()
+
+    @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
+    def test_preview_fullscreen_cleanup_timeout_keeps_the_window_stashed_without_snapshot_mutation(self):
+        ident = self.stash.minimize()['id']
+        record = self.stash.state['windows'][0]
+        current = self.hypr.clients[0]
+        current['fullscreenClient'] = 2
+        before = copy.deepcopy(self.stash.state)
+        before_file = self.stash.path.read_bytes()
+        ipc = FullscreenCleanupIPC(record,[True],on_clear=lambda:current.update(fullscreenClient=0))
+        self.hypr.clear_preview_fullscreen = lambda value:Hyprland.clear_preview_fullscreen(ipc,value)
+        clock = [0.0]
+        def tick(_seconds):clock[0] += 1.5
+        before_commands = len(self.hypr.commands)
+        with patch('stash.time.monotonic',side_effect=lambda:clock[0]),patch('stash.time.sleep',side_effect=tick), \
+                self.assertRaisesRegex(RuntimeError,'window remains stashed'):
+            self.stash.restore(ident)
+        self.assertEqual((ipc.clears,ipc.queries),(1,3))
+        self.assertEqual(self.hypr.commands[before_commands:],[])
+        self.assertEqual(current['workspace']['name'],SPECIAL)
+        self.assertEqual(current['size'],record['size'])
+        self.assertEqual(self.stash.state,before)
+        self.assertEqual(self.stash.path.read_bytes(),before_file)
 
     def test_fullscreen_requested_while_hidden_is_cleared_for_restore_then_reapplied(self):
         for floating, internal, client_mode in ((False,2,2),(True,1,0),(True,0,2)):

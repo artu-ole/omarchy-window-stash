@@ -25,6 +25,7 @@ PLUGIN = "community.window-stash"
 SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
 PREFIX = "window-stash-"
+FULLSCREEN_CLEANUP_PENDING = 'Window Stash preview fullscreen cleanup is pending'
 LOCAL_SHORTCUT_DEFAULTS = {"floatingPreviewExitShortcut": "CTRL + ALT + Escape"}
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
@@ -171,13 +172,34 @@ class Hyprland:
                   + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
 
     def clear_preview_fullscreen(self, record):
-        """Drop only an exact registered miniature fullscreen override, if loaded."""
+        """Clear an exact override and await its client configure acknowledgements."""
         api = 'hl.plugin.window_stash_preview'
         identity = dict(id=record['id'], address=record['address'], pid=record['pid'],
                         stable_id=record['stableId'], tag=record['tag'])
         payload = '{'+','.join(key+'='+lua(value) for key, value in identity.items())+'}'
-        self.eval('if hl.plugin and '+api+' and type('+api+'.clear_fullscreen)=="function" then\n'
-                  +'local cleared,err='+api+'.clear_fullscreen('+payload+'); assert(cleared~=nil,err)\nend')
+        prefix = ('local api=hl.plugin and '+api+'\n'
+                  +'if not api or type(api.clear_fullscreen)~="function" then return end\n')
+        capability_guard = ('local info=type(api.status)=="function" and api.status() or nil\n'
+                            +'if type(info)=="table" and type(info.capabilities)=="table" '
+                            +'and info.capabilities.constrainedFullscreen==true then\n'
+                            +'assert(type(api.fullscreen_cleanup_pending)=="function",'
+                            +lua('Reload preview support in Window Stash Settings before restoring fullscreen previews')+')\nend\n')
+        self.eval(prefix+capability_guard+'local cleared,err=api.clear_fullscreen('+payload+'); assert(cleared~=nil,err)')
+        query = (prefix+'if type(api.fullscreen_cleanup_pending)=="function" then\n'
+                 +'local pending,err=api.fullscreen_cleanup_pending('+payload+')\n'
+                 +'assert(type(pending)=="boolean",err or "Could not read preview fullscreen cleanup state")\n'
+                 +'assert(not pending,'+lua(FULLSCREEN_CLEANUP_PENDING)+')\nend')
+        deadline = time.monotonic()+2.5
+        while True:
+            try:
+                self.eval(query)
+                return
+            except RuntimeError as error:
+                if FULLSCREEN_CLEANUP_PENDING not in str(error):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Preview fullscreen is still finishing. The window remains stashed; try Restore again.') from error
+                time.sleep(.05)
 
     def park_owned(self, record, parked=False):
         width, height = map(lua, record["size"])
