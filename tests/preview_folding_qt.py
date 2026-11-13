@@ -209,13 +209,18 @@ ShellRoot {
           var at=pointer(card());target=previews.foldAt(at.x,at.y);previews.prepareFold(target.key,target.origin)
           fold(true);root.ticks=0
         } else if(root.phase===12) {
+          // A newly created icon's arrival timer can start one frame after
+          // the model replacement. Still require overlapping intermediate
+          // states within the bounded source-fold animation.
+          if(icon() && icon().presence===0 && ++root.ticks<3) return
           var retiring=previews.cardList().find(function(item) {return item.retiring})
           check(!!retiring && retiring.folding && retiring.presence>0 && retiring.presence<1,"Fold animation skipped its intermediate source state: "+JSON.stringify(previews.cardList().map(function(item) {return {retiring:item.retiring,folding:item.folding,presence:item.presence,scale:item.scale,animations:item.animations}})))
           check(retiring.scale>0 && retiring.scale<.99 && !retiring.details().image.captureActive,"Fold animation either jumped or retained capture")
-          check(icon() && icon().presence>0 && icon().presence<1,"Icon did not crossfade during folding")
+          check(icon() && icon().presence>0 && icon().presence<1,"Icon did not crossfade during folding: "+JSON.stringify(icon() ? {presence:icon().presence,animations:icon().animations,retiring:icon().retiring,width:icon().width,sizingReady:previews.details().folded.sizingReady} : null))
         } else if(root.phase===13) {
           fold(false);root.ticks=0
         } else if(root.phase===14) {
+          if(card() && card().presence===0 && ++root.ticks<3) return
           check(card() && card().unfolding && card().presence>0 && card().presence<1,"Unfold animation skipped its intermediate preview state")
           check(!card().interactionReady(false),"An unfolding preview acquired input while translating or growing")
         } else if(root.phase===15) {
