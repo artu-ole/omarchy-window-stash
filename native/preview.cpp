@@ -1432,11 +1432,18 @@ bool focusPoint(const Vector2D& global, uint32_t time) {
 }
 
 SP<CWLSurfaceResource> superClickSurface() {
-    if (interaction || endingInteraction || reloadPending || g_pSessionLockManager->isSessionLocked()
+    if (endingInteraction || reloadPending || g_pSessionLockManager->isSessionLocked()
         || !g_pInputManager->m_exclusiveLSes.empty() || g_pInputManager->isConstrained()
         || g_layoutManager->dragController()->target()
+        || !releasedButtons.empty()
+        || (interaction && (!interaction->buttons.empty() || contentHit(g_pInputManager->getMouseCoordsInternal())))
+        || std::any_of(g_pKeybindManager->m_pressedKeys.begin(), g_pKeybindManager->m_pressedKeys.end(),
+            [](const auto& key) { return key.keyName.starts_with("mouse:"); })
         || (g_pSeatManager->m_seatGrab && g_pSeatManager->m_seatGrab->m_pointer))
         return nullptr;
+    // A different miniature may be selected while one source is interactive.
+    // Its actual layer focus must be outside that source's content/grab; leave
+    // the old lease intact until Qt completes the ordinary replacement queue.
     const auto surface = g_pSeatManager->m_state.pointerFocus.lock();
     const auto owner = Desktop::View::CWLSurface::fromResource(surface);
     const auto layer = owner ? Desktop::View::CLayerSurface::fromView(owner->view()) : nullptr;

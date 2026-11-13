@@ -20,6 +20,7 @@ PRELUDE = r'''
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 template<class T> using SP = std::shared_ptr<T>;
@@ -73,7 +74,14 @@ auto g_pSeatManager = std::make_unique<Seat>();
 auto g_pSessionLockManager = std::make_unique<Lock>();
 auto g_layoutManager = std::make_unique<Layout>();
 auto g_pEventManager = std::make_unique<EventManager>();
-bool interaction = false, endingInteraction = false, reloadPending = false;
+struct PressedKey { std::string keyName; };
+struct KeybindManager { std::vector<PressedKey> m_pressedKeys; };
+auto g_pKeybindManager = std::make_unique<KeybindManager>();
+struct Interaction { std::set<uint32_t> buttons; };
+std::optional<Interaction> interaction;
+std::set<uint32_t> releasedButtons;
+bool endingInteraction = false, reloadPending = false, activeContentHit = false;
+bool contentHit(const Vector2D&) { return activeContentHit; }
 constexpr uint32_t WL_POINTER_BUTTON_STATE_RELEASED = 0, WL_POINTER_BUTTON_STATE_PRESSED = 1;
 struct IPointer { struct SButtonEvent { uint32_t button, state; }; };
 namespace Event { struct SCallbackInfo { bool cancelled = false; }; }
@@ -132,11 +140,24 @@ int main() {
  // Native reload/lock/exclusive/constraint/drag are fail-closed. A reload that
  // is cancelled while held must not replay the previously invalidated click.
  auto blocked = [&](bool& flag) { flag = true; assert(!press()); flag = false; };
- blocked(interaction); blocked(endingInteraction); blocked(reloadPending);
+ blocked(endingInteraction); blocked(reloadPending);
  blocked(g_pSessionLockManager->locked); blocked(g_pInputManager->constrained);
  blocked(g_layoutManager->drag.dragging);
  g_pInputManager->m_exclusiveLSes.push_back(1); assert(!press()); g_pInputManager->m_exclusiveLSes.clear();
  g_pSeatManager->m_seatGrab = std::make_shared<SeatGrab>(); assert(!press()); g_pSeatManager->m_seatGrab.reset();
+ // Selecting B while A remains interactive is valid only outside A's content
+ // and implicit grab, with no other ordinary or synthesized button held. The
+ // existing lease is not ended early: frontend replacement owns that handoff.
+ interaction.emplace(); assert(press() && interaction);
+ assert(release() && lastPhase() == "release" && interaction);
+ interaction->buttons.insert(272); assert(!press()); interaction->buttons.clear();
+ activeContentHit = true; assert(!press()); activeContentHit = false;
+ interaction.reset();
+ g_pKeybindManager->m_pressedKeys.push_back({"mouse:274"}); assert(!press());
+ g_pKeybindManager->m_pressedKeys.clear();
+ releasedButtons.insert(272); assert(!press()); releasedButtons.clear();
+ g_pKeybindManager->m_pressedKeys.push_back({"A"}); assert(press());
+ assert(release() && lastPhase() == "release"); g_pKeybindManager->m_pressedKeys.clear();
  assert(press()); reloadPending = true; cancelSuperClick(); reloadPending = false;
  assert(superClickGesture && release() && lastPhase() == "cancel");
  assert(press()); g_pSessionLockManager->locked = true;
