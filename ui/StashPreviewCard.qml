@@ -237,6 +237,8 @@ Item {
   function syncGeometryVisibility() {
     if(typeof stash.watchPreviewGeometry==="function") stash.watchPreviewGeometry(geometryWatchKey,
       visible && captureAllowed && !retiring && displayRecord ? displayRecord.id : "")
+    if(expandedTile && visible && captureAllowed && !retiring && displayRecord && displayRecord.previewResized
+        && !sourceGeometryState && typeof stash.verifyPreviewGeometry==="function") stash.verifyPreviewGeometry(displayRecord.id)
   }
   function resetProportions() {if(canResize) proportionsResetRequested()}
   function details() {
@@ -358,6 +360,8 @@ Item {
   }
   StashActionButton {
     id:closeButton
+    objectName:"floating-preview-close"
+    z:2
     visible:card.titleVisible && size>0
     x:card.width-width-card.dimensions.inset-3;y:card.dimensions.inset+(card.dimensions.header-height)/2
     size:Math.max(0,Math.min(24,card.dimensions.header-4,card.width-4))
@@ -440,6 +444,7 @@ Item {
   }
   Item {
     id:resizeHandles
+    objectName:"floating-preview-resize-handles"
     anchors.fill:parent
     Repeater {
       id:edgeRepeater
@@ -448,7 +453,7 @@ Item {
         id:edgeHandle
         required property string modelData
         readonly property bool horizontal:modelData==="left" || modelData==="right"
-        readonly property real cornerInset:Math.min(18,card.width/3,card.height/3)
+        readonly property real cornerInset:horizontal ? Math.min(18,card.height/3) : Math.min(18,card.width/3)
         width:horizontal ? Math.min(7,card.width/3) : Math.max(0,card.width-cornerInset*2)
         height:horizontal ? Math.max(0,card.height-cornerInset*2) : Math.min(7,card.height/3)
         x:horizontal ? modelData==="left" ? 0 : card.width-width : cornerInset

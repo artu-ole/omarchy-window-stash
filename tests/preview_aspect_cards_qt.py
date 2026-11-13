@@ -53,6 +53,7 @@ ShellRoot {
     property var states:({})
     property var requests:[]
     property int serial:0
+    property int verifications:0
     property bool lifecycleReady:true
     property var previewInteractionRequest:null
     property var previewInteractionPendingRequest:null
@@ -75,6 +76,11 @@ ShellRoot {
     function beginPreviewInteraction() {throw new Error("A blocked preview acquired input")}
     function endPreviewInteraction() {}
     function previewGeometryState(id) {return states[id] || null}
+    function verifyPreviewGeometry(id) {
+      if(states[id]) return
+      verifications++
+      var next=Object.assign({},states);next[id]={id:id,epoch:++serial,ready:false,pending:true};states=next
+    }
     function requestPreviewAspect(id,aspect,axis,settle) {
       requests=requests.concat([{id:id,aspect:aspect,axis:axis,settle:settle}])
       var next=Object.assign({},states);next[id]={epoch:++serial,requestedAspect:aspect,axis:axis,pending:true,ready:false};states=next;return true
@@ -97,12 +103,32 @@ ShellRoot {
   function image() {return one().children.find(function(item) {return item.objectName==="floating-preview-source"})}
   function check(value,message) {if(!value) throw new Error(message)}
   function near(actual,expected,message) {check(Math.abs(actual-expected)<1.1,message+": "+actual+" vs "+expected)}
+  function find(item,name) {
+    if(item.objectName===name) return item
+    for(var i=0;i<item.children.length;i++) {var child=find(item.children[i],name);if(child) return child}
+    return null
+  }
+  function separateHandles() {
+    var handles=one().details().resizeRects,corners=handles.slice(0,4),edges=handles.slice(4)
+    edges.forEach(function(edge) {corners.forEach(function(corner) {
+      var a=edge.rect,b=corner.rect
+      check(Math.min(a.x+a.width,b.x+b.width)-Math.max(a.x,b.x)<.001 || Math.min(a.y+a.height,b.y+b.height)-Math.max(a.y,b.y)<.001,
+        "An edge handle overlaps a corner on an extreme shape: "+edge.corner+"/"+corner.corner)
+    })})
+  }
   Timer {
     interval:45;repeat:true;running:true
     onTriggered: {
       try {
         if(root.phase===0) {
           check(one().details().resizeRects.length===8,"Free previews did not expose all corners and sides")
+          one().aspectOverride=50;separateHandles()
+          one().aspectOverride=.02;one().width=10;separateHandles()
+          one().aspectOverride=0;one().width=280
+          var config=Object.assign({},previews.config);config.floatingPreviewTitles="shown";previews.config=config
+          var close=find(one(),"floating-preview-close"),handles=find(one(),"floating-preview-resize-handles"),controls=find(window.contentItem,"floating-preview-interact").parent
+          check(close.visible && close.z>handles.z && close.z<controls.z,"Title close is below resize handles or above interaction controls")
+          config=Object.assign({},previews.config);config.floatingPreviewTitles="hidden";previews.config=config
           one().x=200;one().y=180;previews.save(one());originalHeight=one().height
           one().resizing=true;one().resizePressed("right");one().resizeRequested(140,0,"right")
           near(one().height,originalHeight,"Horizontal edge changed the orthogonal dimension")
@@ -153,6 +179,13 @@ ShellRoot {
           fake.ready(3,[1200,400])
         } else if(root.phase===8) {
           check(one().record.id==="second" && one().aspectOverride===0,"A stale source result reshaped the replacement cover")
+          previews.groups=[{key:"window:first",windows:[root.first,Object.assign({},root.second,{previewResized:true})]}]
+        } else if(root.phase===9) {
+          previews.activate(one())
+        } else if(root.phase===10) {
+          var tile=previews.tileList().find(function(item) {return item.record.id==="second"})
+          check(tile && fake.verifications===1 && !!tile.sourceGeometryState,"A resized non-lead tile did not verify native geometry")
+          check(!tile.geometryReady && !tile.details().interaction.interactEnabled,"An unverified resized tile enabled input")
           console.log("PREVIEW_ASPECT_CARDS_QT_PASS");Qt.quit()
         }
         root.phase++
