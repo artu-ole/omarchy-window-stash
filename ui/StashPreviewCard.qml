@@ -26,6 +26,10 @@ Item {
   property bool moving:false
   property bool resizing:false
   property bool expandedTile:false
+  property bool folding:false
+  property bool unfolding:false
+  property real stageIconSize:48
+  property var stageOrigin:null
   property bool keyboardSelected:false
   property real maximumHeight:100000
   property real presence:0
@@ -96,7 +100,14 @@ Item {
   height:dimensions.height
   enabled:interactive && !retiring
   opacity:presence*feedback.visualOpacity
-  scale:Motion.full(animations) ? .97+.03*presence : 1
+  readonly property real stageMinimumScale:Math.min(1,Math.max(1,stageIconSize)/Math.max(1,width,height))
+  scale:Motion.full(animations) ? (folding || unfolding ? stageMinimumScale+(1-stageMinimumScale)*presence : .97+.03*presence) : 1
+  transform:Translate {
+    x:card.unfolding && card.stageOrigin && Motion.full(card.animations)
+      ? (card.stageOrigin.x+card.stageOrigin.width/2-card.x-card.width/2)*(1-card.presence) : 0
+    y:card.unfolding && card.stageOrigin && Motion.full(card.animations)
+      ? (card.stageOrigin.y+card.stageOrigin.height/2-card.y-card.height/2)*(1-card.presence) : 0
+  }
   z:held || resizing ? 20 : hovered ? 10 : 0
   onXChanged:invalidateInteractionGeometry()
   onYChanged:invalidateInteractionGeometry()
@@ -120,7 +131,7 @@ Item {
     appliedGeometryEpoch=0;awaitingGeometryCapture=false;expectedSourceAspect=0;syncGeometryVisibility();sourceGeometryUpdate.restart()
   }
   onSourceGeometryStateChanged:sourceGeometryUpdate.restart()
-  onDisplayRecordChanged: {syncGeometryVisibility();sourceGeometryUpdate.restart()}
+  onDisplayRecordChanged: {if(displayRecord && displayRecord.previewFolded===true) endNativeInteraction("preview-folded");syncGeometryVisibility();sourceGeometryUpdate.restart()}
   onGroupChanged:if(interactionEnabled && claimedInteractionKey && (!group || group.windows.length!==1)) endNativeInteraction("preview-group-changed")
   onKeyChanged:if(claimedInteractionKey && claimedInteractionKey!==key) endNativeInteraction("preview-replaced")
   onInteractionRequestedChanged: {geometryReleased();interactionGeometry.restart()}
@@ -184,6 +195,8 @@ Item {
   }
   function interactionReady(allowGroup) {
     return !interactionBusy && interactionEnabled && lifecycleAvailable && geometryReady && !!record
+      && record.previewFolded!==true && !(stash.pendingPreviewFoldIds && stash.pendingPreviewFoldIds[record.id])
+      && (!unfolding || presence>=.999)
       && (allowGroup || group.windows.length===1) && interactive && visible && captureAllowed && !retiring
       && !held && !moving && !resizing && visibleForInteraction(interactionGeometryRevision) && thumbnail.hasContent && thumbnail.eligible
   }
@@ -255,7 +268,7 @@ Item {
   }
   function syncSourceGeometry() {
     var state=sourceGeometryState
-    if(!state || !state.ready || !state.captureRevision || state.captureRevision===appliedGeometryEpoch || resizing || !visible || !captureAllowed || retiring) return
+    if(!state || !state.ready || !state.captureRevision || state.captureRevision===appliedGeometryEpoch || resizing || !visible || !captureAllowed || retiring || (displayRecord && displayRecord.previewFolded===true)) return
     appliedGeometryEpoch=state.captureRevision;expectedSourceAspect=Number(state.aspect);awaitingGeometryCapture=true
     sourceGeometryAccepted(state)
     if(typeof thumbnail.restartCapture==="function") thumbnail.restartCapture()
@@ -268,8 +281,9 @@ Item {
   function capturedSourceSize() {return thumbnail.sourceSize}
   function syncGeometryVisibility() {
     if(typeof stash.watchPreviewGeometry==="function") stash.watchPreviewGeometry(geometryWatchKey,
-      visible && captureAllowed && !retiring && displayRecord ? displayRecord.id : "")
+      visible && captureAllowed && !retiring && displayRecord && displayRecord.previewFolded!==true ? displayRecord.id : "")
     if(expandedTile && visible && captureAllowed && !retiring && displayRecord && displayRecord.previewResized
+        && displayRecord.previewFolded!==true
         && !sourceGeometryState && typeof stash.verifyPreviewGeometry==="function") stash.verifyPreviewGeometry(displayRecord.id)
   }
   function resetProportions() {if(canResize) proportionsResetRequested()}
@@ -313,7 +327,7 @@ Item {
     height:Math.max(1,card.height-card.dimensions.header-card.dimensions.inset*2)
     record:card.displayRecord;stash:card.stash
     mode:card.live ? "live" : "still"
-    active:card.captureAllowed && card.visible && !card.retiring
+    active:card.captureAllowed && card.visible && !card.retiring && !!card.displayRecord && card.displayRecord.previewFolded!==true
     animations:card.animations;animationSpeed:card.animationSpeed
     onSourceSizeChanged: {sourceObservation.restart();interactionGeometry.restart();geometryFrameCheck.restart()}
     onHasContentChanged: {sourceObservation.restart();interactionGeometry.restart();geometryFrameCheck.restart()}

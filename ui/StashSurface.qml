@@ -92,6 +92,11 @@ PanelWindow {
   function dismissPreview() { windowPreview.dismiss(true) }
   function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
   function activatePreviewInteraction(id) {return floatingPreviews.activateInteraction(id)}
+  function foldPreviewAt(globalX,globalY) {
+    if(!previewMode || dialogOpen || contextMenuOpen) return null
+    return floatingPreviews.foldAt(globalX,globalY)
+  }
+  function preparePreviewFold(key,origin) {floatingPreviews.prepareFold(key,origin)}
   function handlePreviewShortcut(serial,phase,globalX,globalY) {
     if(!previewMode || config.floatingPreviewInteraction!=="on" || dialogOpen || contextMenuOpen) {
       floatingPreviews.activationShortcut=null;return false
@@ -452,7 +457,6 @@ PanelWindow {
       && (modelData.key!=="dockCorners" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible))
       && (modelData.key!=="dockFrame" || (!surface.bubbleMode && !surface.previewMode))
       && (modelData.key!=="iconShape" || surface.config.iconFrame==="shown")
-      && (["iconShape","iconFrame","sizePreset"].indexOf(modelData.key)<0 || !surface.previewMode)
       && (modelData.key.indexOf("floatingPreview")!==0 || surface.previewMode)
       && (modelData.key!=="floatingPreviewScale" || surface.config.floatingPreviewSizing==="preset")
       && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls","floatingPreviewFullscreen"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
@@ -1206,13 +1210,13 @@ PanelWindow {
           Repeater {
             id:iconRows
             model:[
-              {key: "iconFrame", label: "Icon border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden (larger icons)"], section: "appearance"},
-              {key: "iconShape", label: "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"},
-              {key: "sizePreset", label: "Icon and dock size", values: ["50", "75", "100", "125", "150", "175", "200", "250", "300"], labels: ["50%", "75%", "100% (Default)", "125%", "150%", "175%", "200%", "250%", "300%"], section: "appearance"}
+              {key: "iconFrame", label: surface.previewMode ? "Folded icon border/background" : "Icon border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden (larger icons)"], section: "appearance"},
+              {key: "iconShape", label: surface.previewMode ? "Folded icon shape" : "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"},
+              {key: "sizePreset", label: surface.previewMode ? "Folded icon size" : "Icon and dock size", values: ["50", "75", "100", "125", "150", "175", "200", "250", "300"], labels: ["50%", "75%", "100% (Default)", "125%", "150%", "175%", "200%", "250%", "300%"], section: "appearance"}
             ]
             delegate:SettingChoice {}
           }
-          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview opacity (%)" : "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview and icon opacity (%)" : "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
           Repeater {
             id:dockRows
             model:[

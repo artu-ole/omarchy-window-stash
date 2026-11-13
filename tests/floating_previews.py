@@ -153,7 +153,8 @@ def away(session):
 def settings_controls(session):
     shell('settings')
     wait(lambda: session.surface()['dialog']['visible'], 'Floating preview settings did not open')
-    assert not choice(session, 'sizePreset')['visible'], 'Icon size dropdown is visible in thumbnail mode'
+    assert choice(session, 'sizePreset')['visible'], 'Folded icon size is unreachable in preview mode'
+    assert choice(session, 'iconFrame')['visible'], 'Folded icon border/background is unreachable in preview mode'
     assert not choice(session, 'floatingPreviewScale')['visible'], 'Free resize exposes a competing scale dropdown'
     assert choice(session, 'floatingPreviewSizing')['visible'], 'Preview sizing selector is unreachable'
     dropdown(session, 'floatingPreviewSizing', 'preset')

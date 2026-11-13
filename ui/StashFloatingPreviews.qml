@@ -15,6 +15,15 @@ Item {
   required property var monitor
   required property var savedPositions
   property var groups:[]
+  readonly property var previewGroups:groups.map(function(group) {
+    return Object.assign({},group,{windows:group.windows.filter(function(record) {return record.previewFolded!==true})})
+  }).filter(function(group) {return group.windows.length>0})
+  readonly property var foldedGroups:groups.map(function(group) {
+    return Object.assign({},group,{key:"folded-preview:"+group.key,windows:group.windows.filter(function(record) {return record.previewFolded===true})})
+  }).filter(function(group) {return group.windows.length>0})
+  property var foldOrigins:({})
+  property var previousFoldedIds:({})
+  property var unfoldArrivals:({})
   property bool active:false
   property bool blocked:false
   property bool captureAllowed:true
@@ -44,15 +53,15 @@ Item {
   readonly property bool overflow:preliminary.pages>1
   readonly property var layoutArea:({x:area.x,y:area.y,width:area.width,height:Math.max(1,area.height-(overflow ? 34 : 0))})
   readonly property var layout:Geometry.layout(geometryGroups,savedPositions,drafts,layoutArea,layoutOptions)
-  readonly property var expandedGroup:expandedKey ? groups.find(function(group) {return group.key===expandedKey}) || null : null
+  readonly property var expandedGroup:expandedKey ? previewGroups.find(function(group) {return group.key===expandedKey}) || null : null
   readonly property var expandedRecords:expandedGroup ? expandedGroup.windows : []
   readonly property var expandedSourceSizes:Object.assign({},observedSizes,expandedObservedSizes)
   readonly property var expandedGeometryRecords:expandedRecords.map(function(record) {return Geometry.geometryRecord(record,previews.expandedSourceSizes)})
   readonly property var expandedAnchor:expandedKey ? cardForKey("preview:"+expandedKey) : null
   readonly property var expandedLayout:Geometry.groupGrid(expandedGeometryRecords,expandedAnchor ? {x:expandedAnchor.x,y:expandedAnchor.y,width:expandedAnchor.width,height:expandedAnchor.height} : area,
     area,config.floatingPreviewTitles==="shown",config.floatingPreviewFrame==="shown",config.floatingPreviewSizing==="preset" ? 280*Number(config.floatingPreviewScale || "100")/100 : expandedAnchor ? expandedAnchor.width : 280)
-  readonly property bool present:collection.count>0
-  readonly property bool held:cardList().some(function(card) {return card.held || card.resizing})
+  readonly property bool present:collection.count>0 || folded.present
+  readonly property bool held:folded.held || cardList().some(function(card) {return card.held || card.resizing})
   readonly property bool expanded:!!expandedGroup && expandedRecords.length>1
   readonly property string shortcutViewStamp:JSON.stringify([active,captureAllowed,blocked,layout.page,expandedKey,
     config.presentation,config.scope,config.grouping,config.floatingPreviewInteraction,screenName,monitor ? [monitor.x,monitor.y] : null])
@@ -70,10 +79,55 @@ Item {
   function cardList() {var result=[];for(var i=0;i<cards.count;i++) {var card=cards.itemAt(i);if(card) result.push(card)}return result}
   function tileList() {var result=[];for(var i=0;i<tiles.count;i++) {var tile=tiles.itemAt(i);if(tile) result.push(tile)}return result}
   function cardForKey(key) {return cardList().find(function(card) {return card.key===key}) || null}
+  function foldedIconList() {return folded.iconList()}
+  function prepareFold(key,origin) {
+    if(typeof key!=="string" || key.indexOf("folded-preview:")!==0 || !origin) return
+    var next=Object.assign({},foldOrigins);next[key]=Geometry.rectangle(origin);foldOrigins=next
+  }
+  function isFoldedGroup(group) {
+    var records=[];groups.forEach(function(current) {records=records.concat(current.windows)})
+    return !!group && group.windows.length>0 && group.windows.every(function(record) {
+      return records.some(function(current) {return current.id===record.id && current.previewFolded===true})
+    })
+  }
+  function unfoldArrival(group) {return group.windows.some(function(record) {return !!previousFoldedIds[record.id] || !!unfoldArrivals[record.id]})}
+  function stageChanges() {
+    var next={},arrivals=Object.assign({},unfoldArrivals),now=Date.now(),owned={},origins=Object.assign({},foldOrigins),keys={}
+    groups.forEach(function(group) {group.windows.forEach(function(record) {
+      owned[record.id]=true
+      if(record.previewFolded===true) next[record.id]=true
+      else if(previousFoldedIds[record.id]) arrivals[record.id]=now
+    });keys["folded-preview:"+group.key]=true})
+    Object.keys(arrivals).forEach(function(id) {if(!owned[id] || now-arrivals[id]>5000) delete arrivals[id]})
+    Object.keys(origins).forEach(function(key) {if(!keys[key]) delete origins[key]})
+    if(JSON.stringify(origins)!==JSON.stringify(foldOrigins)) foldOrigins=origins
+    unfoldArrivals=arrivals;previousFoldedIds=next
+  }
+  function foldAt(x,y) {
+    if(!active || !visible || !captureAllowed || blocked) return null
+    if(folded.hit(x,y)) return {handled:true,ids:[]}
+    var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
+      .sort(function(first,second) {return first.z-second.z})
+    if(expanded) candidates=candidates.concat(tileList().filter(function(tile) {return tile.inViewport}))
+    for(var index=candidates.length-1;index>=0;index--) {
+      var card=candidates[index]
+      if(card.shortcutControlHit(x,y)) return {handled:true,ids:[]}
+      if(!card.shortcutSurfaceHit(x,y)) continue
+      if(!card.interactive || card.retiring || card.held || card.moving || card.resizing || !card.interactionFullyVisible
+          || (typeof stash.lifecycleReady==="boolean" && !stash.lifecycleReady)
+          || card.group.windows.some(function(record) {return record.previewFolded===true || record.phase && record.phase!=="stashed"
+            || stash.pendingCloseIds[record.id] || (stash.pendingPreviewFoldIds && stash.pendingPreviewFoldIds[record.id])})) return {handled:true,ids:[]}
+      var groupKey=card.expandedTile ? expandedKey : card.group.key
+      return {handled:true,ids:card.group.windows.map(function(record) {return record.id}),screenName:screenName,
+        key:"folded-preview:"+groupKey,origin:card.visualRectOf(card)}
+    }
+    return null
+  }
   function updateNativeInteractions() {cardList().concat(tileList()).forEach(function(card) {if(card.interactionBusy) card.syncNativeInteraction()})}
   function shortcutAvailable() {return active && visible && captureAllowed && !blocked && config.floatingPreviewInteraction==="on"}
   function shortcutCardAt(x,y) {
     if(!shortcutAvailable()) return null
+    if(folded.hit(x,y)) return null
     var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
       .sort(function(first,second) {return first.z-second.z})
     if(expanded) candidates=candidates.concat(tileList().filter(function(tile) {return tile.inViewport}))
@@ -151,6 +205,7 @@ Item {
         if(tile.inViewport) {next.push(tile.clippedRegion);if(tile.controlsOutside) next.push(tile.managementRegion)}
       })
       if(layout.pages>1) next.push(navigationRegion)
+      next=next.concat(folded.inputRegions)
     }
     inputRegions=next;inputChanged()
   }
@@ -312,7 +367,7 @@ Item {
     scheduleRegions()
   }
   function details() {
-    return {present:present,held:held,expanded:expanded,expandedKey:expandedKey,
+    return {present:present,held:held,expanded:expanded,expandedKey:expandedKey,folded:folded.details(),
       cards:cardList().filter(function(card) {return card.visible && !card.retiring}).map(function(card) {return card.details()}),
       tiles:tileList().filter(function(tile) {return tile.inViewport}).map(function(tile) {return tile.details()}),
       viewportRect:{x:strip.x,y:strip.y,width:strip.width,height:strip.height},
@@ -326,6 +381,7 @@ Item {
     scheduleLayout()
   }
   onActiveChanged: {if(!active) closeExpansion();scheduleLayout()}
+  onGroupsChanged: {stageChanges();scheduleLayout()}
   onCaptureAllowedChanged: {if(!captureAllowed) closeExpansion();scheduleLayout()}
   onBlockedChanged: {if(blocked) {closeExpansion();cardList().forEach(function(card) {card.cancelInteraction()})};scheduleLayout()}
   onExpandedChanged: {expansionValidation.restart();scheduleRegions();scheduleLayout()}
@@ -364,7 +420,7 @@ Item {
   }
   StashCollection {
     id:collection
-    sourceGroups:previews.active ? previews.groups : []
+    sourceGroups:previews.active ? previews.previewGroups : []
     animations:previews.animations;animationSpeed:previews.animationSpeed
     onReconciled: {previews.scheduleLayout();sourceGeometryDelay.restart()}
   }
@@ -392,7 +448,7 @@ Item {
     delegate:StashPreviewCard {
       id:card
       required property string groupKey
-      required property bool retiring
+      required retiring
       readonly property var target:previews.layout.cards[key] || null
       property bool registered:false
       property var resizeOrigin:null
@@ -405,6 +461,10 @@ Item {
       interactive:previews.active && previews.captureAllowed && !previews.blocked && !previews.stash.groupClosing(group)
       visible:!!target && target.visible && previews.captureAllowed
       maximumHeight:previews.layoutArea.height
+      folding:retiring && previews.isFoldedGroup(group)
+      unfolding:previews.unfoldArrival(group)
+      stageIconSize:folded.iconSize
+      stageOrigin:unfolding ? folded.originFor(group.windows) : null
       width:280
       aspectOverride:target ? target.aspectOverride || 0 : 0
       onInputChanged:previews.scheduleRegions()
@@ -449,6 +509,15 @@ Item {
       Component.onCompleted:previews.scheduleLayout()
       Component.onDestruction: {world.remove(key);previews.scheduleRegions()}
     }
+  }
+  StashFoldedPreviews {
+    id:folded
+    stash:previews.stash;config:previews.config;groups:previews.foldedGroups
+    savedPositions:previews.savedPositions;area:previews.area;monitor:previews.monitor
+    coordinateRoot:previews.coordinateRoot;screenName:previews.screenName;origins:previews.foldOrigins
+    recordIds:previews.groups.reduce(function(ids,group) {return ids.concat(group.windows.map(function(record) {return record.id}))},[])
+    active:previews.active && previews.captureAllowed;blocked:previews.blocked
+    onInputChanged:previews.scheduleRegions()
   }
   // Groups unfold as a wrapping grid, never a one-window carousel. The grid
   // scrolls only when its complete set cannot fit on this monitor.
