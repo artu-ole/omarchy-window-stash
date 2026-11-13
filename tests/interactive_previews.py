@@ -68,7 +68,7 @@ def main():
     assert not command('list')['windows'], 'Interactive acceptance requires an empty disposable stash'
     with tempfile.TemporaryDirectory(prefix='stash-interactive-ui-') as temporary, NativeSession() as session:
         for key, value in dict(presentation='previews', scope='workspace', grouping='window',
-                               floatingPreviewInteraction='on', floatingPreviewActivation='explicit',
+                               floatingPreviewInteraction='on', floatingPreviewInteractionResize='on', floatingPreviewActivation='explicit',
                                floatingPreviewKeyboard='mouse', floatingPreviewInteractionFps='60', floatingPreviewControls='hover',
                                floatingPreviewUpdate='still', livePreviewCompatibility='standard', hoverPreview='off',
                                floatingPreviewSizing='free', floatingPreviewTitles='hidden', floatingPreviewFrame='hidden',

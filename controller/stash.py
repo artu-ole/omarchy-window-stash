@@ -35,7 +35,7 @@ DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="cur
                 floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover", floatingPreviewResizeRate="realtime",
                 floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked",
                 floatingPreviewInteraction="off", floatingPreviewActivation="explicit", floatingPreviewKeyboard="mouse",
-                floatingPreviewInteractionFps="60", floatingPreviewControls="hover", floatingPreviewFullscreen="preview")
+                floatingPreviewInteractionFps="60", floatingPreviewControls="hover", floatingPreviewFullscreen="preview", floatingPreviewInteractionResize="off")
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 DEFAULTS.update(LOCAL_SHORTCUT_DEFAULTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=("global", "workspace"),
@@ -55,7 +55,7 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=(
                floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),
                floatingPreviewInteraction=("off", "on"), floatingPreviewActivation=("explicit", "click"),
                floatingPreviewKeyboard=("mouse", "click"), floatingPreviewInteractionFps=("30", "60"),
-               floatingPreviewControls=("hover", "always"), floatingPreviewFullscreen=("preview", "desktop"))
+               floatingPreviewControls=("hover", "always"), floatingPreviewFullscreen=("preview", "desktop"), floatingPreviewInteractionResize=("off", "on"))
 
 
 def lua(value):

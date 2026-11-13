@@ -1,5 +1,17 @@
 # Validation
 
+## v1.36.1 — optional interactive resize handles — 14 November 2026
+
+**Resize while interacting** (`floatingPreviewInteractionResize`) is now an
+Off/On setting, defaulting to Off. Disabling it hides and disables active handles
+and returns their rectangles to application input. View-only resizing remains
+available. Enabling it retains the acknowledged pause/resize/resume behavior.
+
+Full automated checks cover the setting's validation/default/reset behavior,
+all **45 preferences**, active handle visibility and input exclusions, unchanged
+view-only resizing, opt-in behavior and cancellation during pending native
+release. Native bridge version remains **1.29.8**.
+
 ## v1.36.0 — resizing during interaction — 13 November 2026
 
 Active, free and unlocked previews keep eight resize handles. Handle presses

@@ -27,7 +27,8 @@ shortcut_helpers = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(shortcut_helpers)
 SECTIONS = ('general', 'placement', 'appearance', 'motion', 'previews', 'interaction', 'shortcuts')
 INTERACTION_CHOICES = ('floatingPreviewInteraction', 'floatingPreviewActivation', 'floatingPreviewKeyboard',
-                       'floatingPreviewInteractionFps', 'floatingPreviewControls', 'floatingPreviewFullscreen')
+                       'floatingPreviewInteractionFps', 'floatingPreviewControls', 'floatingPreviewFullscreen',
+                       'floatingPreviewInteractionResize')
 EXIT_SHORTCUT = 'floatingPreviewExitShortcut'
 
 

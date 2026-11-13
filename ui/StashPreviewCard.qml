@@ -31,6 +31,7 @@ Item {
   property var resizeBufferedDelta:null
   property bool resizePhysicalReleased:false
   readonly property bool resizeResumePending:!!resizeResume
+  readonly property bool resizeDuringInteraction:config.floatingPreviewInteractionResize==="on"
   readonly property string resizePolicy:JSON.stringify(config)
   property bool sourceResizeActive:false
   property bool expandedTile:false
@@ -87,8 +88,8 @@ Item {
     || (config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
   readonly property bool canMove:interactive && movable && config.floatingPreviewLock!=="locked" && !retiring && !interactionBusy && !resizeResumePending
   readonly property bool resizeAvailable:interactive && resizable && config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked" && !retiring
-  readonly property bool canResize:resizeAvailable && (!interactionBusy || (interactionActive && stash.previewInteractiveResizeReady===true)
-    || (resizeResumePending && interactionOwned))
+  readonly property bool canResize:resizeAvailable && (!interactionBusy || (resizeDuringInteraction
+    && ((interactionActive && stash.previewInteractiveResizeReady===true) || (resizeResumePending && interactionOwned))))
   readonly property Region inputRegion:Region { item:card; onChanged:card.inputChanged() }
   readonly property bool controlsOutside:(interactionBusy || resizeResumePending) && !!interactionBar.placement
   readonly property Region managementRegion:Region { item:interactionBar; onChanged:card.inputChanged() }
@@ -174,7 +175,7 @@ Item {
   function interactionIntentEpoch() {return Number(stash.previewInteractionIntentEpoch) || 0}
   function resizeResumeValid() {
     if(!resizeResume || !interactionEnabled || !lifecycleAvailable || !visible || !captureAllowed || !interactive || retiring
-        || !resizeAvailable || !record || record.previewFolded===true || group.windows.length!==1
+        || !resizeAvailable || !resizeDuringInteraction || !record || record.previewFolded===true || group.windows.length!==1
         || record.id!==resizeResume.id || shortcutIdentity()!==resizeResume.identity || key!==resizeResume.key
         || resizePolicy!==resizeResume.policy || interactionIntentEpoch()!==resizeResume.epoch
         || stash.previewInteractionError || stash.bridgeReloadBusy || stash.stopping || stash.previewInteractiveResizeReady!==true
@@ -281,7 +282,7 @@ Item {
     if(interactionBar.visible && controlsOutside) excluded.push(globalRectOf(interactionBar))
     // Reserve management targets before activating native input. Full handle
     // bounds also protect presses in a captured image's letterbox/inset.
-    if(resizeAvailable) {
+    if(resizeAvailable && resizeDuringInteraction) {
       for(var i=0;i<resizeRepeater.count;i++) {
         var corner=resizeRepeater.itemAt(i)
         if(corner && corner.width>0 && corner.height>0) excluded.push(globalRectOf(corner))

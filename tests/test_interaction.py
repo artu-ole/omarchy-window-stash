@@ -107,7 +107,7 @@ class InteractionTests(unittest.TestCase):
     def test_defaults_are_explicit_opt_in_and_invalid_values_fall_back(self):
         expected = dict(floatingPreviewInteraction='off',floatingPreviewActivation='explicit',
                         floatingPreviewKeyboard='mouse',floatingPreviewInteractionFps='60',floatingPreviewControls='hover',
-                        floatingPreviewFullscreen='preview',
+                        floatingPreviewFullscreen='preview',floatingPreviewInteractionResize='off',
                         floatingPreviewExitShortcut='CTRL + ALT + Escape')
         self.assertEqual({key:DEFAULTS[key] for key in expected},expected)
         self.settings(**{key:True for key in expected})

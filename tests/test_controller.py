@@ -1103,7 +1103,7 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
             floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewResizeRate="realtime",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
-            floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",floatingPreviewFullscreen="preview",
+            floatingPreviewInteraction="off",floatingPreviewInteractionResize="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",floatingPreviewFullscreen="preview",
             floatingPreviewExitShortcut="CTRL + ALT + Escape",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
 
@@ -1120,7 +1120,8 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         choices = dict(floatingPreviewSizing=("free", "preset"), floatingPreviewResizeRate=("realtime", "balanced", "release"),
                        floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
                        floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
-                       floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"))
+                       floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),
+                       floatingPreviewInteractionResize=("off", "on"))
         for key, values in choices.items():
             for value in values:
                 with self.subTest(key=key, value=value):

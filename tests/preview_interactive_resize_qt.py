@@ -113,7 +113,7 @@ ShellRoot {
     id:window;width:1280;height:800;visible:true
     StashFloatingPreviews {
       id:previews;stash:fake
-      config:({presentation:"previews",animations:"off",floatingPlacement:"free",dragMotion:"physics",floatingPreviewSizing:"free",floatingPreviewUpdate:"still",floatingPreviewTitles:"hidden",floatingPreviewFrame:"hidden",floatingPreviewLock:"unlocked",floatingPreviewInteraction:"on",floatingPreviewActivation:"explicit",floatingPreviewControls:"always"})
+      config:({presentation:"previews",animations:"off",floatingPlacement:"free",dragMotion:"physics",floatingPreviewSizing:"free",floatingPreviewUpdate:"still",floatingPreviewTitles:"hidden",floatingPreviewFrame:"hidden",floatingPreviewLock:"unlocked",floatingPreviewInteraction:"on",floatingPreviewInteractionResize:"on",floatingPreviewActivation:"explicit",floatingPreviewControls:"always"})
       area:({x:0,y:26,width:1280,height:774});coordinateRoot:window.contentItem;screenName:"test";monitor:({x:0,y:0})
       savedPositions:fake.saved;groups:[{key:"window:first",windows:[root.first]}];active:true
     }
@@ -188,6 +188,14 @@ ShellRoot {
           check(!one().resizing && !one().resizeResumePending && fake.shapes.length===root.shapeCount,"Stop before acknowledgement finalized geometry against the still-owned source")
           fake.acknowledge()
           check(one().beginNativeInteraction(),"Re-entry after unacknowledged Stop failed")
+          check(one().beginResizeGesture("left",false),"Option cancellation fixture did not begin")
+          one().updateResizeGesture(-35,0,"left");one().endResizeGesture()
+          var disabled=Object.assign({},previews.config);disabled.floatingPreviewInteractionResize="off";previews.config=disabled
+          check(!one().resizing && !one().resizeResumePending && fake.shapes.length===root.shapeCount,
+            "Disabling interaction resizing retained pending input or resized before acknowledgment")
+          fake.acknowledge()
+          var enabled=Object.assign({},previews.config);enabled.floatingPreviewInteractionResize="on";previews.config=enabled
+          check(one().beginNativeInteraction(),"Re-entry after option cancellation failed")
           check(one().beginResizeGesture("left",false),"Replacement fixture did not begin")
           one().updateResizeGesture(-80,0,"left");one().endResizeGesture()
           previews.groups=[{key:"window:first",windows:[root.second]}]
@@ -195,7 +203,7 @@ ShellRoot {
           check(!one().resizeResumePending && !one().resizing && fake.shapes.length===root.shapeCount,"Source replacement mutated or retained the old resize")
           fake.acknowledge()
         } else if(root.phase===9) {
-          check(one().record.id==="second" && fake.begun===5 && !fake.previewInteractionRequest,"Source replacement automatically acquired another window")
+          check(one().record.id==="second" && fake.begun===6 && !fake.previewInteractionRequest,"Source replacement automatically acquired another window")
           console.log("PREVIEW_INTERACTIVE_RESIZE_QT_PASS");Qt.quit()
         }
         root.phase++

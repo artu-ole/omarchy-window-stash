@@ -124,12 +124,21 @@ ShellRoot {
           fake.lifecycleReady=true
           check(interact.enabled,"Lifecycle readiness did not re-enable Interact")
           check(!one().titleVisible && !one().frameVisible,"Interaction added permanent title/frame chrome")
+          check(one().canResize && one().details().resizeRects.every(function(handle) {return handle.enabled}),
+            "Default-off interaction resizing removed ordinary view-only handles")
           one().activatePrimary()
           check(fake.restored==="first" && fake.begun===0,"Explicit default stopped ordinary click-to-restore")
           fake.restored="";setting("floatingPreviewActivation","click")
           fake.previewInteractiveResizeReady=false
           one().activatePrimary()
           check(fake.restored==="" && fake.begun===1,"First-click activation was forwarded as restore")
+          check(!one().canResize && one().nativeExcludeRects().length===1,
+            "Missing interaction-resize preference did not preserve full application content")
+          check(one().details().resizeRects.every(function(handle) {return !handle.enabled && !handle.visible}),
+            "Default-off interaction resizing left distracting active handles")
+          var bounds=one().nativeImageRect()
+          check(one().shortcutHit(bounds.x+1,bounds.y+1),"Default-off handles kept a dead corner inside application content")
+          setting("floatingPreviewInteractionResize","on");one().syncNativeInteraction()
           check(!one().canResize && fake.previewInteractionRequest.excludeRects.length===9,
             "Preparing native support failed to reserve handles before enabling active resizing")
           fake.previewInteractiveResizeReady=true
@@ -151,6 +160,14 @@ ShellRoot {
           check(details.interaction.controlsOutside && previews.inputRegions.length===2,"Active controls did not detach into their own bounded input region")
           check(!Interaction.intersection(request.rect,request.excludeRects[0]),"Detached controls still obstruct the interactive application image")
           check(request.excludeRects[0].x>=request.rect.x && request.excludeRects[0].width>0,"Control exclusion escaped the full image transform")
+          setting("floatingPreviewInteractionResize","off");one().syncNativeInteraction()
+          check(!one().canResize && one().nativeExcludeRects().length===1,
+            "Disabling active handles retained reserved application content")
+          check(one().details().resizeRects.every(function(handle) {return !handle.enabled && !handle.visible}),
+            "Disabling active handles left a visible or enabled resize target")
+          check(!one().beginResizeGesture("right",false),"A disabled active handle accepted resizing")
+          setting("floatingPreviewInteractionResize","on");one().syncNativeInteraction()
+          check(one().canResize && one().nativeExcludeRects().length===9,"Re-enabling active handles lost their protected input bounds")
           var count=fake.begun;one().activatePrimary();check(fake.begun===count,"Clicking active content rearmed the native owner")
           image(one()).sourceSize=Qt.size(1200,600)
         } else if(root.phase===2) {

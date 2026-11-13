@@ -195,7 +195,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='stash-interactive-resize-') as temporary, NativeSession() as session, stock_move_binding():
         try:
             for key, value in dict(presentation='previews', scope='workspace', grouping='window',
-                                   floatingPreviewInteraction='on', floatingPreviewActivation='explicit',
+                                   floatingPreviewInteraction='on', floatingPreviewInteractionResize='on', floatingPreviewActivation='explicit',
                                    floatingPreviewKeyboard='mouse', floatingPreviewControls='hover',
                                    floatingPreviewUpdate='still', floatingPreviewResizeRate='realtime',
                                    floatingPreviewSizing='free', floatingPreviewTitles='hidden', floatingPreviewFrame='hidden',

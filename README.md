@@ -154,8 +154,8 @@ Reshaping preserves the window's original restoration geometry and scrolling wid
 App-group covers reflow only their displayed window; expanded thumbnails keep
 automatic sizing. Stashing another window or starting live updates does not reshape
 existing sources. Interaction waits for the app's resized content and a fresh
-preview frame. Resize handles remain available during interaction: app input
-pauses during the drag and resumes when the resized preview is ready.
+preview frame. Enable **Resize while interacting** to keep handles available
+during interaction. App input pauses during the drag and resumes when ready.
 
 | Key | Default | Values / meaning |
 |---|---|---|
@@ -189,6 +189,7 @@ Optional interaction is configured under **Preview interaction**:
 | `floatingPreviewFullscreen` | `preview` | `preview`: fullscreen stays inside the miniature; `desktop`: restore the window for fullscreen |
 | `floatingPreviewInteractionFps` | `"60"` | `"30"`, `"60"`; active preview rendering limit |
 | `floatingPreviewControls` | `hover` | `hover`, `always`; controls stay visible during interaction |
+| `floatingPreviewInteractionResize` | `off` | `off`, `on`; optional resize handles during interaction |
 | `floatingPreviewExitShortcut` | `CTRL + ALT + Escape` | Session-only exit chord; empty disables it. Occupied desktop shortcuts are rejected. |
 
 Interact makes one window receive normal left/right/middle clicks, wheel input and

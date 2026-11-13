@@ -465,7 +465,7 @@ PanelWindow {
       && (modelData.key.indexOf("floatingPreview")!==0 || surface.previewMode)
       && (modelData.key!=="floatingPreviewScale" || surface.config.floatingPreviewSizing==="preset")
       && (modelData.key!=="floatingPreviewResizeRate" || surface.config.floatingPreviewSizing!=="preset")
-      && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls","floatingPreviewFullscreen"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
+      && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls","floatingPreviewFullscreen","floatingPreviewInteractionResize"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
     columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
@@ -1371,6 +1371,7 @@ PanelWindow {
               {key:"floatingPreviewInteraction",label:"Interactive previews",values:["off","on"],labels:["Off","On"],section:"interaction"},
               {key:"floatingPreviewActivation",label:"Start interacting",values:["explicit","click"],labels:["Interact control","First click"],section:"interaction"},
               {key:"floatingPreviewKeyboard",label:"Application input",values:["mouse","click"],labels:["Mouse only","Mouse and keyboard"],section:"interaction"},
+              {key:"floatingPreviewInteractionResize",label:"Resize while interacting",values:["off","on"],labels:["Off","On"],section:"interaction"},
               {key:"floatingPreviewFullscreen",label:"Fullscreen",values:["preview","desktop"],labels:["Inside preview","On desktop"],section:"interaction"},
               {key:"floatingPreviewInteractionFps",label:"Active frame rate",values:["30","60"],labels:["Up to 30 FPS","Up to 60 FPS"],section:"interaction"},
               {key:"floatingPreviewControls",label:"Controls when inactive",values:["hover","always"],labels:["On hover","Always shown"],section:"interaction"}

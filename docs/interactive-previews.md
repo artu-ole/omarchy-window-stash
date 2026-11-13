@@ -143,7 +143,10 @@ automatic renewals from reactivating a session; explicit activation uses a new o
 
 ## Resizing during interaction
 
-Free, unlocked previews retain their side and corner handles while interacting.
+`floatingPreviewInteractionResize` enables **Resize while interacting** (`off`
+by default, or `on`). When enabled, free, unlocked previews retain their side and
+corner handles while interacting. When disabled, handles disappear and their
+rectangles return to application input; ordinary view-only resizing is unchanged.
 All enabled handle rectangles are reserved from application input, including
 before activation and outside the captured image. Native management grabs retain
 the complete pointer gesture across the asynchronous input-release handshake.
