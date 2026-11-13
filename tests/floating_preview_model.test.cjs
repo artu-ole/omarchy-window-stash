@@ -39,6 +39,36 @@ for(const corner of ['top-left','top-right','bottom-left','bottom-right']) for(c
 console.log('Floating preview resizing: all corners hold their opposite anchor without changing source geometry')
 
 for(const titles of [false,true]) for(const frame of [false,true]) {
+  for(const source of [record,{size:[100,5000]},{size:[5000,100]}]) {
+    const initial=geometry.dimensions(280,source,area,titles,frame)
+    // Keep extreme cards inside the work area before testing both anchors.
+    const original={x:area.x+(area.width-initial.width)/2,y:area.y+(area.height-initial.height)/2,width:initial.width,height:initial.height}
+    const restore=JSON.stringify(source)
+    for(const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+      for(const delta of [[0,0],[90,5],[5,90],[-100000,100000],[100000,-100000],[100000,100000],[-100000,-100000]]) {
+        const result=geometry.resize(original,source,area,...delta,corner,titles,frame,0,true)
+        bounded(result,area)
+        assert.ok(result.aspect>=.02 && result.aspect<=50)
+        near((result.width-initial.inset*2)/(result.height-initial.header-initial.inset*2),result.aspect)
+        near(corner.includes('left') ? result.x+result.width : result.x,corner.includes('left') ? original.x+original.width : original.x)
+        near(corner.includes('top') ? result.y+result.height : result.y,corner.includes('top') ? original.y+original.height : original.y)
+        if(delta.every(value=>value===0)) for(const key of ['x','y','width','height']) near(result[key],original[key])
+        assert.equal(JSON.stringify(source),restore,'Free corner resizing changed original restore geometry')
+      }
+    }
+  }
+  const initial=geometry.dimensions(280,record,area,titles,frame)
+  const original={x:400,y:250,width:initial.width,height:initial.height}
+  for(const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+    const dx=corner.includes('left') ? -60 : 60,dy=corner.includes('top') ? -15 : 15
+    const result=geometry.resize(original,record,area,dx,dy,corner,titles,frame,0,true)
+    near(result.width,original.width+60);near(result.height,original.height+15)
+    assert.ok(Math.abs(result.aspect-initial.aspect)>.01,'Free corner retained the original aspect')
+  }
+}
+console.log('Floating preview free corners: independent dimensions, all opposite anchors, chrome, aspect limits, small shapes and monitor bounds passed')
+
+for(const titles of [false,true]) for(const frame of [false,true]) {
   const initial=geometry.dimensions(280,record,area,titles,frame)
   const original={x:400,y:250,width:initial.width,height:initial.height}
   const restore=JSON.stringify(record)

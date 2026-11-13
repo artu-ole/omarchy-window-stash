@@ -15,6 +15,15 @@ Item {
   required property var monitor
   required property var savedPositions
   property var groups:[]
+  readonly property var previewGroups:groups.map(function(group) {
+    return Object.assign({},group,{windows:group.windows.filter(function(record) {return record.previewFolded!==true})})
+  }).filter(function(group) {return group.windows.length>0})
+  readonly property var foldedGroups:groups.map(function(group) {
+    return Object.assign({},group,{key:"folded-preview:"+group.key,windows:group.windows.filter(function(record) {return record.previewFolded===true})})
+  }).filter(function(group) {return group.windows.length>0})
+  property var foldOrigins:({})
+  property var previousFoldedIds:({})
+  property var unfoldArrivals:({})
   property bool active:false
   property bool blocked:false
   property bool captureAllowed:true
@@ -29,6 +38,8 @@ Item {
   property bool keyboardSelection:false
   property string pendingInteractionId:""
   property int interactionAttempts:0
+  property var activationShortcut:null
+  property var resizeShortcut:null
   readonly property bool interacting:typeof stash.endPreviewInteraction==="function" && (!!stash.previewInteractionRequest || !!stash.previewInteractionPendingRequest)
   property int regionRevision:0
   property var inputRegions:[]
@@ -43,16 +54,20 @@ Item {
   readonly property bool overflow:preliminary.pages>1
   readonly property var layoutArea:({x:area.x,y:area.y,width:area.width,height:Math.max(1,area.height-(overflow ? 34 : 0))})
   readonly property var layout:Geometry.layout(geometryGroups,savedPositions,drafts,layoutArea,layoutOptions)
-  readonly property var expandedGroup:expandedKey ? groups.find(function(group) {return group.key===expandedKey}) || null : null
+  readonly property var expandedGroup:expandedKey ? previewGroups.find(function(group) {return group.key===expandedKey}) || null : null
   readonly property var expandedRecords:expandedGroup ? expandedGroup.windows : []
   readonly property var expandedSourceSizes:Object.assign({},observedSizes,expandedObservedSizes)
   readonly property var expandedGeometryRecords:expandedRecords.map(function(record) {return Geometry.geometryRecord(record,previews.expandedSourceSizes)})
   readonly property var expandedAnchor:expandedKey ? cardForKey("preview:"+expandedKey) : null
   readonly property var expandedLayout:Geometry.groupGrid(expandedGeometryRecords,expandedAnchor ? {x:expandedAnchor.x,y:expandedAnchor.y,width:expandedAnchor.width,height:expandedAnchor.height} : area,
     area,config.floatingPreviewTitles==="shown",config.floatingPreviewFrame==="shown",config.floatingPreviewSizing==="preset" ? 280*Number(config.floatingPreviewScale || "100")/100 : expandedAnchor ? expandedAnchor.width : 280)
-  readonly property bool present:collection.count>0
-  readonly property bool held:cardList().some(function(card) {return card.held || card.resizing})
+  readonly property bool present:collection.count>0 || folded.present
+  readonly property bool held:folded.held || cardList().some(function(card) {return card.held || card.resizing})
   readonly property bool expanded:!!expandedGroup && expandedRecords.length>1
+  readonly property string shortcutViewStamp:JSON.stringify([active,captureAllowed,blocked,layout.page,expandedKey,
+    config.presentation,config.scope,config.grouping,config.floatingPreviewInteraction,config.floatingPreviewSizing,
+    config.floatingPreviewLock,stash.lifecycleReady,stash.bridgeReloadBusy,stash.previewCornerResizeReady,screenName,monitor ? [monitor.x,monitor.y] : null])
+  onShortcutViewStampChanged: {activationShortcut=null;finishResizeShortcut()}
   signal inputChanged()
   width:coordinateRoot.width;height:coordinateRoot.height
   visible:present && captureAllowed
@@ -66,7 +81,118 @@ Item {
   function cardList() {var result=[];for(var i=0;i<cards.count;i++) {var card=cards.itemAt(i);if(card) result.push(card)}return result}
   function tileList() {var result=[];for(var i=0;i<tiles.count;i++) {var tile=tiles.itemAt(i);if(tile) result.push(tile)}return result}
   function cardForKey(key) {return cardList().find(function(card) {return card.key===key}) || null}
+  function foldedIconList() {return folded.iconList()}
+  function prepareFold(key,origin) {
+    if(typeof key!=="string" || key.indexOf("folded-preview:")!==0 || !origin) return
+    var next=Object.assign({},foldOrigins);next[key]=Geometry.rectangle(origin);foldOrigins=next
+  }
+  function isFoldedGroup(group) {
+    var records=[];groups.forEach(function(current) {records=records.concat(current.windows)})
+    return !!group && group.windows.length>0 && group.windows.every(function(record) {
+      return records.some(function(current) {return current.id===record.id && current.previewFolded===true})
+    })
+  }
+  function unfoldArrival(group) {return group.windows.some(function(record) {return !!previousFoldedIds[record.id] || !!unfoldArrivals[record.id]})}
+  function stageChanges() {
+    var next={},arrivals=Object.assign({},unfoldArrivals),now=Date.now(),owned={},origins=Object.assign({},foldOrigins),keys={}
+    groups.forEach(function(group) {group.windows.forEach(function(record) {
+      owned[record.id]=true
+      if(record.previewFolded===true) next[record.id]=true
+      else if(previousFoldedIds[record.id]) arrivals[record.id]=now
+    });keys["folded-preview:"+group.key]=true})
+    Object.keys(arrivals).forEach(function(id) {if(!owned[id] || now-arrivals[id]>5000) delete arrivals[id]})
+    Object.keys(origins).forEach(function(key) {if(!keys[key]) delete origins[key]})
+    if(JSON.stringify(origins)!==JSON.stringify(foldOrigins)) foldOrigins=origins
+    unfoldArrivals=arrivals;previousFoldedIds=next
+  }
+  function foldAt(x,y) {
+    if(!active || !visible || !captureAllowed || blocked) return null
+    if(folded.hit(x,y)) return {handled:true,ids:[]}
+    var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
+      .sort(function(first,second) {return first.z-second.z})
+    if(expanded) candidates=candidates.concat(tileList().filter(function(tile) {return tile.inViewport}))
+    for(var index=candidates.length-1;index>=0;index--) {
+      var card=candidates[index]
+      if(card.shortcutControlHit(x,y)) return {handled:true,ids:[]}
+      if(!card.shortcutSurfaceHit(x,y)) continue
+      if(!card.interactive || card.retiring || card.held || card.moving || card.resizing
+          || (typeof stash.lifecycleReady==="boolean" && !stash.lifecycleReady)
+          || card.group.windows.some(function(record) {return record.previewFolded===true || record.phase && record.phase!=="stashed"
+            || stash.pendingCloseIds[record.id] || (stash.pendingPreviewFoldIds && stash.pendingPreviewFoldIds[record.id])})) return {handled:true,ids:[]}
+      var groupKey=card.expandedTile ? expandedKey : card.group.key
+      return {handled:true,ids:card.group.windows.map(function(record) {return record.id}),screenName:screenName,
+        key:"folded-preview:"+groupKey,origin:card.visualRectOf(card)}
+    }
+    return null
+  }
   function updateNativeInteractions() {cardList().concat(tileList()).forEach(function(card) {if(card.interactionBusy) card.syncNativeInteraction()})}
+  function shortcutAvailable() {return active && visible && captureAllowed && !blocked && config.floatingPreviewInteraction==="on"}
+  function shortcutFrontAt(x,y) {
+    if(!active || !visible || !captureAllowed || blocked) return null
+    if(folded.hit(x,y)) return null
+    var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
+      .sort(function(first,second) {return first.z-second.z})
+    if(expanded) candidates=candidates.concat(tileList().filter(function(tile) {return tile.inViewport}))
+    // Resolve the frontmost image before checking readiness. An unavailable
+    // image must not allow a shortcut to reach a different window behind it.
+    for(var index=candidates.length-1;index>=0;index--) {
+      var card=candidates[index]
+      if(card.shortcutSurfaceHit(x,y)) return card
+      if(card.shortcutControlHit(x,y)) return null
+    }
+    return null
+  }
+  function shortcutCardAt(x,y) {
+    if(!shortcutAvailable()) return null
+    var card=shortcutFrontAt(x,y)
+    return card && card.shortcutHit(x,y) ? card : null
+  }
+  function finishResizeShortcut() {
+    var pending=resizeShortcut;resizeShortcut=null
+    if(!pending) return false
+    var card=cardForKey(pending.key)
+    if(card && card.resizing) card.endResizeGesture()
+    return true
+  }
+  function handleActivationShortcut(serial,phase,x,y) {
+    if(phase==="cancel") {activationShortcut=null;return finishResizeShortcut()}
+    if(phase==="press") {
+      activationShortcut=null;finishResizeShortcut()
+      var front=shortcutFrontAt(x,y),corner=front ? front.shortcutResizeCorner(x,y) : ""
+      if(corner) {
+        if(stash.previewCornerResizeReady!==true || !front.beginResizeGesture(corner,true)) return false
+        resizeShortcut={serial:serial,key:front.key,identity:front.shortcutIdentity(),corner:corner,x:x,y:y};return true
+      }
+      var candidate=shortcutCardAt(x,y)
+      if(!candidate || !candidate.interactionReady(true)) return false
+      activationShortcut={serial:serial,key:candidate.key,tile:candidate.expandedTile,identity:candidate.shortcutIdentity(),
+        revision:candidate.interactionGeometryRevision,rect:JSON.stringify(candidate.nativeImageRect())}
+      return true
+    }
+    if(resizeShortcut) {
+      var resizing=resizeShortcut,card=cardForKey(resizing.key)
+      if(resizing.serial!==serial || !active || !visible || !captureAllowed || blocked || !card || !card.visible
+          || !card.canResize || !card.resizing || card.shortcutIdentity()!==resizing.identity) {
+        finishResizeShortcut();return false
+      }
+      if(phase!=="move" && phase!=="release" && phase!=="drag-release") return false
+      card.updateResizeGesture(x-resizing.x,y-resizing.y,resizing.corner)
+      if(phase!=="move") finishResizeShortcut()
+      return true
+    }
+    if(phase==="move") return !!activationShortcut && activationShortcut.serial===serial
+    var pending=activationShortcut;activationShortcut=null
+    if(phase!=="release" || !pending || pending.serial!==serial || !shortcutAvailable()) return false
+    var target=shortcutCardAt(x,y)
+    if(!target || target.key!==pending.key || target.expandedTile!==pending.tile || target.shortcutIdentity()!==pending.identity
+        || target.interactionGeometryRevision!==pending.revision || JSON.stringify(target.nativeImageRect())!==pending.rect
+        || !target.interactionReady(true)) return false
+    if(target.group.windows.length>1) {
+      if(expandedKey!==target.group.key) activate(target)
+      return true
+    }
+    return target.beginNativeInteraction()
+  }
   function activateInteraction(id) {
     if(config.floatingPreviewInteraction!=="on" || !active || blocked) return false
     var cover=cardList().find(function(card) {return !card.retiring && card.group.windows.some(function(window) {return window.id===id})})
@@ -110,6 +236,7 @@ Item {
         if(tile.inViewport) {next.push(tile.clippedRegion);if(tile.controlsOutside) next.push(tile.managementRegion)}
       })
       if(layout.pages>1) next.push(navigationRegion)
+      next=next.concat(folded.inputRegions)
     }
     inputRegions=next;inputChanged()
   }
@@ -133,7 +260,7 @@ Item {
     collection.entries.forEach(function(group) {group.windows.forEach(function(record) {owned[record.id]=true})})
     Object.keys(pending).forEach(function(id) {
       if(!owned[id]) {delete pending[id];return}
-      if(cardList().some(function(card) {return card.displayRecord && card.displayRecord.id===id && (card.held || card.resizing || card.moving || card.interactionBusy)})) return
+      if(cardList().some(function(card) {return card.displayRecord && card.displayRecord.id===id && (card.held || card.resizing || card.moving || card.interactionBusy || card.resizeResumePending)})) return
       if(!Geometry.sameAspect(next[id],pending[id])) {next[id]=pending[id];changed=true}
       delete pending[id]
     })
@@ -169,7 +296,7 @@ Item {
     return stash.requestPreviewAspect(card.record.id,aspect,axis,settle)
   }
   function applySavedShape(card) {
-    if(!card || !card.visible || card.retiring || card.resizing || card.interactionBusy || card.expandedTile
+    if(!card || !card.visible || card.retiring || card.resizing || card.interactionBusy || card.resizeResumePending || card.expandedTile
         || !card.record || !card.imageReadyForShape()) return
     var size=card.capturedSourceSize(),state=typeof stash.previewGeometryState==="function" ? stash.previewGeometryState(card.record.id) : null
     if(state && state.ready && Math.abs(Number(state.aspect)-card.aspectOverride)<=Math.max(Number(state.aspect),card.aspectOverride)*.0001 && card.frameMatchesGeometry()) return
@@ -190,20 +317,27 @@ Item {
     if(anchor && anchor.recordId===card.record.id) {
       var c=Geometry.chrome(card.titleVisible,card.frameVisible)
       var wanted=anchor.axis==="width" ? Math.max(1,anchor.height-c.header-c.inset*2)*ratio+c.inset*2 : anchor.width
-      var d=Geometry.dimensions(wanted,card.geometryRecord,previews.layoutArea,card.titleVisible,card.frameVisible,ratio)
+      var available=previews.layoutArea
+      if(anchor.freeAspect) {
+        var left=anchor.edge.indexOf("left")>=0,top=anchor.edge.indexOf("top")>=0
+        var anchorX=left ? anchor.x+anchor.width : anchor.x,anchorY=top ? anchor.y+anchor.height : anchor.y
+        available={x:0,y:0,width:left ? anchorX-available.x : available.x+available.width-anchorX,
+          height:top ? anchorY-available.y : available.y+available.height-anchorY}
+      }
+      var d=Geometry.dimensions(wanted,card.geometryRecord,available,card.titleVisible,card.frameVisible,ratio)
       card.width=d.width
-      card.x=anchor.edge==="left" ? anchor.x+anchor.width-d.width : anchor.x
-      card.y=anchor.edge==="top" ? anchor.y+anchor.height-d.height : anchor.y
+      card.x=anchor.edge.indexOf("left")>=0 ? anchor.x+anchor.width-d.width : anchor.x
+      card.y=anchor.edge.indexOf("top")>=0 ? anchor.y+anchor.height-d.height : anchor.y
       var p=Geometry.position({x:card.x,y:card.y,width:card.width,height:card.height},previews.layoutArea)
       card.x=p.x;card.y=p.y
       card.shapeAnchor=null
     }
     world.remove(card.key);world.add(card.key,card.x,card.y,card.width,card.height);card.registered=true
-    world.freeze(card.key,blocked || config.floatingPreviewLock==="locked")
+    world.freeze(card.key,blocked || config.floatingPreviewLock==="locked" || card.interactionBusy || card.resizeResumePending)
     save(card);scheduleLayout()
   }
   function resetShape(card) {
-    if(!card || !card.canResize || !card.record || card.expandedTile) return
+    if(!card || !card.canResize || !card.record || card.expandedTile || card.interactionBusy || card.resizeResumePending) return
     card.shapeAnchor={x:card.x,y:card.y,width:card.width,height:card.height,axis:"height",edge:"bottom",recordId:card.record.id,reset:true}
     card.aspectOverride=0
     save(card);requestShape(card,Geometry.aspect(card.record),"height",true);scheduleLayout()
@@ -214,7 +348,7 @@ Item {
     resetShape(card);return true
   }
   function clearExpandedGeometry() {expandedObservedSizes={};expandedPendingSizes={}}
-  function closeExpansion() {pendingInteractionId="";expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
+  function closeExpansion() {activationShortcut=null;pendingInteractionId="";expandedKey="";clearExpandedGeometry();selectedIndex=0;keyboardSelection=false;strip.contentY=0;scheduleRegions()}
   function selectTile(delta) {
     if(!expandedRecords.length) return
     selectedIndex=Geometry.clamp(selectedIndex+delta,0,expandedRecords.length-1);keyboardSelection=true
@@ -249,7 +383,7 @@ Item {
       if(!target || !target.visible || card.retiring) {world.remove(card.key);card.registered=false;return}
       if(card.held || card.resizing) return
       var body=world.body(card.key)
-      if(card.interactionBusy) {world.freeze(card.key,true);card.syncNativeInteraction();return}
+      if(card.interactionBusy || card.resizeResumePending) {world.freeze(card.key,true);card.syncNativeInteraction();return}
       if(body && body.moving) return
       var changed=!body || Math.abs(body.width-target.width)>.05 || Math.abs(body.height-target.height)>.05
       card.aspectOverride=target.aspectOverride || 0
@@ -271,7 +405,7 @@ Item {
     scheduleRegions()
   }
   function details() {
-    return {present:present,held:held,expanded:expanded,expandedKey:expandedKey,
+    return {present:present,held:held,expanded:expanded,expandedKey:expandedKey,folded:folded.details(),
       cards:cardList().filter(function(card) {return card.visible && !card.retiring}).map(function(card) {return card.details()}),
       tiles:tileList().filter(function(tile) {return tile.inViewport}).map(function(tile) {return tile.details()}),
       viewportRect:{x:strip.x,y:strip.y,width:strip.width,height:strip.height},
@@ -285,10 +419,11 @@ Item {
     scheduleLayout()
   }
   onActiveChanged: {if(!active) closeExpansion();scheduleLayout()}
+  onGroupsChanged: {stageChanges();scheduleLayout()}
   onCaptureAllowedChanged: {if(!captureAllowed) closeExpansion();scheduleLayout()}
   onBlockedChanged: {if(blocked) {closeExpansion();cardList().forEach(function(card) {card.cancelInteraction()})};scheduleLayout()}
   onExpandedChanged: {expansionValidation.restart();scheduleRegions();scheduleLayout()}
-  onInteractingChanged: {scheduleLayout();sourceGeometryDelay.restart();scheduleRegions()}
+  onInteractingChanged: {activationShortcut=null;scheduleLayout();sourceGeometryDelay.restart();scheduleRegions()}
   onExpandedRecordsChanged: {expansionValidation.restart();sourceGeometryDelay.restart();scheduleRegions()}
   onSavedPositionsChanged: {
     var next=Object.assign({},drafts)
@@ -323,7 +458,7 @@ Item {
   }
   StashCollection {
     id:collection
-    sourceGroups:previews.active ? previews.groups : []
+    sourceGroups:previews.active ? previews.previewGroups : []
     animations:previews.animations;animationSpeed:previews.animationSpeed
     onReconciled: {previews.scheduleLayout();sourceGeometryDelay.restart()}
   }
@@ -351,10 +486,11 @@ Item {
     delegate:StashPreviewCard {
       id:card
       required property string groupKey
-      required property bool retiring
+      required retiring
       readonly property var target:previews.layout.cards[key] || null
       property bool registered:false
       property var resizeOrigin:null
+      sourceResizeActive:resizing && !!resizeOrigin && (resizeOrigin.freeAspect || ["left","right","top","bottom"].indexOf(resizeOrigin.edge)>=0)
       property var shapeAnchor:null
       stash:previews.stash;config:previews.config;group:collection.dataByKey[groupKey] || ({key:groupKey,windows:[]})
       sourceSizes:previews.observedSizes
@@ -364,6 +500,10 @@ Item {
       interactive:previews.active && previews.captureAllowed && !previews.blocked && !previews.stash.groupClosing(group)
       visible:!!target && target.visible && previews.captureAllowed
       maximumHeight:previews.layoutArea.height
+      folding:retiring && previews.isFoldedGroup(group)
+      unfolding:previews.unfoldArrival(group)
+      stageIconSize:folded.iconSize
+      stageOrigin:unfolding ? folded.originFor(group.windows) : null
       width:280
       aspectOverride:target ? target.aspectOverride || 0 : 0
       onInputChanged:previews.scheduleRegions()
@@ -371,6 +511,7 @@ Item {
       onSourceGeometryAccepted:function(state) {previews.acceptShape(card,state)}
       onProportionsResetRequested:previews.resetShape(card)
       onGeometryReleased:sourceGeometryDelay.restart()
+      onResizeResumePendingChanged: {previews.scheduleLayout();previews.scheduleRegions();sourceGeometryDelay.restart()}
       onMovePressed: {previews.closeExpansion();world.press(key)}
       onMoveRequested:function(x,y) {world.drag(key,x,y)}
       onMoveReleased:world.release(key)
@@ -378,27 +519,34 @@ Item {
       onResizePressed:function(corner) {
         previews.closeExpansion();world.remove(key);registered=false
         resizeOrigin={x:x,y:y,width:width,height:height,aspect:dimensions.aspect,custom:aspectOverride,edge:corner,
-          axis:corner==="left" || corner==="right" ? "width" : "height",recordId:record ? record.id : ""}
+          freeAspect:resizeFreeAspect,axis:corner==="left" || corner==="right" ? "width" : "height",recordId:record ? record.id : ""}
         shapeAnchor=Object.assign({},resizeOrigin)
       }
       onResizeRequested:function(dx,dy,corner) {
         if(!resizeOrigin) return
-        var side=["left","right","top","bottom"].indexOf(corner)>=0
-        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible,resizeOrigin.aspect)
-        aspectOverride=side ? rect.aspect : resizeOrigin.custom
+        var reshape=resizeOrigin.freeAspect || ["left","right","top","bottom"].indexOf(corner)>=0
+        var rect=Geometry.resize(resizeOrigin,geometryRecord,previews.layoutArea,dx,dy,corner,titleVisible,frameVisible,resizeOrigin.aspect,resizeOrigin.freeAspect)
+        aspectOverride=reshape ? rect.aspect : resizeOrigin.custom
         width=rect.width;x=rect.x;y=rect.y
-        if(side) previews.requestShape(card,rect.aspect,resizeOrigin.axis,false)
+        if(resizeOrigin.freeAspect) shapeAnchor=Object.assign({},resizeOrigin,rect)
+        if(reshape) previews.requestShape(card,rect.aspect,resizeOrigin.axis,false)
       }
       onResizeReleased: {
         if(!resizeOrigin) return
-        var origin=resizeOrigin,side=["left","right","top","bottom"].indexOf(origin.edge)>=0
+        var origin=resizeOrigin,reshape=origin.freeAspect || ["left","right","top","bottom"].indexOf(origin.edge)>=0
         resizeOrigin=null
         if(!record || origin.recordId!==record.id) {shapeAnchor=null;previews.scheduleLayout();return}
         world.add(key,x,y,width,height);registered=true
-        world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked")
+        world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked" || card.interactionBusy || card.resizeResumePending)
         previews.save(card)
-        if(side) previews.requestShape(card,aspectOverride,origin.axis,true)
+        if(reshape) previews.requestShape(card,aspectOverride,origin.axis,true)
         else shapeAnchor=null
+        previews.scheduleLayout()
+      }
+      onResizeCanceled: {
+        resizeOrigin=null;shapeAnchor=null
+        world.remove(key);world.add(key,x,y,width,height);registered=true
+        world.freeze(key,previews.blocked || previews.config.floatingPreviewLock==="locked" || card.interactionBusy || card.resizeResumePending)
         previews.scheduleLayout()
       }
       onActivated:previews.activate(card)
@@ -408,6 +556,15 @@ Item {
       Component.onCompleted:previews.scheduleLayout()
       Component.onDestruction: {world.remove(key);previews.scheduleRegions()}
     }
+  }
+  StashFoldedPreviews {
+    id:folded
+    stash:previews.stash;config:previews.config;groups:previews.foldedGroups
+    savedPositions:previews.savedPositions;area:previews.area;monitor:previews.monitor
+    coordinateRoot:previews.coordinateRoot;screenName:previews.screenName;origins:previews.foldOrigins
+    recordIds:previews.groups.reduce(function(ids,group) {return ids.concat(group.windows.map(function(record) {return record.id}))},[])
+    active:previews.active && previews.captureAllowed;blocked:previews.blocked
+    onInputChanged:previews.scheduleRegions()
   }
   // Groups unfold as a wrapping grid, never a one-window carousel. The grid
   // scrolls only when its complete set cannot fit on this monitor.

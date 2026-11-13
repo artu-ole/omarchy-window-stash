@@ -92,12 +92,23 @@ PanelWindow {
   function dismissPreview() { windowPreview.dismiss(true) }
   function dismissFloatingPreviews() { floatingPreviews.closeExpansion() }
   function activatePreviewInteraction(id) {return floatingPreviews.activateInteraction(id)}
+  function foldPreviewAt(globalX,globalY) {
+    if(!previewMode || dialogOpen || contextMenuOpen) return null
+    return floatingPreviews.foldAt(globalX,globalY)
+  }
+  function preparePreviewFold(key,origin) {floatingPreviews.prepareFold(key,origin)}
+  function handlePreviewShortcut(serial,phase,globalX,globalY) {
+    if(!previewMode || dialogOpen || contextMenuOpen) {
+      floatingPreviews.activationShortcut=null;floatingPreviews.finishResizeShortcut();return false
+    }
+    return floatingPreviews.handleActivationShortcut(serial,phase,globalX,globalY)
+  }
   function canResetPreviewProportions(group) {
     if(config.presentation!=="previews" || config.floatingPreviewSizing==="preset" || config.floatingPreviewLock==="locked"
         || !group || !group.windows || !group.windows.length) return false
     var card=floatingPreviews.cardForKey("preview:"+group.key)
     return !!card && card.visible && !card.retiring && card.aspectOverride>0 && !!card.displayRecord
-      && card.displayRecord.id===group.windows[0].id
+      && card.displayRecord.id===group.windows[0].id && !card.interactionBusy && !card.resizeResumePending
   }
   function resetPreviewProportions(id) {return floatingPreviews.resetPreviewProportions(id)}
   readonly property bool contextMenuOpen:stash.contextOpen && stash.contextScreen===screen.name
@@ -279,13 +290,14 @@ PanelWindow {
     }
   }
   function numberItems() {
-    var rows=[iconOpacityRow,radiusRow,dockOpacityRow]
+    var rows=[radiusRow]
     for (var i=0;i<previewTimingRows.count;i++) {
       var row=previewTimingRows.itemAt(i)
       if (row) rows.push(row)
     }
     return rows
   }
+  function opacityItems() { return [iconOpacityRow,dockOpacityRow] }
   function within(item,ancestor) {
     for (var current=item;current;current=current.parent) if (current===ancestor) return true
     return false
@@ -296,9 +308,10 @@ PanelWindow {
   }
   function settingsFocusTarget(item) {
     if (!item) return null
-    var choices=settingItems(),numbers=numberItems()
+    var choices=settingItems(),numbers=numberItems(),opacities=opacityItems()
     for (var i=0;i<choices.length;i++) if (within(item,choices[i].selector)) return choices[i].selector
     for (var j=0;j<numbers.length;j++) if (within(item,numbers[j].numberField.field)) return numbers[j].numberField.field
+    for (var k=0;k<opacities.length;k++) if (within(item,opacities[k].slider)) return opacities[k].slider
     var shortcuts=shortcutItems()
     for (var n=0;n<shortcuts.length;n++) {
       var row=shortcuts[n]
@@ -321,12 +334,15 @@ PanelWindow {
     var item=settingsFocusedItem(),target=settingsFocusTarget(item)
     var result={rect:target ? itemRect(target) : null,activeRect:item ? itemRect(item) : null,key:"",part:""}
     if (!item) return result
-    var choices=settingItems(),numbers=numberItems()
+    var choices=settingItems(),numbers=numberItems(),opacities=opacityItems()
     for (var i=0;i<choices.length;i++) {
       if (within(item,choices[i])) { result.key=choices[i].modelData.key;result.part="choice";return result }
     }
     for (var j=0;j<numbers.length;j++) {
       if (within(item,numbers[j])) { result.key=numbers[j].modelData.key;result.part="number";return result }
+    }
+    for (var p=0;p<opacities.length;p++) {
+      if (within(item,opacities[p])) { result.key=opacities[p].modelData.key;result.part="slider";return result }
     }
     var shortcuts=shortcutItems()
     for (var n=0;n<shortcuts.length;n++) {
@@ -446,10 +462,10 @@ PanelWindow {
       && (modelData.key!=="dockCorners" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible))
       && (modelData.key!=="dockFrame" || (!surface.bubbleMode && !surface.previewMode))
       && (modelData.key!=="iconShape" || surface.config.iconFrame==="shown")
-      && (["iconShape","iconFrame","sizePreset"].indexOf(modelData.key)<0 || !surface.previewMode)
       && (modelData.key.indexOf("floatingPreview")!==0 || surface.previewMode)
       && (modelData.key!=="floatingPreviewScale" || surface.config.floatingPreviewSizing==="preset")
-      && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls","floatingPreviewFullscreen"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
+      && (modelData.key!=="floatingPreviewResizeRate" || surface.config.floatingPreviewSizing!=="preset")
+      && (["floatingPreviewActivation","floatingPreviewKeyboard","floatingPreviewInteractionFps","floatingPreviewControls","floatingPreviewFullscreen","floatingPreviewInteractionResize"].indexOf(modelData.key)<0 || surface.config.floatingPreviewInteraction==="on")
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
     columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
@@ -478,7 +494,6 @@ PanelWindow {
     required property var modelData
     readonly property alias numberField:settingNumber
     visible:(modelData.key!=="dockCornerRadius" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible && surface.config.dockCorners==="custom"))
-      && (modelData.key!=="dockOpacity" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible))
       && (["previewDelay","previewHideDelay"].indexOf(modelData.key)<0 || surface.previewsEnabled)
     Layout.fillWidth:true; Layout.minimumWidth:0
     columns:width<Style.space(400) ? 1 : 2
@@ -500,6 +515,78 @@ PanelWindow {
       onModified:function(value) { surface.stash.setting(settingRow.modelData.key,value) }
     }
   }
+  component SettingOpacity:GridLayout {
+    id:settingRow
+    required property var modelData
+    readonly property alias slider:settingSlider
+    visible:modelData.key!=="dockOpacity" || (!surface.bubbleMode && !surface.previewMode && surface.dockFrameVisible)
+    Layout.fillWidth:true; Layout.minimumWidth:0
+    columns:width<Style.space(400) ? 1 : 2
+    columnSpacing:surface.metrics.sm; rowSpacing:surface.metrics.xxs
+    function save(value) {
+      var next=Math.max(0,Math.min(100,Math.round(value)))
+      if (next!==settingSlider.value) surface.stash.setting(modelData.key,next)
+    }
+    Text {
+      text:settingRow.modelData.label; textFormat:Text.PlainText
+      wrapMode:Text.Wrap; Layout.minimumWidth:0; Layout.fillWidth:true
+      color:surface.popupColors.text
+      font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+    }
+    RowLayout {
+      Layout.minimumWidth:0; Layout.maximumWidth:Math.max(0,settingRow.width); Layout.fillWidth:settingRow.columns===1
+      Layout.preferredWidth:settingRow.columns===1 ? settingRow.width : Math.min(surface.metrics.dropdownWidth,settingRow.width*.55)
+      spacing:surface.metrics.sm
+      Ui.PanelSlider {
+        id:settingSlider
+        Layout.fillWidth:true; Layout.minimumWidth:0
+        minimum:0; maximum:100; step:1; integer:true
+        value:surface.config[settingRow.modelData.key]===undefined ? 100 : surface.config[settingRow.modelData.key]
+        bar:QtObject {
+          property color foreground:surface.popupColors.text
+          property color background:surface.popupColors.background
+        }
+        activeFocusOnTab:true
+        Accessible.role:Accessible.Slider
+        Accessible.name:settingRow.modelData.label
+        Accessible.description:Math.round(liveValue)+"%"
+        Accessible.onIncreaseAction:settingRow.save(value+1)
+        Accessible.onDecreaseAction:settingRow.save(value-1)
+        onDraggingChanged:if(dragging) forceActiveFocus(Qt.MouseFocusReason)
+        // Keep dragging local; writing each motion event would repeatedly
+        // persist the host settings and refresh the stash snapshot.
+        onReleased:function(value) { settingRow.save(value) }
+        Keys.onPressed:function(event) {
+          if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+          var next=value,step=event.modifiers & Qt.ShiftModifier ? 10 : 1
+          if (event.key===Qt.Key_Home) next=minimum
+          else if (event.key===Qt.Key_End) next=maximum
+          else if (event.key===Qt.Key_Right) next+=mirrored ? -step : step
+          else if (event.key===Qt.Key_Left) next+=mirrored ? step : -step
+          else if (event.key===Qt.Key_Up) next+=step
+          else if (event.key===Qt.Key_Down) next-=step
+          else if (event.key===Qt.Key_PageUp) next+=10
+          else if (event.key===Qt.Key_PageDown) next-=10
+          else return
+          settingRow.save(next);event.accepted=true
+        }
+        Rectangle {
+          anchors.fill:parent; radius:Style.cornerRadius
+          visible:settingSlider.activeFocus
+          color:"transparent"; border.width:Style.normalBorderWidth; border.color:surface.popupColors.text
+        }
+      }
+      TextMetrics { id:percentMeasure; font:percentLabel.font; text:"100%" }
+      Text {
+        id:percentLabel
+        Layout.preferredWidth:percentMeasure.advanceWidth
+        text:Math.round(settingSlider.liveValue)+"%"; textFormat:Text.PlainText
+        horizontalAlignment:Text.AlignRight
+        color:surface.popupColors.text
+        font.family:surface.fonts.family; font.pixelSize:surface.fonts.body
+      }
+    }
+  }
   function details() {
     var menuDetails=contextMenu.details()
     var currentDialog=menuDetails.opened ? {x:menuDetails.rect.x,y:menuDetails.rect.y,width:menuDetails.rect.width,height:menuDetails.rect.height,visible:menuDetails.visible,rendered:menuDetails.rendered,progress:menuDetails.progress}
@@ -519,10 +606,12 @@ PanelWindow {
         popupCurrentRect:row.selector.popupCurrentRect()})
     }
     var opacityControls=[]
-    var opacityItems=[iconOpacityRow,dockOpacityRow]
-    for (var k=0;k<opacityItems.length;k++) {
-      var opacityRow=opacityItems[k] as SettingNumber
-      if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.numberField.value,visible:opacityRow.visible,rect:itemRect(opacityRow.numberField.field)})
+    var opacityRows=opacityItems()
+    for (var k=0;k<opacityRows.length;k++) {
+      var opacityRow=opacityRows[k] as SettingOpacity
+      if (opacityRow) opacityControls.push({key:opacityRow.modelData.key,value:opacityRow.slider.value,
+        liveValue:Math.round(opacityRow.slider.liveValue),visible:opacityRow.visible,rect:itemRect(opacityRow.slider),
+        knobSize:opacityRow.slider.knobSize,dragging:opacityRow.slider.dragging})
     }
     var shortcutControls=[]
     var shortcutFields=shortcutItems()
@@ -615,7 +704,9 @@ PanelWindow {
   color: "transparent"
   anchors { top: true; left: true; bottom: true; right: true }
   exclusionMode: ExclusionMode.Ignore
-  WlrLayershell.namespace: "omarchy-window-stash"
+  WlrLayershell.namespace: previewMode && (config.floatingPreviewInteraction==="on"
+    || (config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked")) && !dialogOpen && !contextMenuOpen
+    ? "omarchy-window-stash-interactive-previews" : "omarchy-window-stash"
   WlrLayershell.layer: WlrLayer.Top
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
@@ -1096,6 +1187,7 @@ PanelWindow {
         contentWidth:width; contentHeight:settingsBody.implicitHeight
         boundsBehavior:Flickable.StopAtBounds
         flickableDirection:Flickable.VerticalFlick
+        interactive:!iconOpacityRow.slider.dragging && !dockOpacityRow.slider.dragging
         clip:true
         onHeightChanged:settingsFocusDelay.restart()
         onContentYChanged:if (!surface.stash.resetConfirmation && !surface.settingsScrollRestoring)
@@ -1199,13 +1291,13 @@ PanelWindow {
           Repeater {
             id:iconRows
             model:[
-              {key: "iconFrame", label: "Icon border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden (larger icons)"], section: "appearance"},
-              {key: "iconShape", label: "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"},
-              {key: "sizePreset", label: "Icon and dock size", values: ["50", "75", "100", "125", "150", "175", "200", "250", "300"], labels: ["50%", "75%", "100% (Default)", "125%", "150%", "175%", "200%", "250%", "300%"], section: "appearance"}
+              {key: "iconFrame", label: surface.previewMode ? "Folded icon border/background" : "Icon border/background", values: ["shown", "hidden"], labels: ["Shown", "Hidden (larger icons)"], section: "appearance"},
+              {key: "iconShape", label: surface.previewMode ? "Folded icon shape" : "Icon shape", values: ["auto", "circle", "square", "rounded", "squircle"], labels: ["Automatic", "Circle", "Square", "Rounded square", "Squircle"], section: "appearance"},
+              {key: "sizePreset", label: surface.previewMode ? "Folded icon size" : "Icon and dock size", values: ["50", "75", "100", "125", "150", "175", "200", "250", "300"], labels: ["50%", "75%", "100% (Default)", "125%", "150%", "175%", "200%", "250%", "300%"], section: "appearance"}
             ]
             delegate:SettingChoice {}
           }
-          SettingNumber { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview opacity (%)" : "Icon opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          SettingOpacity { id:iconOpacityRow; modelData:({key: "iconOpacity", label: surface.previewMode ? "Preview and icon opacity" : "Icon opacity", section: "appearance"}) }
           Repeater {
             id:dockRows
             model:[
@@ -1215,7 +1307,7 @@ PanelWindow {
             delegate:SettingChoice {}
           }
           SettingNumber { id:radiusRow; modelData:({key: "dockCornerRadius", label: "Corner radius (px)", maximum: 64, defaultValue: 12, section: "appearance"}) }
-          SettingNumber { id:dockOpacityRow; modelData:({key: "dockOpacity", label: "Dock opacity (%)", maximum: 100, defaultValue: 100, section: "appearance"}) }
+          SettingOpacity { id:dockOpacityRow; modelData:({key: "dockOpacity", label: "Dock opacity", section: "appearance"}) }
           Ui.PanelSeparator { Layout.fillWidth:true; Layout.minimumWidth:0; foreground:surface.popupColors.text }
           Ui.PanelSectionHeader { id:motionHeader; text:"Motion"; Layout.fillWidth:true; Layout.minimumWidth:0; wrapMode:Text.Wrap; foreground:surface.popupColors.text }
           Repeater {
@@ -1235,6 +1327,7 @@ PanelWindow {
             model:[
               {key:"floatingPreviewSizing", label:"Preview sizing", values:["free","preset"], labels:["Resize directly","Size presets"], section:"previews"},
               {key:"floatingPreviewScale", label:"Preview scale", values:["50","75","100","125","150","175","200","250","300"], labels:["50%","75%","100%","125%","150%","175%","200%","250%","300%"], section:"previews"},
+              {key:"floatingPreviewResizeRate", label:"Resize updates", values:["realtime","balanced","release"], labels:["Responsive","Balanced","On release"], section:"previews"},
               {key:"floatingPreviewUpdate", label:"Preview updates", values:["still","hover","live"], labels:["Snapshot","Live on hover","Always live"], section:"previews"},
               {key:"floatingPreviewTitles", label:"Preview title strip", values:["hidden","shown"], labels:["Hidden","Shown"], section:"previews"},
               {key:"floatingPreviewFrame", label:"Preview border/background", values:["hidden","shown"], labels:["Hidden","Shown"], section:"previews"}
@@ -1244,7 +1337,7 @@ PanelWindow {
           Text {
             visible:surface.previewMode
             text:surface.config.floatingPreviewSizing==="free"
-              ? "Drag a preview to move it; use a corner to resize. Click to restore. Resizing keeps the window's proportions and does not resize the original window."
+              ? "Drag a preview to move it. Corners keep its proportions; Super + corner drag or sides reshape it. Resize updates controls how closely the app follows. Click to restore."
               : "Click a preview to restore. App groups expand into individual window previews."
             textFormat:Text.PlainText
             color:surface.popupColors.text
@@ -1278,6 +1371,7 @@ PanelWindow {
               {key:"floatingPreviewInteraction",label:"Interactive previews",values:["off","on"],labels:["Off","On"],section:"interaction"},
               {key:"floatingPreviewActivation",label:"Start interacting",values:["explicit","click"],labels:["Interact control","First click"],section:"interaction"},
               {key:"floatingPreviewKeyboard",label:"Application input",values:["mouse","click"],labels:["Mouse only","Mouse and keyboard"],section:"interaction"},
+              {key:"floatingPreviewInteractionResize",label:"Resize while interacting",values:["off","on"],labels:["Off","On"],section:"interaction"},
               {key:"floatingPreviewFullscreen",label:"Fullscreen",values:["preview","desktop"],labels:["Inside preview","On desktop"],section:"interaction"},
               {key:"floatingPreviewInteractionFps",label:"Active frame rate",values:["30","60"],labels:["Up to 30 FPS","Up to 60 FPS"],section:"interaction"},
               {key:"floatingPreviewControls",label:"Controls when inactive",values:["hover","always"],labels:["On hover","Always shown"],section:"interaction"}

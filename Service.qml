@@ -21,7 +21,7 @@ Item {
   property string lifecycleFailureDetail: ""
   property var lifecycleWarnings: []
   property var activeShortcuts: ({})
-  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
+  property var snapshot: ({windows: [], monitors: [], settings: {presentation: "floating", scope: "global", grouping: "window", restoreDestination: "current", iconShape: "auto", sizePreset:"100", floatingDirection: "vertical", floatingAnimation:"arc", dragMotion:"physics", dockSide: "bottom", staticDockLock:"locked", floatingPlacement:"edges", dockCorners:"theme", dockCornerRadius:12, iconFrame:"hidden", dockFrame:"hidden", animations:"full", animationSpeed:"normal", dockOpacity:100, iconOpacity:100, hoverPreview:"off", livePreviewCompatibility:"standard", previewSize:"medium", previewPlacement:"auto", previewTitles:"shown", previewDelay:400, previewHideDelay:200, floatingPreviewSizing:"free", floatingPreviewScale:"100", floatingPreviewUpdate:"hover", floatingPreviewResizeRate:"realtime", floatingPreviewTitles:"hidden", floatingPreviewFrame:"hidden", floatingPreviewLock:"unlocked", floatingPreviewInteraction:"off", floatingPreviewActivation:"explicit", floatingPreviewKeyboard:"mouse", floatingPreviewInteractionFps:"60", floatingPreviewControls:"hover", floatingPreviewFullscreen:"preview", floatingPreviewInteractionResize:"off", floatingPreviewExitShortcut:"CTRL + ALT + Escape"}, positions: {}})
   property var queue: []
   property bool pendingRefresh: false
   property string lastError: ""
@@ -89,9 +89,11 @@ Item {
   property var previewInteractionStatus:({state:"idle"})
   property string previewInteractionError:""
   property int previewInteractionSerial:0
+  property int previewInteractionIntentEpoch:0
   property var previewGeometryStates:({})
   property var previewGeometryDrafts:({})
   property var previewGeometryWatchers:({})
+  property var pendingPreviewFoldIds:({})
   property int previewGeometrySerial:0
   property int runningGeometryEpoch:0
   property bool runningGeometryReplied:false
@@ -202,6 +204,16 @@ Item {
   }
   function resetPointerHold() { root.pressedPointerButtons={}; clickObserver.resetHeld() }
 
+  readonly property bool previewCornerResizeReady:previewShortcut.cornerReady
+  readonly property bool previewInteractiveResizeReady:previewShortcut.cornerReady && previewShortcut.status.interactiveResize===true
+  StashPreviewShortcut {
+    id:previewShortcut
+    stash:root
+    onGesture:function(serial,phase,x,y) {
+      root.surfaces.forEach(function(surface) {surface.handlePreviewShortcut(serial,phase,x,y)})
+    }
+  }
+
   function refresh() { refreshDelay.restart() }
   function previewCompatibilityRequest(key,id) {
     var requests=Object.assign({},previewCompatibilityRequests)
@@ -302,7 +314,7 @@ Item {
       }
   }
   function enqueue(args) {
-    if(previewInteractionRequest && ["restore","restore-last","restore-oldest","restore-all","minimize","activate","close","close-all","reset-settings","preview-aspect"].indexOf(args[0])>=0)
+    if(previewInteractionRequest && ["restore","restore-last","restore-oldest","restore-all","minimize","activate","close","close-all","reset-settings","preview-aspect","preview-fold","preview-unfold"].indexOf(args[0])>=0)
       endPreviewInteraction("window-action")
     var next = queue.slice()
     next.push(args)
@@ -311,6 +323,10 @@ Item {
   }
   function previewGeometryCommand(args) {return args && ["preview-aspect","preview-geometry"].indexOf(args[0])>=0}
   function previewGeometryState(id) {return previewGeometryStates[id] || null}
+  function previewResizeCadence() {
+    var rate=snapshot.settings ? snapshot.settings.floatingPreviewResizeRate : "realtime"
+    return rate==="release" ? 0 : rate==="balanced" ? 60 : 16
+  }
   function previewGeometryVisible(id) {return Object.keys(previewGeometryWatchers).some(function(key) {return root.previewGeometryWatchers[key]===id})}
   function watchPreviewGeometry(key,id) {
     var next=Object.assign({},previewGeometryWatchers)
@@ -319,7 +335,7 @@ Item {
     queue=queue.filter(function(args) {return args[0]!=="preview-geometry" || root.previewGeometryVisible(args[1])})
   }
   function verifyPreviewGeometry(id) {
-    if(previewGeometryStates[id] || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"})) return
+    if(previewGeometryStates[id] || pendingPreviewFoldIds[id] || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed" && record.previewFolded!==true})) return
     var states=Object.assign({},previewGeometryStates)
     states[id]={id:id,epoch:++previewGeometrySerial,ready:false,pending:true,nativeRequired:false,reason:"Checking preview proportions…",captureRevision:0}
     previewGeometryStates=states
@@ -339,7 +355,7 @@ Item {
   function prunePreviewGeometry() {
     var states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts),changed=false
     Object.keys(states).forEach(function(id) {
-      if(!root.snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"})) {
+      if(!root.snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed" && record.previewFolded!==true})) {
         delete states[id];delete drafts[id];changed=true
       }
     })
@@ -348,21 +364,32 @@ Item {
   function requestPreviewAspect(id,aspect,axis,settle) {
     aspect=Number(aspect)
     if(typeof id!=="string" || !Number.isFinite(aspect) || aspect<.02 || aspect>50 || ["width","height"].indexOf(axis)<0
-        || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed"}) || pendingCloseIds[id]) return false
+        || !snapshot.windows.some(function(record) {return record.id===id && record.phase==="stashed" && record.previewFolded!==true}) || pendingCloseIds[id] || pendingPreviewFoldIds[id]) return false
     if(previewInteractionRequest) endPreviewInteraction("preview-resize")
     var epoch=++previewGeometrySerial,states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts)
     states[id]={epoch:epoch,requestedAspect:aspect,axis:axis,ready:false,pending:true,nativeRequired:false,reason:"Updating preview proportions…",captureRevision:0}
     var args=["preview-aspect",id,String(aspect),"--axis",axis]
-    if(settle) args.push("--settle")
     drafts[id]=args
     queue=queue.filter(function(args) {return !root.previewGeometryCommand(args) || args[1]!==id})
     previewGeometryStates=states;previewGeometryDrafts=drafts
-    if(settle) flushPreviewGeometry();else previewGeometryFlush.restart()
+    if(settle) {
+      // Commit the final target immediately. Readiness polling stays async so
+      // a slow client cannot block another drag or unrelated window actions.
+      flushPreviewGeometry(id)
+      if(previewResizeCadence()===0 || Object.keys(previewGeometryDrafts).length===0) previewGeometryFlush.stop()
+      else if(!previewGeometryFlush.running) previewGeometryFlush.start()
+    } else if(previewResizeCadence()===0) previewGeometryFlush.stop()
+    else if(!previewGeometryFlush.running) previewGeometryFlush.start()
     return true
   }
-  function flushPreviewGeometry() {
-    var drafts=previewGeometryDrafts;previewGeometryDrafts={}
-    Object.keys(drafts).forEach(function(id) {if(root.previewGeometryStates[id]) root.enqueue(drafts[id])})
+  function flushPreviewGeometry(onlyId) {
+    var drafts=previewGeometryDrafts,remaining={},ready=[]
+    Object.keys(drafts).forEach(function(id) {
+      if(onlyId && id!==onlyId) remaining[id]=drafts[id]
+      else if(root.previewGeometryStates[id]) ready.push(drafts[id])
+    })
+    previewGeometryDrafts=remaining
+    ready.forEach(function(args) {root.enqueue(args)})
   }
   function pollPreviewGeometry() {
     Object.keys(previewGeometryStates).forEach(function(id) {
@@ -388,15 +415,16 @@ Item {
     }
     var states=Object.assign({},previewGeometryStates);states[id]=next;previewGeometryStates=states
   }
-  Timer {id:previewGeometryFlush;interval:60;onTriggered:root.flushPreviewGeometry()}
+  Timer {id:previewGeometryFlush;interval:Math.max(1,root.previewResizeCadence())
+    onTriggered:if(root.previewResizeCadence()>0) root.flushPreviewGeometry()}
   Timer {interval:150;repeat:true;running:Object.keys(root.previewGeometryStates).some(function(id) {return root.previewGeometryStates[id].pending && root.previewGeometryVisible(id)})
     onTriggered:root.pollPreviewGeometry()}
   function previewInteractionMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionRequest,id,monitor,key)}
   function previewInteractionPendingMatches(id,monitor,key) {return PreviewInteraction.matches(previewInteractionPendingRequest,id,monitor,key)}
   function validInteractionTarget(request) {
     return !!request && lifecycleReady && !bridgeReloadBusy && PreviewInteraction.enabled(snapshot.settings) && captureAllowedFor(request.monitor)
-      && !pendingCloseIds[request.id] && (!previewGeometryStates[request.id] || previewGeometryStates[request.id].ready)
-      && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed"})
+      && !pendingCloseIds[request.id] && !pendingPreviewFoldIds[request.id] && (!previewGeometryStates[request.id] || previewGeometryStates[request.id].ready)
+      && snapshot.windows.some(function(window) {return window.id===request.id && window.phase==="stashed" && window.previewFolded!==true})
       && snapshot.monitors.some(function(monitor) {return monitor.name===request.monitor})
   }
   function activatePreviewInteraction(request) {
@@ -408,8 +436,9 @@ Item {
     return true
   }
   function beginPreviewInteraction(record,monitor,key,rect,excludeRects) {
-    if(!record || bridgeReloadBusy || pendingCloseIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
-        || !snapshot.windows.some(function(window) {return window.id===record.id && window.phase==="stashed"})) return false
+    previewInteractionIntentEpoch++
+    if(!record || bridgeReloadBusy || pendingCloseIds[record.id] || pendingPreviewFoldIds[record.id] || !lifecycleReady || !captureAllowedFor(monitor)
+        || !snapshot.windows.some(function(window) {return window.id===record.id && window.phase==="stashed" && window.previewFolded!==true})) return false
     var request=PreviewInteraction.request(previewInteractionSerial+1,record.id,monitor,key,rect,excludeRects,snapshot.settings)
     if(!request) return false
     closeContext();closeDialog()
@@ -433,6 +462,7 @@ Item {
     if(JSON.stringify(request)!==JSON.stringify(previewInteractionRequest)) previewInteractionRequest=request
   }
   function endPreviewInteraction(reason) {
+    if(reason!=="preview-resize") previewInteractionIntentEpoch++
     if(reason!=="replaced") previewInteractionPendingRequest=null
     if(!previewInteractionRequest) return
     if(previewInteractionStopping) return
@@ -440,6 +470,11 @@ Item {
     previewInteractionStatus={state:"stopping",id:previewInteractionRequest.id,serial:previewInteractionRequest.serial,reason:previewInteractionStopReason}
     if(previewInteractionWorker) previewInteractionWorker.stop()
     interactionStopDeadline.restart()
+  }
+  function beginPreviewResize() {
+    previewInteractionIntentEpoch++
+    previewInteractionPendingRequest=null
+    return previewInteractionIntentEpoch
   }
   function finishPreviewInteraction(value) {
     interactionStopDeadline.stop();interactionKillDeadline.stop();interactionExpiryDeadline.stop()
@@ -767,6 +802,73 @@ Item {
     enqueue(["close"].concat(ids,["--monitor",name,"--workspace",String(workspace===undefined ? invocationWorkspace(name) : workspace)]))
   }
   function closeGroup(group,name) { if (group) closeWindows(group.windows,name) }
+  function previewFoldIds(windows,folded) {
+    return (windows || []).map(function(window) {return typeof window==="string" ? window : window.id})
+      .filter(function(id,index,all) {
+        return typeof id==="string" && all.indexOf(id)===index && !root.pendingCloseIds[id] && !root.pendingPreviewFoldIds[id]
+          && root.snapshot.windows.some(function(window) {return window.id===id && window.phase==="stashed" && (window.previewFolded===true)!==folded})
+      }).slice(0,256)
+  }
+  function foldPreviewWindows(windows,name,origin,key) {
+    if(stopping || !lifecycleReady || bridgeReloadBusy || snapshot.settings.presentation!=="previews" || !screenMonitor(name)) return false
+    var ids=previewFoldIds(windows,true)
+    if(!ids.length) return false
+    var surface=surfaces.find(function(item) {return item.screen.name===name})
+    if(surface && key && origin && typeof surface.preparePreviewFold==="function") surface.preparePreviewFold(key,origin)
+    var pending=Object.assign({},pendingPreviewFoldIds)
+    ids.forEach(function(id) {pending[id]=true})
+    pendingPreviewFoldIds=pending
+    // No queued geometry probe may restart a rendering lease after folding.
+    var states=Object.assign({},previewGeometryStates),drafts=Object.assign({},previewGeometryDrafts)
+    ids.forEach(function(id) {delete states[id];delete drafts[id]})
+    previewGeometryStates=states;previewGeometryDrafts=drafts
+    queue=queue.filter(function(args) {return !root.previewGeometryCommand(args) || ids.indexOf(args[1])<0})
+    enqueue(["preview-fold"].concat(ids))
+    return true
+  }
+  function unfoldPreviewWindows(windows,name) {
+    if(stopping || !lifecycleReady || bridgeReloadBusy || snapshot.settings.presentation!=="previews" || !screenMonitor(name)) return false
+    var ids=previewFoldIds(windows,false)
+    if(!ids.length) return false
+    var pending=Object.assign({},pendingPreviewFoldIds)
+    ids.forEach(function(id) {pending[id]=true})
+    pendingPreviewFoldIds=pending
+    closeContext();closeDialog()
+    enqueue(["preview-unfold"].concat(ids))
+    return true
+  }
+  function minimizeAt(x,y) {
+    if(stopping || !lifecycleReady || bridgeReloadBusy || contextOpen || dialogKind!==""
+        || !Number.isFinite(x) || !Number.isFinite(y)) return {ok:true,action:"noop"}
+    if(snapshot.settings.presentation==="previews") {
+      for(var index=0;index<surfaces.length;index++) {
+        var surface=surfaces[index],target=surface.foldPreviewAt(x,y)
+        if(!target || !target.handled) continue
+        var accepted=target.ids && target.ids.length && foldPreviewWindows(target.ids,target.screenName,target.origin,target.key)
+        return {ok:true,action:accepted ? "preview-fold-queued" : "noop"}
+      }
+    }
+    enqueue(["minimize"])
+    return {ok:true,action:"queued"}
+  }
+  function restoreStage(oldest) {
+    var args=[oldest ? "restore-oldest" : "restore-last"]
+    if(snapshot.settings.presentation==="previews") args.push("--stage")
+    enqueue(args)
+  }
+  function previewFoldResult(result) {
+    if(!result || result.ok===false || ["preview-fold","preview-unfold"].indexOf(result.action)<0
+        || typeof result.previewFolded!=="boolean" || !Array.isArray(result.ids)) return
+    var ids=result.ids.slice(0,256),next=Object.assign({},snapshot)
+    next.windows=snapshot.windows.map(function(window) {
+      return ids.indexOf(window.id)>=0 ? Object.assign({},window,{previewFolded:result.previewFolded}) : window
+    })
+    snapshot=next
+  }
+  function unfoldContextPreviews() {
+    var windows=contextWindows(),name=contextScreen
+    unfoldPreviewWindows(windows,name)
+  }
   function closeContextWindows() {
     var windows=contextWindows(),name=contextScreen,workspace=contextWorkspace
     closeContext(); closeDialog(); closeWindows(windows,name,workspace)
@@ -820,6 +922,11 @@ Item {
       }
     }
     if (["shortcut","interaction-exit-shortcut"].indexOf(runningArgs[0])>=0) pendingRefresh=true
+    if(["preview-fold","preview-unfold"].indexOf(runningArgs[0])>=0) {
+      var foldPending=Object.assign({},pendingPreviewFoldIds)
+      runningArgs.slice(1).forEach(function(id) {delete foldPending[id]})
+      pendingPreviewFoldIds=foldPending;pendingRefresh=true
+    }
     if (runningArgs[0]==="reset-settings") {
       if (resetting && !lastError) lastError="Could not confirm the settings reset"
       resetting=false; pendingRefresh=true
@@ -921,8 +1028,9 @@ Item {
     options.previewPlacement=["auto","above","below","left","right"]; options.previewTitles=["shown","hidden"]
     options.floatingPreviewSizing=["free","preset"]; options.floatingPreviewScale=options.sizePreset
     options.floatingPreviewUpdate=["still","hover","live"]; options.floatingPreviewTitles=["shown","hidden"]
+    options.floatingPreviewResizeRate=["realtime","balanced","release"]
     options.floatingPreviewFrame=["shown","hidden"]; options.floatingPreviewLock=["locked","unlocked"]
-    options.floatingPreviewInteraction=["off","on"]; options.floatingPreviewActivation=["explicit","click"]
+    options.floatingPreviewInteractionResize=["off","on"]; options.floatingPreviewInteraction=["off","on"]; options.floatingPreviewActivation=["explicit","click"]
     options.floatingPreviewKeyboard=["mouse","click"]; options.floatingPreviewInteractionFps=["30","60"]
     options.floatingPreviewControls=["hover","always"]; options.floatingPreviewFullscreen=["preview","desktop"]
     var numericLimits={dockCornerRadius:64,dockOpacity:100,iconOpacity:100,previewDelay:1500,previewHideDelay:1000}
@@ -957,7 +1065,7 @@ Item {
     return (worker.running && targets(runningArgs)) || queue.some(targets)
   }
   function recordPosition(monitor, key, x, y) {
-    var owner=key.indexOf("dock:static:")===0 ? Model.staticDockMonitorKey(monitor) : Model.monitorKey(monitor)
+    var owner=key.indexOf("dock:static:")===0 || key.indexOf("folded-preview:")===0 ? Model.staticDockMonitorKey(monitor) : Model.monitorKey(monitor)
     enqueue(["position", owner, key, String(Math.round(x)), String(Math.round(y))])
   }
   function recordPreviewPosition(monitor,key,x,y,width,aspect) {
@@ -1004,6 +1112,7 @@ Item {
           var result = JSON.parse(text)
           if(root.previewGeometryCommand(root.runningArgs)) {root.previewGeometryResult(result,root.runningArgs,root.runningGeometryEpoch);return}
           if (result.windows) { root.snapshot = result; Qt.callLater(root.applyDeferredSettings) }
+          root.previewFoldResult(result)
           if (result.action==="close" && result.restored>0) { root.closeContext(); root.closeDialog() }
           if (result.ok === false) {
             var message=result.error || "Window action failed"
@@ -1092,6 +1201,7 @@ Item {
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
+        previewShortcut:{status:previewShortcut.status,error:previewShortcut.error},
         bridgeSupport:{status:root.bridgeSupportStatus,error:root.bridgeSupportError,busy:root.bridgeReloadBusy,stage:root.bridgeReloadStage,
           deferred:root.bridgeUpdateDeferred,checking:bridgeProbe.running},
         previewInteraction:{request:root.previewInteractionRequest,pendingRequest:root.previewInteractionPendingRequest,stopping:root.previewInteractionStopping,
@@ -1111,9 +1221,10 @@ Item {
     function dismiss(): void { root.endPreviewInteraction("dismissed"); root.closeContext(); root.closeDialog(); root.surfaces.forEach(function(s) { s.dismissFloatingPreviews() }) }
     function refresh(): void { root.refresh() }
     function configure(key: string, value: string): void { root.setting(key, value) }
-    function minimize(): void { root.enqueue(["minimize"]) }
-    function restoreLast(): void { root.enqueue(["restore-last"]) }
-    function restoreOldest(): void { root.enqueue(["restore-oldest"]) }
+    function minimize(): void { Quickshell.execDetached(root.controllerCommand.concat(["minimize","--shortcut"])) }
+    function minimizeAt(x: string,y: string): string { return JSON.stringify(root.minimizeAt(Number(x),Number(y))) }
+    function restoreLast(): void { root.restoreStage(false) }
+    function restoreOldest(): void { root.restoreStage(true) }
     function checkPreviewSupport(): void {root.checkBridgeSupport()}
     function reloadPreviewSupport(): void {root.reloadPreviewSupport()}
     function deferPreviewSupport(): void {root.deferBridgeUpdate()}

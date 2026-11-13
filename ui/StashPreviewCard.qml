@@ -25,7 +25,20 @@ Item {
   property bool held:false
   property bool moving:false
   property bool resizing:false
+  property bool resizeFreeAspect:false
+  property string resizeGestureCorner:""
+  property var resizeResume:null
+  property var resizeBufferedDelta:null
+  property bool resizePhysicalReleased:false
+  readonly property bool resizeResumePending:!!resizeResume
+  readonly property bool resizeDuringInteraction:config.floatingPreviewInteractionResize==="on"
+  readonly property string resizePolicy:JSON.stringify(config)
+  property bool sourceResizeActive:false
   property bool expandedTile:false
+  property bool folding:false
+  property bool unfolding:false
+  property real stageIconSize:48
+  property var stageOrigin:null
   property bool keyboardSelected:false
   property real maximumHeight:100000
   property real presence:0
@@ -71,11 +84,14 @@ Item {
   readonly property bool interactionFullyVisible:visibleForInteraction(interactionGeometryRevision)
   readonly property bool nativeHovered:interactionRequested && stash.pointerKnown && Geometry.contains(nativeImageRect(),stash.pointerPosition.x,stash.pointerPosition.y)
   readonly property bool hovered:hover.hovered || pointer.containsMouse || nativeHovered
-  readonly property bool live:interactionBusy || (config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
-  readonly property bool canMove:interactive && movable && config.floatingPreviewLock!=="locked" && !retiring && !interactionBusy
-  readonly property bool canResize:interactive && resizable && config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked" && !retiring && !interactionBusy
+  readonly property bool live:interactionBusy || resizeResumePending || (sourceResizeActive && config.floatingPreviewResizeRate!=="release")
+    || (config.floatingPreviewUpdate || "hover")==="live" || ((config.floatingPreviewUpdate || "hover")==="hover" && hovered)
+  readonly property bool canMove:interactive && movable && config.floatingPreviewLock!=="locked" && !retiring && !interactionBusy && !resizeResumePending
+  readonly property bool resizeAvailable:interactive && resizable && config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked" && !retiring
+  readonly property bool canResize:resizeAvailable && (!interactionBusy || (resizeDuringInteraction
+    && ((interactionActive && stash.previewInteractiveResizeReady===true) || (resizeResumePending && interactionOwned))))
   readonly property Region inputRegion:Region { item:card; onChanged:card.inputChanged() }
-  readonly property bool controlsOutside:interactionBusy && !!interactionBar.placement
+  readonly property bool controlsOutside:(interactionBusy || resizeResumePending) && !!interactionBar.placement
   readonly property Region managementRegion:Region { item:interactionBar; onChanged:card.inputChanged() }
   signal inputChanged()
   signal movePressed()
@@ -85,6 +101,7 @@ Item {
   signal resizePressed(string corner)
   signal resizeRequested(real dx,real dy,string corner)
   signal resizeReleased()
+  signal resizeCanceled()
   signal activated()
   signal contextRequested(real x,real y)
   signal closeRequested()
@@ -96,7 +113,14 @@ Item {
   height:dimensions.height
   enabled:interactive && !retiring
   opacity:presence*feedback.visualOpacity
-  scale:Motion.full(animations) ? .97+.03*presence : 1
+  readonly property real stageMinimumScale:Math.min(1,Math.max(1,stageIconSize)/Math.max(1,width,height))
+  scale:Motion.full(animations) ? (folding || unfolding ? stageMinimumScale+(1-stageMinimumScale)*presence : .97+.03*presence) : 1
+  transform:Translate {
+    x:card.unfolding && card.stageOrigin && Motion.full(card.animations)
+      ? (card.stageOrigin.x+card.stageOrigin.width/2-card.x-card.width/2)*(1-card.presence) : 0
+    y:card.unfolding && card.stageOrigin && Motion.full(card.animations)
+      ? (card.stageOrigin.y+card.stageOrigin.height/2-card.y-card.height/2)*(1-card.presence) : 0
+  }
   z:held || resizing ? 20 : hovered ? 10 : 0
   onXChanged:invalidateInteractionGeometry()
   onYChanged:invalidateInteractionGeometry()
@@ -119,8 +143,10 @@ Item {
     if(resizing || held || moving) cancelInteraction()
     appliedGeometryEpoch=0;awaitingGeometryCapture=false;expectedSourceAspect=0;syncGeometryVisibility();sourceGeometryUpdate.restart()
   }
-  onSourceGeometryStateChanged:sourceGeometryUpdate.restart()
-  onDisplayRecordChanged: {syncGeometryVisibility();sourceGeometryUpdate.restart()}
+  onSourceGeometryStateChanged: {sourceGeometryUpdate.restart();resizeTransactionDelay.restart()}
+  onGeometryReadyChanged:resizeTransactionDelay.restart()
+  onResizePolicyChanged:if(resizeResumePending) cancelResizeResume()
+  onDisplayRecordChanged: {if(displayRecord && displayRecord.previewFolded===true) endNativeInteraction("preview-folded");syncGeometryVisibility();sourceGeometryUpdate.restart()}
   onGroupChanged:if(interactionEnabled && claimedInteractionKey && (!group || group.windows.length!==1)) endNativeInteraction("preview-group-changed")
   onKeyChanged:if(claimedInteractionKey && claimedInteractionKey!==key) endNativeInteraction("preview-replaced")
   onInteractionRequestedChanged: {geometryReleased();interactionGeometry.restart()}
@@ -134,17 +160,91 @@ Item {
             && typeof thumbnail.refreshFrame==="function") thumbnail.refreshFrame()
       })
     }
-    geometryReleased();interactionGeometry.restart()
+    geometryReleased();interactionGeometry.restart();resizeTransactionDelay.restart()
   }
   onInteractionClipRectChanged:invalidateInteractionGeometry()
-  onCanMoveChanged:if (!canMove) cancelInteraction()
-  onCanResizeChanged:if (!canResize && resizing) cancelInteraction()
+  onCanMoveChanged:if (!canMove && (held || moving)) cancelInteraction()
+  onCanResizeChanged: {interactionGeometry.restart();if (!canResize && resizing) cancelInteraction()}
   Behavior on presence { NumberAnimation { duration:card.retiring ? Motion.exit(card.animations,card.animationSpeed) : Motion.enter(card.animations,card.animationSpeed);easing.type:Easing.OutCubic } }
   function cancelInteraction() {
     pointer.suppressed=true
     if(held || moving) moveCanceled()
-    if(resizing) resizeReleased()
+    cancelResizeResume()
+    endResizeGesture()
+  }
+  function interactionIntentEpoch() {return Number(stash.previewInteractionIntentEpoch) || 0}
+  function resizeResumeValid() {
+    if(!resizeResume || !interactionEnabled || !lifecycleAvailable || !visible || !captureAllowed || !interactive || retiring
+        || !resizeAvailable || !resizeDuringInteraction || !record || record.previewFolded===true || group.windows.length!==1
+        || record.id!==resizeResume.id || shortcutIdentity()!==resizeResume.identity || key!==resizeResume.key
+        || resizePolicy!==resizeResume.policy || interactionIntentEpoch()!==resizeResume.epoch
+        || stash.previewInteractionError || stash.bridgeReloadBusy || stash.stopping || stash.previewInteractiveResizeReady!==true
+        || stash.previewInteractionPendingRequest) return false
+    var request=stash.previewInteractionRequest
+    return !request || (request.id===resizeResume.id && request.monitor===screenName && request.viewKey===resizeResume.key)
+  }
+  function cancelResizeResume() {
+    if(!resizeResume) return
+    var waiting=interactionBusy || stash.previewInteractionStopping
+    var aborted=waiting && resizing
+    // Disable the gesture before dropping its exception to canResize. That
+    // binding can synchronously run cancellation while input is still owned.
+    if(aborted) {resizing=false;resizeFreeAspect=false;resizeGestureCorner=""}
+    resizeResume=null;resizeResumeDeadline.stop();resizeBufferedDelta=null;resizePhysicalReleased=false
+    if(aborted) resizeCanceled()
+  }
+  function flushResizeTransaction() {
+    if(!resizeResume) return
+    if(!resizeResumeValid() || (sourceGeometryState && !sourceGeometryState.ready
+        && sourceGeometryState.pending===false)) {cancelResizeResume();return}
+    if(interactionBusy || stash.previewInteractionStopping) return
+    if(resizing && resizeBufferedDelta) {
+      var delta=resizeBufferedDelta;resizeBufferedDelta=null
+      resizeRequested(delta.dx,delta.dy,resizeGestureCorner)
+    }
+    if(resizing && resizePhysicalReleased) finishResizeGesture()
+    if(resizing || !resizePhysicalReleased || !geometryReady) return
+    // Clearing intent before begin prevents the new owner's epoch from
+    // invalidating its own completed transaction.
+    resizeResume=null;resizeResumeDeadline.stop();resizePhysicalReleased=false
+    beginNativeInteraction()
+  }
+  function beginResizeGesture(corner,freeAspect) {
+    if(!canResize || resizing || resizeResumePending || held || moving || !visible || !captureAllowed
+        || ["left","right","top","bottom","top-left","top-right","bottom-left","bottom-right"].indexOf(corner)<0) return false
+    var resume=interactionActive && interactionOwned
+    var epoch=typeof stash.beginPreviewResize==="function" ? stash.beginPreviewResize() : interactionIntentEpoch()
+    resizeBufferedDelta=null;resizePhysicalReleased=false
+    if(resume) resizeResume={id:record.id,identity:shortcutIdentity(),key:key,policy:resizePolicy,epoch:epoch}
+    resizeFreeAspect=!!freeAspect && corner.indexOf("-")>=0
+    resizeGestureCorner=corner;resizing=true;resizePressed(corner)
+    if(resume) endNativeInteraction("preview-resize")
+    return resizing
+  }
+  function updateResizeGesture(dx,dy,corner) {
+    if(!resizing || !canResize || corner!==resizeGestureCorner || !Number.isFinite(dx) || !Number.isFinite(dy)) return false
+    if(resizeResumePending) {
+      resizeBufferedDelta={dx:dx,dy:dy}
+      flushResizeTransaction()
+    } else resizeRequested(dx,dy,corner)
+    return true
+  }
+  function endResizeGesture() {
+    var active=resizing
+    if(resizeResumePending) {
+      resizePhysicalReleased=true;resizeResumeDeadline.restart()
+      flushResizeTransaction()
+      if(resizeResumePending || !resizing) return active
+    }
+    finishResizeGesture()
+    return active
+  }
+  function finishResizeGesture() {
+    var active=resizing
     resizing=false
+    if(active) resizeReleased()
+    resizeFreeAspect=false;resizeGestureCorner=""
+    resizeTransactionDelay.restart()
   }
   function rectOf(item) {var p=item.mapToItem(coordinateRoot,0,0);return {x:p.x,y:p.y,width:item.width,height:item.height}}
   function invalidateInteractionGeometry() {
@@ -180,10 +280,58 @@ Item {
       width:interactionClipRect.width,height:interactionClipRect.height} : null
     var excluded=Interaction.exclusions(nativeImageRect(),overlays,clip)
     if(interactionBar.visible && controlsOutside) excluded.push(globalRectOf(interactionBar))
+    // Reserve management targets before activating native input. Full handle
+    // bounds also protect presses in a captured image's letterbox/inset.
+    if(resizeAvailable && resizeDuringInteraction) {
+      for(var i=0;i<resizeRepeater.count;i++) {
+        var corner=resizeRepeater.itemAt(i)
+        if(corner && corner.width>0 && corner.height>0) excluded.push(globalRectOf(corner))
+      }
+      for(var j=0;j<edgeRepeater.count;j++) {
+        var edge=edgeRepeater.itemAt(j)
+        if(edge && edge.width>0 && edge.height>0) excluded.push(globalRectOf(edge))
+      }
+    }
     return excluded
   }
+  function interactionReady(allowGroup) {
+    return !interactionBusy && interactionEnabled && lifecycleAvailable && geometryReady && !!record
+      && record.previewFolded!==true && !(stash.pendingPreviewFoldIds && stash.pendingPreviewFoldIds[record.id])
+      && (!unfolding || presence>=.999)
+      && (allowGroup || group.windows.length===1) && interactive && visible && captureAllowed && !retiring
+      && !held && !moving && !resizing && !resizeResumePending && visibleForInteraction(interactionGeometryRevision) && thumbnail.hasContent && thumbnail.eligible
+  }
+  function shortcutHit(x,y) {
+    if(!Geometry.contains(nativeImageRect(),x,y)) return false
+    return !nativeExcludeRects().some(function(rect) {return Geometry.contains(rect,x,y)})
+  }
+  function shortcutSurfaceHit(x,y) {
+    var bounds=globalRectOf(card)
+    if(interactionClipRect) {
+      var monitor=typeof stash.screenMonitor==="function" ? stash.screenMonitor(screenName) : null
+      if(!monitor) return false
+      bounds=Interaction.intersection(bounds,{x:monitor.x+interactionClipRect.x,y:monitor.y+interactionClipRect.y,
+        width:interactionClipRect.width,height:interactionClipRect.height})
+    }
+    return Geometry.contains(bounds,x,y)
+  }
+  function shortcutControlHit(x,y) {return interactionBar.visible && Geometry.contains(globalRectOf(interactionBar),x,y)}
+  function shortcutResizeCorner(x,y) {
+    if(!canResize || !visible || !captureAllowed || held || moving || resizing || (unfolding && presence<.999)) return ""
+    if(shortcutControlHit(x,y) || (closeButton.visible && Geometry.contains(globalRectOf(closeButton),x,y))) return ""
+    for(var i=0;i<resizeRepeater.count;i++) {
+      var handle=resizeRepeater.itemAt(i)
+      if(handle && handle.enabled && Geometry.contains(globalRectOf(handle),x,y)) return handle.corner
+    }
+    return ""
+  }
+  function shortcutIdentity() {
+    return JSON.stringify({key:key,tile:expandedTile,windows:group.windows.map(function(window) {
+      return [window.id,window.address,window.pid,window.stableId,window.tag,window.phase]
+    })})
+  }
   function beginNativeInteraction() {
-    if(interactionBusy || !interactionEnabled || !lifecycleAvailable || !geometryReady || !record || group.windows.length!==1 || !interactive || !visibleForInteraction(interactionGeometryRevision) || !thumbnail.hasContent || !thumbnail.eligible) return false
+    if(!interactionReady(false)) return false
     claimedInteractionKey=key
     leasedRecord=record
     var accepted=stash.beginPreviewInteraction(record,screenName,key,nativeImageRect(),nativeExcludeRects())
@@ -197,15 +345,17 @@ Item {
   }
   function endNativeInteraction(reason) {
     if(typeof stash.endPreviewInteraction!=="function") return
+    var resuming=resizeResumePending
+    if(reason!=="preview-resize") cancelResizeResume()
     var request=stash.previewInteractionRequest
     var pending=stash.previewInteractionPendingRequest
-    if((request && request.monitor===screenName && request.viewKey===(claimedInteractionKey || key))
+    if(resuming || (request && request.monitor===screenName && request.viewKey===(claimedInteractionKey || key))
         || (pending && pending.monitor===screenName && pending.viewKey===(claimedInteractionKey || key))) stash.endPreviewInteraction(reason)
     if(!interactionBusy) claimedInteractionKey=""
   }
   function restoreCard() {endNativeInteraction("restore");activated()}
   function activatePrimary() {
-    if(interactionBusy) return
+    if(interactionBusy || resizeResumePending) return
     if(interactionEnabled && group.windows.length===1 && config.floatingPreviewActivation==="click") beginNativeInteraction()
     else activated()
   }
@@ -230,7 +380,7 @@ Item {
   }
   function syncSourceGeometry() {
     var state=sourceGeometryState
-    if(!state || !state.ready || !state.captureRevision || state.captureRevision===appliedGeometryEpoch || resizing || !visible || !captureAllowed || retiring) return
+    if(!state || !state.ready || !state.captureRevision || state.captureRevision===appliedGeometryEpoch || resizing || !visible || !captureAllowed || retiring || (displayRecord && displayRecord.previewFolded===true)) return
     appliedGeometryEpoch=state.captureRevision;expectedSourceAspect=Number(state.aspect);awaitingGeometryCapture=true
     sourceGeometryAccepted(state)
     if(typeof thumbnail.restartCapture==="function") thumbnail.restartCapture()
@@ -243,8 +393,9 @@ Item {
   function capturedSourceSize() {return thumbnail.sourceSize}
   function syncGeometryVisibility() {
     if(typeof stash.watchPreviewGeometry==="function") stash.watchPreviewGeometry(geometryWatchKey,
-      visible && captureAllowed && !retiring && displayRecord ? displayRecord.id : "")
+      visible && captureAllowed && !retiring && displayRecord && displayRecord.previewFolded!==true ? displayRecord.id : "")
     if(expandedTile && visible && captureAllowed && !retiring && displayRecord && displayRecord.previewResized
+        && displayRecord.previewFolded!==true
         && !sourceGeometryState && typeof stash.verifyPreviewGeometry==="function") stash.verifyPreviewGeometry(displayRecord.id)
   }
   function resetProportions() {if(canResize) proportionsResetRequested()}
@@ -260,6 +411,7 @@ Item {
       groupCount:group ? group.windows.length : 0,visible:visible,presence:presence,image:thumbnail.details(),
       locked:config.floatingPreviewLock==="locked",resizable:canResize,closeRect:rectOf(closeButton),closeVisible:closeButton.visible,
       interaction:{enabled:interactionEnabled,requested:interactionRequested,queued:interactionQueued,busy:interactionBusy,active:interactionActive,fullyVisible:interactionFullyVisible,
+        resizeResumePending:resizeResumePending,resizeWaitingRelease:resizeResumePending && resizePhysicalReleased,
         interactEnabled:interactButton.enabled,
         imageRect:nativeImageRect(),excludeRects:nativeExcludeRects(),controlsVisible:interactionBar.visible,
         controlsOutside:controlsOutside,controlsRect:rectOf(interactionBar),
@@ -270,7 +422,7 @@ Item {
     id:feedback
     animations:card.animations;animationSpeed:card.animationSpeed
     idleOpacity:(card.config.iconOpacity===undefined ? 100 : card.config.iconOpacity)/100
-    hot:card.hovered || card.held || card.resizing || card.interactionBusy
+    hot:card.hovered || card.held || card.resizing || card.interactionBusy || card.resizeResumePending
     down:card.held || card.resizing
   }
   Ui.BorderSurface {
@@ -288,7 +440,7 @@ Item {
     height:Math.max(1,card.height-card.dimensions.header-card.dimensions.inset*2)
     record:card.displayRecord;stash:card.stash
     mode:card.live ? "live" : "still"
-    active:card.captureAllowed && card.visible && !card.retiring
+    active:card.captureAllowed && card.visible && !card.retiring && !!card.displayRecord && card.displayRecord.previewFolded!==true
     animations:card.animations;animationSpeed:card.animationSpeed
     onSourceSizeChanged: {sourceObservation.restart();interactionGeometry.restart();geometryFrameCheck.restart()}
     onHasContentChanged: {sourceObservation.restart();interactionGeometry.restart();geometryFrameCheck.restart()}
@@ -297,6 +449,27 @@ Item {
   Timer {id:interactionGeometry;interval:0;onTriggered:card.syncNativeInteraction()}
   Timer {id:sourceGeometryUpdate;interval:0;onTriggered:card.syncSourceGeometry()}
   Timer {id:geometryFrameCheck;interval:0;onTriggered:card.checkGeometryFrame()}
+  Timer {id:resizeTransactionDelay;interval:0;onTriggered:card.flushResizeTransaction()}
+  Timer {id:resizeResumeDeadline;interval:15000;onTriggered:card.cancelResizeResume()}
+  Connections {
+    target:card.stash
+    ignoreUnknownSignals:true
+    function onPreviewInteractionIntentEpochChanged() {resizeTransactionDelay.restart()}
+    function onPreviewInteractionRequestChanged() {resizeTransactionDelay.restart()}
+    function onPreviewInteractionPendingRequestChanged() {resizeTransactionDelay.restart()}
+    function onPreviewInteractionStoppingChanged() {resizeTransactionDelay.restart()}
+    function onPreviewInteractionErrorChanged() {resizeTransactionDelay.restart()}
+    function onPreviewInteractiveResizeReadyChanged() {resizeTransactionDelay.restart();interactionGeometry.restart()}
+    function onLifecycleReadyChanged() {resizeTransactionDelay.restart()}
+    function onBridgeReloadBusyChanged() {resizeTransactionDelay.restart()}
+    function onStoppingChanged() {resizeTransactionDelay.restart()}
+    function onPointerClicked(x,y,button) {
+      if(!card.resizeResumePending || !card.resizePhysicalReleased) return
+      if(Geometry.contains(card.globalRectOf(card),x,y)
+          || (interactionBar.visible && Geometry.contains(card.globalRectOf(interactionBar),x,y))) return
+      card.cancelResizeResume()
+    }
+  }
   Rectangle {
     x:card.dimensions.inset;y:card.dimensions.inset
     width:Math.max(0,card.width-card.dimensions.inset*2);height:card.dimensions.header
@@ -354,13 +527,13 @@ Item {
     onCanceled: {suppressed=true;card.moveCanceled()}
     onClicked:function(mouse) {
       if(suppressed || dragging || card.resizing) return
-      if(card.interactionBusy) return
+      if(card.interactionBusy || card.resizeResumePending) return
       if(mouse.button===Qt.MiddleButton) card.closeRequested()
       else if(mouse.button===Qt.RightButton) {var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.contextRequested(p.x,p.y)}
       else card.activatePrimary()
     }
     onWheel:function(event) {
-      if(card.interactionBusy) {event.accepted=true;return}
+      if(card.interactionBusy || card.resizeResumePending) {event.accepted=true;return}
       var delta=event.pixelDelta.y || event.pixelDelta.x || event.angleDelta.y || event.angleDelta.x
       card.scrolled(delta);event.accepted=true
     }
@@ -379,19 +552,19 @@ Item {
   }
   Rectangle {
     anchors.fill:parent
-    visible:card.resizing || card.keyboardSelected || card.interactionBusy
+    visible:card.resizing || card.keyboardSelected || card.interactionBusy || card.resizeResumePending
     color:"transparent";border.width:1;border.color:Commons.Color.accent
   }
   Ui.BorderSurface {
     id:interactionBar
     readonly property real buttonSize:Math.max(10,Math.min(24,card.width/3-2,card.height-6))
-    readonly property var placement:card.interactionBusy ? Interaction.controlsPlacement(card.visualRectOf(card),card.managementArea,width,height) : null
+    readonly property var placement:card.interactionBusy || card.resizeResumePending ? Interaction.controlsPlacement(card.visualRectOf(card),card.managementArea,width,height) : null
     parent:card.controlsOutside ? card.coordinateRoot : card
     visible:card.visible && (card.interactionEnabled || card.interactionBusy) && !!card.displayRecord
       && (card.group.windows.length===1 || card.interactionBusy)
-      && (card.hovered || card.config.floatingPreviewControls==="always" || card.interactionBusy)
-    x:card.controlsOutside ? placement.x : Math.max(0,card.width-width-3)
-    y:card.controlsOutside ? placement.y : Math.min(3,Math.max(0,card.height-height))
+      && (card.hovered || card.config.floatingPreviewControls==="always" || card.interactionBusy || card.resizeResumePending)
+    x:card.controlsOutside && placement ? placement.x : Math.max(0,card.width-width-3)
+    y:card.controlsOutside && placement ? placement.y : Math.min(3,Math.max(0,card.height-height))
     width:buttonSize*3+4;height:buttonSize+4
     radius:Math.min(Style.cornerRadius,height/2)
     color:card.popupColors.background
@@ -409,18 +582,18 @@ Item {
       objectName:"floating-preview-interact"
       property bool activeAtPress:false
       x:2;y:2;size:interactionBar.buttonSize
-      iconText:card.interactionBusy ? "■" : "▶"
-      tooltipText:card.interactionBusy ? "Stop interacting" : !card.lifecycleAvailable ? "Window Stash support is restarting…"
+      iconText:card.interactionBusy || card.resizeResumePending ? "■" : "▶"
+      tooltipText:card.interactionBusy || card.resizeResumePending ? "Stop interacting" : !card.lifecycleAvailable ? "Window Stash support is restarting…"
         : !card.geometryReady ? card.geometryReason
         : !card.interactionFullyVisible ? "Scroll this preview fully into view to interact"
-        : card.stash.previewInteractionError ? "Interact: "+card.stash.previewInteractionError : "Interact with this window"
-      foreground:card.interactionBusy ? Commons.Color.accent : card.popupColors.text
+        : card.stash.previewInteractionError ? "Interact: "+card.stash.previewInteractionError : "Interact with this window (Super+left click)"
+      foreground:card.interactionBusy || card.resizeResumePending ? Commons.Color.accent : card.popupColors.text
       animations:card.animations;animationSpeed:card.animationSpeed
-      enabled:card.interactive && (card.interactionBusy || (card.lifecycleAvailable && card.geometryReady && card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))
-      onPressed:activeAtPress=card.interactionBusy
+      enabled:card.interactive && (card.interactionBusy || card.resizeResumePending || (card.lifecycleAvailable && card.geometryReady && card.interactionFullyVisible && thumbnail.hasContent && thumbnail.eligible))
+      onPressed:activeAtPress=card.interactionBusy || card.resizeResumePending
       onCanceled:activeAtPress=false
       onClicked: {
-        var stopping=activeAtPress || card.interactionBusy;activeAtPress=false
+        var stopping=activeAtPress || card.interactionBusy || card.resizeResumePending;activeAtPress=false
         if(stopping) card.endNativeInteraction("stopped");else card.beginNativeInteraction()
       }
     }
@@ -437,13 +610,13 @@ Item {
       objectName:"floating-preview-manage"
       property bool activeAtPress:false
       x:2+interactionBar.buttonSize*2;y:2;size:interactionBar.buttonSize
-      iconText:card.interactionBusy ? "✥" : "≡"
-      tooltipText:card.interactionBusy ? "Stop interacting to move or resize" : "Window actions"
+      iconText:card.interactionBusy || card.resizeResumePending ? "✥" : "≡"
+      tooltipText:card.interactionBusy || card.resizeResumePending ? "Stop interacting to move" : "Window actions"
       foreground:card.popupColors.text;animations:card.animations;animationSpeed:card.animationSpeed
-      onPressed:activeAtPress=card.interactionBusy
+      onPressed:activeAtPress=card.interactionBusy || card.resizeResumePending
       onCanceled:activeAtPress=false
       onClicked: {
-        var managing=activeAtPress || card.interactionBusy;activeAtPress=false
+        var managing=activeAtPress || card.interactionBusy || card.resizeResumePending;activeAtPress=false
         if(managing) card.endNativeInteraction("manage")
         else {var point=mapToItem(card.coordinateRoot,width/2,height/2);card.contextRequested(point.x,point.y)}
       }
@@ -471,13 +644,13 @@ Item {
         hoverEnabled:true;acceptedButtons:Qt.LeftButton
         cursorShape:horizontal ? Qt.SizeHorCursor : Qt.SizeVerCursor
         property point start:Qt.point(0,0)
-        onPressed:function(mouse) {start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizing=true;card.resizePressed(modelData)}
+        onPressed:function(mouse) {start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);mouse.accepted=card.beginResizeGesture(modelData,false)}
         onPositionChanged:function(mouse) {
           if(!pressed) return
-          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizeRequested(p.x-start.x,p.y-start.y,modelData)
+          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.updateResizeGesture(p.x-start.x,p.y-start.y,modelData)
         }
-        onReleased: {card.resizing=false;card.resizeReleased()}
-        onCanceled: {card.resizing=false;card.resizeReleased()}
+        onReleased:card.endResizeGesture()
+        onCanceled:card.endResizeGesture()
       }
     }
     Repeater {
@@ -498,14 +671,14 @@ Item {
         property point start:Qt.point(0,0)
         Behavior on opacity {NumberAnimation {duration:Motion.duration(card.animations,100,60,card.animationSpeed)}}
         onPressed:function(mouse) {
-          start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizing=true;card.resizePressed(corner)
+          start=mapToItem(card.coordinateRoot,mouse.x,mouse.y);mouse.accepted=card.beginResizeGesture(corner,!!(mouse.modifiers & Qt.MetaModifier))
         }
         onPositionChanged:function(mouse) {
           if(!pressed) return
-          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.resizeRequested(p.x-start.x,p.y-start.y,corner)
+          var p=mapToItem(card.coordinateRoot,mouse.x,mouse.y);card.updateResizeGesture(p.x-start.x,p.y-start.y,corner)
         }
-        onReleased: {card.resizing=false;card.resizeReleased()}
-        onCanceled: {card.resizing=false;card.resizeReleased()}
+        onReleased:card.endResizeGesture()
+        onCanceled:card.endResizeGesture()
         Rectangle {
           x:resizeHandle.leftSide ? 3 : parent.width-10;y:resizeHandle.topSide ? 3 : parent.height-4
           width:7;height:1;color:Commons.Color.accent

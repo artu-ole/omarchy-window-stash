@@ -2,7 +2,8 @@
 
 Optional input routing for floating preview cards. Interaction is disabled by
 default. Explicit Interact preserves ordinary click-to-restore; optional first-click
-activation consumes its activating click. App groups require selecting one window.
+activation consumes its activating click. Super+left click on preview content also
+enters interaction without restoring the window. App groups require selecting one window.
 See [README.md](../README.md) for settings and [VALIDATION.md](../VALIDATION.md) for
 acceptance evidence; this document describes the implementation contract.
 
@@ -28,7 +29,93 @@ separate: interaction automatically acquires live rendering at the chosen 30/60 
 without changing Standard/Enhanced or Still/Hover/Live preferences. Other enhanced
 live sources retain their 15 FPS budget.
 
-## Input and controls
+## Folding previews
+
+Floating previews have a second minimized stage: a floating application icon.
+The minimize shortcut queries fresh compositor pointer coordinates and folds the
+frontmost hovered preview. It consumes hits on an already folded icon or busy
+preview; a hover miss retains focused-window minimization. App covers fold their
+visible members together, while an expanded thumbnail selects its exact window.
+
+`previewFolded` is a strict per-record boolean in the runtime ledger. Folding
+waits for acknowledged input release, then validates the exact private source
+before changing that flag. It preserves phase, order, original restoration data,
+working source geometry and contained fullscreen. Folded views stop capture,
+render requests and geometry polling; authoritative helpers reject stale requests
+under the same ledger lock as their final native acquisition.
+
+The controller exposes `preview-fold ID [ID ...]` and
+`preview-unfold ID [ID ...]`. Managed minimize/newest/FIFO bindings use
+`--shortcut` to forward intent through shell IPC before taking any ledger lock;
+minimize includes freshly queried cursor coordinates. IPC failure never falls
+back to minimizing an unrelated focused window.
+
+Icon activation clears the flag and returns the preview at its remembered size,
+position and aspect ratio. Newest/FIFO shortcut restoration uses `--stage`, so
+the first action unfolds and the next fully restores the same ordered record.
+Plain CLI restoration, explicit context restoration, native handoff, removal and
+recovery remain full restoration. Other presentation modes ignore folded state.
+
+Folded icon positions use separate `folded-preview:` keys and inherit existing
+icon appearance, size, placement and physics. Their initial placement waits for
+the layer's configured dimensions, preserving saved positions across restarts.
+Fold/unfold motion follows the global animation settings, and input waits until
+an unfolding miniature has settled. No additional preferences are introduced.
+
+## Resize responsiveness
+
+Sides change proportions along one axis. Super + corner drag changes width and
+height independently around the fixed opposite corner. The modifier is latched
+on press; ordinary corner dragging retains the current proportions. Placement
+lock and preset sizing disable both resize gestures.
+
+`floatingPreviewResizeRate` controls source reflow during side or Super corner dragging:
+`realtime` (Responsive, default), `balanced`, or `release` (On release).
+Responsive and Balanced use a non-restarting throttle with target intervals of
+16 and 60 ms. Each source retains only its latest draft and queued resize;
+continuous pointer events cannot postpone dispatch indefinitely. Actual updates
+depend on client/compositor response rather than a promised frame rate.
+
+On release defers the source change until that source's final gesture. Finalizing
+one source never flushes another source's held draft. Release flushes immediately
+and uses asynchronous committed-geometry polling and fresh capture before input
+is re-enabled; it does not block the action worker waiting for the client.
+The direct CLI `--settle` remains available for callers needing a bounded wait.
+
+Responsive/Balanced reshape drags temporarily request live capture even with Snapshot
+selected, then restore the saved update policy. Ordinary corners retain proportional
+scaling. Only the initial transition to `previewResized` writes the ledger; changing
+working dimensions does not repeatedly rewrite unchanged restoration metadata.
+
+## Entering interaction
+
+Interaction or free, unlocked previews prepare native pointer shortcuts when
+visible, including Standard/Still previews. `controller/interaction.py --prepare`
+loads support if absent, checks `superClickActivation` and, for corner resizing,
+`superCornerResize`, and takes no input or rendering lease. An older loaded module
+is preserved and reports the update requirement.
+
+The native mouse listener intercepts pure Super+left only on the actual focused
+root of `omarchy-window-stash-interactive-previews`, before compositor mouse bindings.
+It consumes the whole pair and emits `window-stash-super-click` with
+`serial,press|move|release|drag-release|cancel,x,y` in global logical coordinates.
+Moving more than six logical pixels or losing pointer focus prevents click
+activation. A corner drag continues outside the original input region while its
+source layer remains valid; desktop state changes cancel the gesture.
+The release is consumed even if Super is released first; reload waits for it.
+No application receives the activating press or an unmatched release.
+
+QML resolves corner handles before content, respecting higher-priority controls.
+It pins the exact card and opposite corner for the entire resize, then settles
+source reflow before allowing application input. No application receives resize
+buttons, including when preview interaction is disabled.
+
+For activation, QML pins the frontmost content's identity and geometry on press and revalidates
+both on release. Controls, unavailable frames and partially clipped tiles cannot
+activate or fall through to restore. A group cover expands for exact selection;
+another eligible preview uses the existing acknowledged replacement path.
+Dialogs and menus use the ordinary layer namespace. Global mouse bindings are
+preserved; ordinary Super+drag outside previews still moves windows.
 
 The native bridge maps the full image rectangle to source-local coordinates,
 resolves subsurfaces/popups, and routes pointer movement, buttons and axes through
@@ -53,6 +140,31 @@ Outside clicks end routing and continue to their normal destination once; pointe
 leave alone does not stop interaction. Interruption releases held buttons/keys and
 consumes stale corresponding physical releases. Native ended-owner tokens prevent
 automatic renewals from reactivating a session; explicit activation uses a new owner.
+
+## Resizing during interaction
+
+`floatingPreviewInteractionResize` enables **Resize while interacting** (`off`
+by default, or `on`). When enabled, free, unlocked previews retain their side and
+corner handles while interacting. When disabled, handles disappear and their
+rectangles return to application input; ordinary view-only resizing is unchanged.
+All enabled handle rectangles are reserved from application input, including
+before activation and outside the captured image. Native management grabs retain
+the complete pointer gesture across the asynchronous input-release handshake.
+An application drag begun in content retains its own implicit grab across handles.
+
+A resize pins the exact source and view, pauses the input owner and buffers the
+latest pointer delta. Preview and source geometry change only after acknowledged
+release; a fast mouse-up still applies the final buffered target. After release
+and matching fresh geometry, the same preview automatically acquires a new owner.
+Keyboard input retains its normal click-to-focus policy.
+
+An interaction intent epoch cancels stale resumption on Stop, outside actions,
+other activations or resize gestures, source replacement, hidden/disabled views,
+configuration/lifecycle changes and errors. The pending toolbar retains Stop.
+Physics and movement remain frozen until resumption or cancellation. A failed
+or unacknowledged release never unlocks early; a missing fresh frame leaves the
+preview view-only after a bounded wait. Older native bridges preserve ordinary
+interaction and expose the existing safe preview-support update action.
 
 ## Restoration fallback
 
@@ -88,7 +200,8 @@ helper exit, expiry or unload. `no_screen_share` sources are rejected; keyboard
 interaction also respects `no_focus`. Enabling either rule mid-session ends the
 affected routing. Ordinary previews remain available when native setup fails.
 
-Interaction preserves source geometry and original restoration metadata. A fallback
+Resize gestures change working source dimensions while preserving original
+restoration metadata. A fallback
 deliberately restores the full window when its requested UI needs that environment.
 Pointer-locked applications, cross-window drag-and-drop and input-method popup
 positioning require the restored application; broader compatibility is not inferred

@@ -44,6 +44,9 @@ ShellRoot {
   property real originalHeight:0
   property int requestsBeforeCorner:0
   property int requestsBeforeReplacement:0
+  property int freeCornerIndex:0
+  property var freeCornerOrigin:null
+  property real freeCornerWidth:0
   property var first:({id:"first",phase:"stashed",size:[640,420],title:"First",app:"test"})
   property var second:({id:"second",phase:"stashed",size:[800,600],title:"Second",app:"test"})
   QtObject {
@@ -131,12 +134,18 @@ ShellRoot {
           var config=Object.assign({},previews.config);config.floatingPreviewTitles="shown";previews.config=config
           var close=find(one(),"floating-preview-close"),handles=find(one(),"floating-preview-resize-handles"),controls=find(window.contentItem,"floating-preview-interact").parent
           check(close.visible && close.z>handles.z && close.z<controls.z,"Title close is below resize handles or above interaction controls")
+          var closePoint=close.mapToItem(window.contentItem,close.width-5,5)
+          check(one().shortcutResizeCorner(closePoint.x,closePoint.y)==="","Super corner overrode the higher title close control")
+          var controlPoint=controls.mapToItem(window.contentItem,controls.width/2,controls.height/2)
+          check(one().shortcutResizeCorner(controlPoint.x,controlPoint.y)==="","Super corner overrode the interaction controls")
           config=Object.assign({},previews.config);config.floatingPreviewTitles="hidden";previews.config=config
           one().x=200;one().y=180;previews.save(one());originalHeight=one().height
           one().resizing=true;one().resizePressed("right");one().resizeRequested(140,0,"right")
+          check(one().sourceResizeActive && image().mode==="live" && previews.config.floatingPreviewUpdate==="still","Responsive side drag did not temporarily update a Snapshot preview")
           near(one().height,originalHeight,"Horizontal edge changed the orthogonal dimension")
           check(one().aspectOverride>2 && fake.requests.length===1 && !fake.requests[0].settle,"Edge drag did not request live source reflow")
           one().resizing=false;one().resizeReleased()
+          check(!one().sourceResizeActive && image().mode==="still","Side release did not restore the saved Snapshot capture policy")
           check(fake.requests.length===2 && fake.requests[1].settle,"Edge release did not flush final native readiness")
           check(fake.saved[one().key].length===4,"Custom proportions were not persisted")
         } else if(root.phase===1) {
@@ -151,7 +160,9 @@ ShellRoot {
         } else if(root.phase===3) {
           check(one().geometryReady && image().restarts===1,"Matching fresh frame did not unlock input exactly once")
           requestsBeforeCorner=fake.requests.length
-          one().resizing=true;one().resizePressed("bottom-right");one().resizeRequested(40,20,"bottom-right");one().resizing=false;one().resizeReleased()
+          one().resizing=true;one().resizePressed("bottom-right");one().resizeRequested(40,20,"bottom-right")
+          check(!one().sourceResizeActive && image().mode==="still","Corner scaling unnecessarily enabled live source reflow")
+          one().resizing=false;one().resizeReleased()
           near(one().width/one().height,2.2,"Corner scaling lost custom proportions")
           check(fake.requests.length===requestsBeforeCorner,"Corner scaling resized the underlying application")
           previews.groups=[{key:"window:first",windows:[Object.assign({},root.first,{title:"Refreshed metadata"})]}]
@@ -204,6 +215,51 @@ ShellRoot {
           image().sourceSize=Qt.size(800,400);image().hasFrame=true
         } else if(root.phase===13) {
           check(one().record.id==="restashed" && one().geometryReady && one().aspectOverride===2,"Re-stash did not recover saved proportions and fresh-frame readiness")
+          var releaseConfig=Object.assign({},previews.config);releaseConfig.floatingPreviewResizeRate="release";previews.config=releaseConfig
+          one().resizing=true;one().resizePressed("right");one().resizeRequested(20,0,"right")
+          check(one().sourceResizeActive && image().mode==="still","On release forced Snapshot previews into continuous capture")
+          one().resizing=false;one().resizeReleased()
+          fake.readyFor("restashed",2,[800,400])
+        } else if(root.phase===14) {
+          image().sourceSize=Qt.size(800,400);image().hasFrame=true
+        } else if(root.phase===15) {
+          check(one().geometryReady,"Free-corner fixture did not settle")
+          var responsive=Object.assign({},previews.config);responsive.floatingPreviewResizeRate="realtime";previews.config=responsive
+          one().x=400;one().y=300;one().width=280;one().aspectOverride=2;previews.save(one())
+          root.freeCornerOrigin={x:one().x,y:one().y,width:one().width,height:one().height}
+          var corner=["top-left","top-right","bottom-left","bottom-right"][root.freeCornerIndex]
+          var bounds=one().details().resizeRects.find(function(handle) {return handle.corner===corner}).rect
+          var hitX=corner.indexOf("left")>=0 ? bounds.x+1 : bounds.x+bounds.width-1
+          var hitY=corner.indexOf("top")>=0 ? bounds.y+1 : bounds.y+bounds.height-1
+          check(one().shortcutResizeCorner(hitX,hitY)===corner,"Shortcut corner hit did not match the uncovered resize handle")
+          var before=fake.requests.length
+          check(one().beginResizeGesture(corner,true),"Super corner did not begin")
+          check(one().updateResizeGesture(corner.indexOf("left")>=0 ? -70 : 70,corner.indexOf("top")>=0 ? -20 : 20,corner),"Super corner did not update")
+          near(one().width,350,"Super corner ignored horizontal drag")
+          near(one().height,160,"Super corner ignored vertical drag")
+          check(one().resizeFreeAspect && one().sourceResizeActive && image().mode==="live","Super corner did not use responsive source reflow")
+          check(fake.requests.length===before+1 && !fake.requests[before].settle,"Super corner did not draft native shape")
+          root.freeCornerWidth=one().width
+          check(one().endResizeGesture(),"Super corner did not end")
+          check(!one().resizeFreeAspect && !one().resizing && !one().sourceResizeActive && image().mode==="still","Free-corner release retained gesture or temporary capture state")
+          check(fake.requests.length===before+2 && fake.requests[before+1].settle,"Free-corner release did not settle source geometry")
+          check(!one().geometryReady && fake.saved[one().key].length===4,"Free-corner release enabled stale input or lost custom proportions")
+          fake.readyFor("restashed",2.1,[840,400])
+        } else if(root.phase===16) {
+          var acceptedCorner=["top-left","top-right","bottom-left","bottom-right"][root.freeCornerIndex]
+          var origin=root.freeCornerOrigin
+          near(one().width,root.freeCornerWidth,"Accepted free-corner geometry lost the latest requested width")
+          near(one().width/one().height,2.1,"Accepted free-corner aspect was ignored")
+          near(acceptedCorner.indexOf("left")>=0 ? one().x+one().width : one().x,acceptedCorner.indexOf("left")>=0 ? origin.x+origin.width : origin.x,"Accepted free corner moved its opposite horizontal anchor")
+          near(acceptedCorner.indexOf("top")>=0 ? one().y+one().height : one().y,acceptedCorner.indexOf("top")>=0 ? origin.y+origin.height : origin.y,"Accepted free corner moved its opposite vertical anchor")
+          check(!one().geometryReady && !image().hasFrame,"Accepted free corner did not gate input on a new capture")
+          image().sourceSize=Qt.size(840,400);image().hasFrame=true
+        } else if(root.phase===17) {
+          check(one().geometryReady,"Matching free-corner capture did not enable input")
+          root.freeCornerIndex++
+          if(root.freeCornerIndex<4) {root.phase=15;return}
+          var locked=Object.assign({},previews.config);locked.floatingPreviewLock="locked";previews.config=locked
+          check(!one().beginResizeGesture("bottom-right",true) && one().shortcutResizeCorner(0,0)==="","Locked preview accepted a corner gesture")
           console.log("PREVIEW_ASPECT_CARDS_QT_PASS");Qt.quit()
         }
         root.phase++
@@ -219,4 +275,4 @@ ShellRoot {
     output=result.stdout+result.stderr
     assert result.returncode==0 and 'PREVIEW_ASPECT_CARDS_QT_PASS' in output,output
     assert not any(message in output for message in ('Binding loop','ReferenceError','TypeError','Cannot assign','Cannot read')),output
-    print('Qt free-aspect previews: side gestures, source reflow, accepted constraints, opposite anchors, fresh capture gate, custom corner scaling and reset passed')
+    print('Qt free-aspect previews: side and Super-corner gestures, source reflow, accepted constraints, opposite anchors, fresh capture gate, proportional scaling and reset passed')

@@ -1102,25 +1102,26 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         self.assertEqual(self.stash.settings(),dict(presentation="floating",scope="workspace",
             grouping="app",iconShape="squircle",sizePreset="100",restoreDestination="current",floatingDirection="vertical",floatingAnimation="arc",dragMotion="physics",dockSide="bottom",staticDockLock="locked",floatingPlacement="edges",dockCorners="theme",dockCornerRadius=12,iconFrame="hidden",dockFrame="hidden",animations="full",animationSpeed="normal",dockOpacity=100,iconOpacity=100,
             hoverPreview="off",livePreviewCompatibility="standard",previewSize="medium",previewPlacement="auto",previewTitles="shown",previewDelay=400,previewHideDelay=200,
-            floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
-            floatingPreviewInteraction="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",floatingPreviewFullscreen="preview",
+            floatingPreviewSizing="free",floatingPreviewScale="100",floatingPreviewUpdate="hover",floatingPreviewResizeRate="realtime",floatingPreviewTitles="hidden",floatingPreviewFrame="hidden",floatingPreviewLock="unlocked",
+            floatingPreviewInteraction="off",floatingPreviewInteractionResize="off",floatingPreviewActivation="explicit",floatingPreviewKeyboard="mouse",floatingPreviewInteractionFps="60",floatingPreviewControls="hover",floatingPreviewFullscreen="preview",
             floatingPreviewExitShortcut="CTRL + ALT + Escape",
             minimizeShortcut="SUPER + D",restoreLastShortcut="SUPER + Z",restoreOldestShortcut="SUPER + ALT + Z"))
 
     def test_floating_previews_default_without_changing_existing_presentation_or_hover_settings(self):
         self.settings(presentation="bubbles", scope="workspace", grouping="app", hoverPreview="off", iconOpacity=63)
         result = self.stash.settings()
-        expected = dict(floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
+        expected = dict(floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover", floatingPreviewResizeRate="realtime",
                         floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked")
         self.assertEqual({key: result[key] for key in expected}, expected)
         self.assertEqual((result["presentation"], result["scope"], result["grouping"], result["hoverPreview"], result["iconOpacity"]),
                          ("bubbles", "workspace", "app", "off", 63))
 
     def test_floating_previews_choices_and_invalid_values_are_independent(self):
-        choices = dict(floatingPreviewSizing=("free", "preset"),
+        choices = dict(floatingPreviewSizing=("free", "preset"), floatingPreviewResizeRate=("realtime", "balanced", "release"),
                        floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
                        floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
-                       floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"))
+                       floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),
+                       floatingPreviewInteractionResize=("off", "on"))
         for key, values in choices.items():
             for value in values:
                 with self.subTest(key=key, value=value):

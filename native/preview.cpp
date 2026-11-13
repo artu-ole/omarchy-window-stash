@@ -7,6 +7,7 @@
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/GlobalWindowController.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/event/EventBus.hpp>
@@ -216,7 +217,25 @@ auto frameInterval = FRAME_TIME;
 std::optional<Interaction> interaction;
 std::deque<EndedInteraction> endedInteractions;
 std::set<uint32_t> releasedButtons;
+// These presses were delivered normally to Qt management controls. Preserve
+// their compositor implicit grab until every physical release, even after the
+// application-input owner has acknowledged stopping.
+std::set<uint32_t> managementButtons;
+struct SuperClickGesture {
+    uint32_t serial = 0;
+    WP<CWLSurfaceResource> surface;
+    Vector2D position;
+    double maximumDisplacement = 0;
+    bool cancelled = false;
+    bool clickCancelled = false;
+};
+std::optional<SuperClickGesture> superClickGesture;
+uint32_t superClickSerial = 0;
+bool pointerReleasePending() {
+    return !releasedButtons.empty() || !managementButtons.empty() || superClickGesture.has_value();
+}
 CHyprSignalListener mouseMoveListener, mouseButtonListener, mouseAxisListener, lockListener, monitorListener, workspaceListener;
+CHyprSignalListener superClickFocusListener;
 CHyprSignalListener keyboardFocusListener, keyboardEventListener;
 CHyprSignalListener windowOpenListener, fullscreenListener;
 struct ReleasedKey {
@@ -933,7 +952,11 @@ void endInteraction(const std::string& reason, bool refocus) {
         }
     }
     releasedButtons.insert(previous.buttons.begin(), previous.buttons.end());
-    if (refocus && g_pInputManager && g_pSessionLockManager && !g_pSessionLockManager->isSessionLocked())
+    // Refocusing here can revoke Qt's management grab or synchronously emit
+    // motion while endingInteraction is true, cancelling an owned Super drag.
+    // The scoped physical gesture already owns pointer focus until release.
+    if (refocus && managementButtons.empty() && !superClickGesture && g_pInputManager
+        && g_pSessionLockManager && !g_pSessionLockManager->isSessionLocked())
         g_pInputManager->refocus();
     changingKeyboardFocus = false;
     endingInteraction = false;
@@ -1420,7 +1443,128 @@ bool focusPoint(const Vector2D& global, uint32_t time) {
     return true;
 }
 
+bool superClickBlocked(bool continuing = false) {
+    return endingInteraction || reloadPending || g_pSessionLockManager->isSessionLocked()
+        || !g_pInputManager->m_exclusiveLSes.empty() || g_pInputManager->isConstrained()
+        || g_layoutManager->dragController()->target()
+        || !releasedButtons.empty() || !managementButtons.empty()
+        || (interaction && (!interaction->buttons.empty() || (!continuing && contentHit(g_pInputManager->getMouseCoordsInternal()))))
+        || std::any_of(g_pKeybindManager->m_pressedKeys.begin(), g_pKeybindManager->m_pressedKeys.end(),
+            [](const auto& key) { return key.keyName.starts_with("mouse:"); })
+        || (g_pSeatManager->m_seatGrab && g_pSeatManager->m_seatGrab->m_pointer);
+}
+
+bool superClickSurfaceValid(const SP<CWLSurfaceResource>& surface) {
+    const auto owner = Desktop::View::CWLSurface::fromResource(surface);
+    const auto layer = owner ? Desktop::View::CLayerSurface::fromView(owner->view()) : nullptr;
+    return surface && surface->m_mapped && layer && layer->m_mapped && layer->aliveAndVisible()
+        && layer->m_namespace == "omarchy-window-stash-interactive-previews"
+        && layer->wlSurface() && layer->wlSurface()->resource() == surface;
+}
+
+SP<CWLSurfaceResource> superClickSurface() {
+    if (superClickBlocked())
+        return nullptr;
+    // A different miniature may be selected while one source is interactive.
+    // Its actual layer focus must be outside that source's content/grab; leave
+    // the old lease intact until Qt completes the ordinary replacement queue.
+    const auto surface = g_pSeatManager->m_state.pointerFocus.lock();
+    return superClickSurfaceValid(surface) ? surface : nullptr;
+}
+
+void emitSuperClick(const SuperClickGesture& gesture, const std::string& phase, const Vector2D& position) {
+    if (g_pEventManager)
+        g_pEventManager->postEvent({"window-stash-super-click", std::to_string(gesture.serial) + "," + phase + ","
+            + std::to_string(position.x) + "," + std::to_string(position.y)});
+}
+
+void cancelSuperClick() {
+    // Retain the filter until the physical release. The consuming press never
+    // entered Qt, a source application, or the window-manager mouse bindings.
+    if (superClickGesture)
+        superClickGesture->cancelled = true;
+}
+
+void superClickMotion(const Vector2D& position, bool report = false) {
+    if (!superClickGesture || superClickGesture->cancelled)
+        return;
+    auto& gesture = *superClickGesture;
+    gesture.maximumDisplacement = std::max(gesture.maximumDisplacement,
+        std::hypot(position.x - gesture.position.x, position.y - gesture.position.y));
+    const auto surface = gesture.surface.lock();
+    if (!surface || superClickBlocked(true) || !superClickSurfaceValid(surface)) {
+        gesture.cancelled = true;
+        return;
+    }
+    // The physical press belongs to this exact layer until release, even if a
+    // fast corner drag outruns its input region. Focus loss still invalidates a
+    // click; only Qt's pinned resize target may use the continuing motion stream.
+    if (g_pSeatManager->m_state.pointerFocus.lock() != surface)
+        gesture.clickCancelled = true;
+    if (report)
+        emitSuperClick(gesture, "move", position);
+}
+
+bool superClickButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
+    if (event.button != 272) {
+        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED)
+            cancelSuperClick();
+        return false;
+    }
+    const auto position = g_pInputManager->getMouseCoordsInternal();
+    if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && superClickGesture) {
+        superClickMotion(position);
+        const auto gesture = *superClickGesture;
+        superClickGesture.reset();
+        info.cancelled = true;
+        emitSuperClick(gesture, gesture.cancelled ? "cancel"
+            : gesture.maximumDisplacement > 6 ? "drag-release" : gesture.clickCancelled ? "cancel" : "release", position);
+        return true;
+    }
+    if (event.state != WL_POINTER_BUTTON_STATE_PRESSED || info.cancelled)
+        return false;
+    if (superClickGesture) {
+        cancelSuperClick();
+        info.cancelled = true;
+        return true;
+    }
+    // Ignore Caps/NumLock; another actual modifier makes this an ordinary
+    // desktop gesture. Query the compositor, since non-focusing layer surfaces
+    // do not receive reliable keyboard-modifier updates through Qt.
+    if ((g_pInputManager->getModsFromAllKBs() & 77U) != 64U)
+        return false;
+    const auto surface = superClickSurface();
+    if (!surface)
+        return false;
+    if (++superClickSerial == 0)
+        ++superClickSerial;
+    superClickGesture = SuperClickGesture{superClickSerial, surface, position};
+    info.cancelled = true;
+    emitSuperClick(*superClickGesture, "press", position);
+    return true;
+}
+
+bool managementButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
+    if (!managementButtons.empty()) {
+        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED)
+            managementButtons.insert(event.button);
+        else
+            managementButtons.erase(event.button);
+        return true; // Do not consume Qt's ordinary press/release sequence.
+    }
+    if (info.cancelled || event.state != WL_POINTER_BUTTON_STATE_PRESSED || superClickGesture
+        || reloadPending || !releasedButtons.empty() || !interaction || !interaction->buttons.empty()
+        || !managementHit(g_pInputManager->getMouseCoordsInternal())
+        || !superClickSurfaceValid(g_pSeatManager->m_state.pointerFocus.lock()))
+        return false;
+    managementButtons.insert(event.button);
+    return true;
+}
+
 void mouseMove(const Vector2D& global, Event::SCallbackInfo& info) {
+    superClickMotion(global, true);
+    if (!managementButtons.empty() || superClickGesture)
+        return;
     if (!validateInteraction() || (!contentHit(global) && interaction->buttons.empty()))
         return;
     const auto owner = interaction->owner;
@@ -1435,6 +1579,10 @@ void mouseMove(const Vector2D& global, Event::SCallbackInfo& info) {
 }
 
 void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
+    if (superClickButton(event, info))
+        return;
+    if (managementButton(event, info) || superClickGesture)
+        return;
     if (event.state == WL_POINTER_BUTTON_STATE_RELEASED && releasedButtons.erase(event.button)) {
         info.cancelled = true;
         return;
@@ -1519,6 +1667,8 @@ void mouseButton(const IPointer::SButtonEvent& event, Event::SCallbackInfo& info
 }
 
 void mouseAxis(const IPointer::SAxisEvent& event, Event::SCallbackInfo& info) {
+    if (!managementButtons.empty() || superClickGesture)
+        return;
     if (!validateInteraction())
         return;
     const auto position = g_pInputManager->getMouseCoordsInternal();
@@ -1926,6 +2076,8 @@ int interactionUpdate(lua_State* state) {
     try {
         if (reloadPending)
             throw std::invalid_argument("Preview support is being reloaded");
+        if (!interaction && !managementButtons.empty())
+            throw std::invalid_argument("Release preview management buttons before interacting");
         if (lua_type(state, 1) != LUA_TTABLE)
             throw std::invalid_argument("Expected an interaction lease table");
         if (endingInteraction)
@@ -2187,13 +2339,15 @@ int status(lua_State* state) {
     field(state, "hyprlandHash", GIT_COMMIT_HASH);
     field(state, "reloadProtocol", 1);
     booleanField(state, "reloadPending", reloadPending);
-    field(state, "pendingButtons", releasedButtons.size());
+    field(state, "pendingButtons", releasedButtons.size() + managementButtons.size() + (superClickGesture ? 1 : 0));
+    field(state, "pendingManagementButtons", managementButtons.size());
+    field(state, "pendingSuperClick", superClickGesture ? 1 : 0);
     field(state, "pendingKeys", releasedKeys.size());
     // Keep filtering synthetic cleanup's later physical releases until they
     // arrive. Removing hooks earlier could leak a release to another window or
     // trigger an unrelated release-bound window-manager action.
     booleanField(state, "reloadReady", reloadPending && !interaction && !endingInteraction
-                 && owners.empty() && active.empty() && releasedButtons.empty() && releasedKeys.empty()
+                 && owners.empty() && active.empty() && !pointerReleasePending() && releasedKeys.empty()
                  && fullscreenTransitions.empty());
     field(state, "pendingFullscreen", fullscreenTransitions.size());
     const auto pendingResizes = std::count_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [](const auto& item) {
@@ -2244,6 +2398,9 @@ int status(lua_State* state) {
     booleanField(state, "handoff", handoffSupported);
     booleanField(state, "constrainedFullscreen", constrainedFullscreenSupported);
     booleanField(state, "sourceGeometry", true);
+    booleanField(state, "superClickActivation", true);
+    booleanField(state, "superCornerResize", true);
+    booleanField(state, "interactiveResize", true);
     field(state, "fullscreenError", fullscreenError);
     field(state, "fullscreenProtocol", 1);
     field(state, "keyboardError", keyboardError);
@@ -2254,6 +2411,7 @@ int status(lua_State* state) {
 
 int prepareReload(lua_State* state) {
     reloadPending = true;
+    cancelSuperClick();
     endInteraction("bridge-reload");
     clearAllConstrainedFullscreen();
     owners.clear();
@@ -2550,12 +2708,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
     setupHandoff();
     setupFullscreen();
     keyboardFocusListener = g_pSeatManager->m_events.keyboardFocusChange.listen(keyboardFocusChanged);
+    superClickFocusListener = g_pSeatManager->m_events.pointerFocusChange.listen([] {
+        if (superClickGesture && g_pSeatManager->m_state.pointerFocus.lock() != superClickGesture->surface.lock())
+            superClickGesture->clickCancelled = true;
+    });
     keyboardEventListener = Event::bus()->m_events.input.keyboard.key.listen(keyboardEvent);
     windowOpenListener = Event::bus()->m_events.window.openEarly.listen(windowOpened);
     fullscreenListener = Event::bus()->m_events.window.fullscreen.listen(fullscreenChanged);
-    lockListener = g_pSessionLockManager->m_events.lock.listen([] { endInteraction("locked", false); });
-    monitorListener = Event::bus()->m_events.monitor.layoutChanged.listen([] { endInteraction("display-changed"); });
-    workspaceListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE) { endInteraction("workspace-changed"); });
+    lockListener = g_pSessionLockManager->m_events.lock.listen([] { cancelSuperClick(); endInteraction("locked", false); });
+    monitorListener = Event::bus()->m_events.monitor.layoutChanged.listen([] { cancelSuperClick(); endInteraction("display-changed"); });
+    workspaceListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE) { cancelSuperClick(); endInteraction("workspace-changed"); });
     frameTimer = makeShared<CEventLoopTimer>(std::nullopt,
         [](SP<CEventLoopTimer>, void*) { frame(); }, nullptr);
     g_pEventLoopManager->addTimer(frameTimer);
@@ -2564,6 +2726,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     reloadPending = true;
+    if (superClickGesture) {
+        // Supported reload waits for release. If forcibly unloaded, cancel the
+        // frontend token; InputManager never recorded this press, so it also
+        // discards a later unmatched release without dispatching mouse binds.
+        const auto gesture = *superClickGesture;
+        superClickGesture.reset();
+        emitSuperClick(gesture, "cancel", g_pInputManager->getMouseCoordsInternal());
+    }
     endInteraction("unloaded");
     clearAllConstrainedFullscreen();
     std::vector<PHLWINDOW> resizing;
@@ -2577,6 +2747,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     mouseButtonListener.reset();
     mouseAxisListener.reset();
     keyboardFocusListener.reset();
+    superClickFocusListener.reset();
     keyboardEventListener.reset();
     windowOpenListener.reset();
     fullscreenListener.reset();

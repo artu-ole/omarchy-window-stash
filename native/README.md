@@ -53,6 +53,19 @@ an overwritten legacy cache entry is never guessed at. Cancellation before unloa
 preserves the old bridge; after unload replacement completes even if the shell
 closes its pipe. `--watch-stdin` binds pre-unload cancellation to that pipe.
 
+`capabilities.superClickActivation` enables Super+left-click entry from a preview;
+`capabilities.superCornerResize` adds free-aspect Super+corner dragging. The existing
+mouse listener consumes a press only on the exact focused preview layer root,
+then reports `press`, `move` and a terminal `release`, `drag-release` or `cancel`
+over compositor IPC. QML pins and validates the selected source and corner. Motion
+can leave the original input region while its layer remains mapped and visible;
+focus loss still invalidates click activation, and movement beyond six logical
+pixels always produces a drag release. Lock, reload, workspace/monitor changes,
+other buttons or source-layer destruction cancel the gesture. Desktop mouse
+bindings remain unchanged and no activating click reaches an app.
+`pendingSuperClick` tracks the held physical pair; it contributes to
+`pendingButtons` and blocks `reloadReady` until released.
+
 The original render-only bridge drains through its lease timeout. The first
 experimental interactive bridge cannot expose pending physical-release filters;
 it requires one logout/login before adopting this upgrade protocol. Unknown
@@ -210,6 +223,20 @@ Outside clicks terminate routing and continue to their ordinary destination once
 Management exclusions remain usable while a session is active. Stop/Restore/Manage
 controls retain their active state until release is acknowledged; a missing helper
 acknowledgement keeps management frozen until the native lease expires.
+
+Active resize handles use the same exclusions. A press on the verified preview
+layer starts a Qt management grab: native application motion, buttons and wheel
+routing stay suspended until every physical management button is released,
+including across input-owner cleanup. Source application implicit grabs retain
+precedence. An owned Super gesture likewise keeps its motion stream when it
+crosses the active image before the helper acknowledges stopping. New application
+input cannot be acquired while management buttons remain held. Reload readiness
+includes `pendingManagementButtons`; `interactiveResize` advertises this handoff
+support independently of ordinary Super corner resizing.
+
+Input-owner cleanup preserves pointer focus while a management or scoped Super
+gesture remains held. Keyboard cleanup still runs during the pause; ordinary
+stops retain pointer refocusing.
 
 Restore, close, identity loss, workspace/display changes, DPMS, screen lock,
 exclusive overlays, pointer constraints, stdin closure, expiry and unload release

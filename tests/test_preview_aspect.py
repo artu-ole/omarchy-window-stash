@@ -100,6 +100,7 @@ class PreviewAspectTests(unittest.TestCase):
     def test_resize_marker_is_committed_before_source_mutation_and_restore_uses_original_geometry(self):
         def check_marker(_record, size):
             if size is not None:
+                self.assertIs(_record.get('previewResized'), True)
                 saved = json.loads(self.stash.path.read_text())['windows'][0]
                 self.assertTrue(saved['previewResized'])
                 self.assertEqual(saved['size'], [640, 400])
@@ -112,6 +113,25 @@ class PreviewAspectTests(unittest.TestCase):
         self.assertEqual(self.hypr.clients[0]['size'], [640, 400])
         self.assertEqual(self.hypr.clients[0]['at'], [100, 150])
         self.assertTrue(self.hypr.clients[0]['floating'])
+
+    def test_further_drag_targets_keep_the_committed_marker_without_rewriting_the_ledger(self):
+        self.stash.preview_aspect(self.ident, 2, 'width')
+        saved = self.stash.path.read_bytes()
+        mutations = []
+        def verify_marker(identity, size):
+            if size is not None:
+                self.assertIs(identity.get('previewResized'), True)
+                self.assertIs(json.loads(self.stash.path.read_text())['windows'][0]['previewResized'], True)
+                mutations.append(list(size))
+        self.hypr.on_geometry = verify_marker
+        with patch.object(self.stash, 'save', wraps=self.stash.save) as save:
+            width = self.stash.preview_aspect(self.ident, 3, 'width')
+            height = self.stash.preview_aspect(self.ident, 1, 'height')
+        self.assertTrue(width['changed'] and height['changed'])
+        self.assertEqual(mutations, [[1200,400], [1200,1200]])
+        save.assert_not_called()
+        self.assertEqual(self.stash.path.read_bytes(), saved)
+        self.assert_original_saved()
 
     def test_noop_does_not_mark_or_reconfigure_the_source(self):
         saved = self.stash.path.read_bytes()

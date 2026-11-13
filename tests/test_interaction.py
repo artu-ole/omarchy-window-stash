@@ -107,7 +107,7 @@ class InteractionTests(unittest.TestCase):
     def test_defaults_are_explicit_opt_in_and_invalid_values_fall_back(self):
         expected = dict(floatingPreviewInteraction='off',floatingPreviewActivation='explicit',
                         floatingPreviewKeyboard='mouse',floatingPreviewInteractionFps='60',floatingPreviewControls='hover',
-                        floatingPreviewFullscreen='preview',
+                        floatingPreviewFullscreen='preview',floatingPreviewInteractionResize='off',
                         floatingPreviewExitShortcut='CTRL + ALT + Escape')
         self.assertEqual({key:DEFAULTS[key] for key in expected},expected)
         self.settings(**{key:True for key in expected})
@@ -200,6 +200,45 @@ class InteractionTests(unittest.TestCase):
         self.bridge.current = dict(active=True,reason='active')
         self.keeper.sync(target(serial=2,keyboard=True))
         self.assertTrue(self.bridge.calls[-1][3]['keyboard'])
+
+    def test_folded_source_ends_input_and_cannot_reacquire_from_a_stale_ui_request(self):
+        self.keeper.sync(target())
+        self.saved[0]['previewFolded'] = True;self.save()
+        self.assertEqual(self.keeper.sync(target())['state'], 'ended')
+        self.assertEqual(self.bridge.calls[-1], ('release', self.keeper.owner))
+        updates = sum(call[0] == 'update' for call in self.bridge.calls)
+        self.assertEqual(self.keeper.sync(target(serial=2))['state'], 'ended')
+        self.assertEqual(sum(call[0] == 'update' for call in self.bridge.calls), updates)
+
+    def test_fold_committed_after_preflight_but_before_native_acquisition_is_rechecked(self):
+        reads = 0
+        validated = self.keeper._validated_source
+        def between(target_value, settings, saved):
+            nonlocal reads
+            reads += 1
+            result = validated(target_value, settings, saved)
+            if reads == 2:
+                # This callback is the unlocked post-build snapshot. The next
+                # read must reopen the ledger before any native acquisition.
+                self.saved[0]['previewFolded'] = True;self.save()
+            return result
+        self.keeper._validated_source = between
+        self.assertEqual(self.keeper.sync(target())['state'], 'ended')
+        self.assertEqual(self.bridge.calls, [('ensure',)])
+
+    def test_final_input_update_holds_the_ledger_lock_after_building_outside_it(self):
+        import fcntl
+        def prepared():
+            with (self.stash.directory/'lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        update = self.bridge.interaction_update
+        def acquired(owner, identity, parameters):
+            with (self.stash.directory/'lock').open('a') as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return update(owner, identity, parameters)
+        self.bridge.on_ensure = prepared;self.bridge.interaction_update = acquired
+        self.assertEqual(self.keeper.sync(target())['state'], 'active')
 
     def test_saved_fullscreen_policy_overrides_stale_ui_and_changes_end_the_lease(self):
         self.keeper.sync(target(fullscreen='desktop'))

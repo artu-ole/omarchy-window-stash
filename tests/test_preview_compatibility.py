@@ -118,6 +118,40 @@ class PreviewCompatibilityTests(unittest.TestCase):
                 self.assertEqual(self.keeper.sync([IDENT])['ids'], [])
         self.assertEqual(self.bridge.calls, [])
 
+    def test_folded_sources_cannot_renew_preview_rendering_but_other_presentations_ignore_the_flag(self):
+        self.settings('off', presentation='previews', floatingPreviewUpdate='live')
+        self.keeper.sync([IDENT])
+        self.saved[0]['previewFolded'] = True;self.save()
+        self.assertEqual(self.keeper.sync([IDENT])['ids'], [])
+        self.assertEqual(self.bridge.calls[-1], ('release', self.keeper.owner))
+        for presentation in ('dock', 'bubbles', 'floating'):
+            self.settings('live', presentation=presentation)
+            self.assertEqual(self.keeper.sync([IDENT])['ids'], [IDENT])
+
+    def test_fold_during_native_preparation_cannot_acquire_a_stale_render_lease(self):
+        self.settings('off', presentation='previews', floatingPreviewUpdate='live')
+        def prepared():
+            with self.stash.locked():
+                self.stash.state['windows'][0]['previewFolded'] = True
+                self.stash.save()
+        self.bridge.ensure = prepared
+        self.assertEqual(self.keeper.sync([IDENT])['ids'], [])
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_final_render_update_holds_the_ledger_lock_after_building_outside_it(self):
+        import fcntl
+        def prepared():
+            with (self.stash.directory/'lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        update = self.bridge.update
+        def acquired(owner, records):
+            with (self.stash.directory/'lock').open('a') as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            update(owner, records)
+        self.bridge.ensure = prepared;self.bridge.update = acquired
+        self.assertEqual(self.keeper.sync([IDENT])['ids'], [IDENT])
+
     def test_standard_off_still_and_empty_requests_never_load_or_read_clients(self):
         for mode, compatibility, wanted in [('live', 'standard', [IDENT]), ('still', 'enhanced', [IDENT]),
                                              ('off', 'enhanced', [IDENT]), ('live', 'enhanced', [])]:
@@ -169,7 +203,7 @@ class PreviewCompatibilityTests(unittest.TestCase):
         self.assertEqual(result, dict(state='ready', ids=[IDENT]))
         self.assertEqual(self.bridge.calls[-1], ('update', self.keeper.owner,
                          [dict(id=IDENT, address='0x123', pid=42, stable_id='18000001', tag='window-stash-'+IDENT)]))
-        self.assertEqual(self.hypr.reads, ['clients'])
+        self.assertEqual(self.hypr.reads, ['clients', 'clients'])
 
     def test_legacy_identity_uses_fresh_stable_id_but_still_requires_ownership(self):
         del self.saved[0]['stableId']
@@ -497,11 +531,11 @@ class PreviewCompatibilityTests(unittest.TestCase):
         root = Path(self.temporary.name)
         (root/'native').mkdir()
         version = root/'native/version.txt'
-        for expected in ('1.29.2', '1.29.3', '1.29.4', '1.29.5', '1.29.6'):
+        for expected in ('1.29.2', '1.29.3', '1.29.4', '1.29.5', '1.29.6', '1.29.7', '1.29.8'):
             version.write_text(expected+'\n')
             with patch('preview.ROOT', root):
                 probe = InteractionBridge(FakeHypr()).interaction_probe
-            for loaded, protocol in (('1.29.1', 1), ('1.29.0', 1), ('1.24.0', 1), ('1.29.2', 1), ('1.29.3', 1), ('1.29.4', 1), ('1.29.5', 1), ('1.29.1', 2)):
+            for loaded, protocol in (('1.29.1', 1), ('1.29.0', 1), ('1.24.0', 1), ('1.29.2', 1), ('1.29.3', 1), ('1.29.4', 1), ('1.29.5', 1), ('1.29.6', 1), ('1.29.7', 1), ('1.29.8', 1), ('1.29.1', 2)):
                 prelude = ('hl={plugin={window_stash_preview={status=function() return '
                            '{protocol='+str(protocol)+',version="'+loaded+'"} end,'
                            'update=function() end,interaction_update=function() end,'
@@ -509,7 +543,10 @@ class PreviewCompatibilityTests(unittest.TestCase):
                 result = subprocess.run(['lua', '-'], input=prelude+probe, text=True, capture_output=True)
                 compatible = {'1.29.2': ('1.29.1',), '1.29.3': ('1.29.1', '1.29.2'),
                               '1.29.4': ('1.29.1', '1.29.2', '1.29.3'),
-                              '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4')}
+                              '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4'),
+                              '1.29.6': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5'),
+                              '1.29.7': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5', '1.29.6'),
+                              '1.29.8': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5', '1.29.6', '1.29.7')}
                 allowed = protocol == 1 and (loaded == expected or loaded in compatible.get(expected, ()))
                 self.assertEqual(result.returncode == 0, allowed, (expected, loaded, protocol, result.stderr))
 

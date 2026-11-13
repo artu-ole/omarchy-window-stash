@@ -89,7 +89,15 @@ ShellRoot {
     onTriggered: {
       try {
         if(root.phase===0) {
+          var intent=root.previewInteractionIntentEpoch
+          root.endPreviewInteraction("stopped")
+          check(root.previewInteractionIntentEpoch===intent+1,"Stop with no native owner did not cancel pending resize intent")
+          intent=root.beginPreviewResize()
+          check(intent===root.previewInteractionIntentEpoch && intent===2,"Resize did not return a new cancellation epoch")
+          root.endPreviewInteraction("preview-resize")
+          check(root.previewInteractionIntentEpoch===intent,"Acknowledged resize pause invalidated its own resume intent")
           check(root.activate("first"),"Explicit activation failed")
+          check(root.previewInteractionIntentEpoch===intent+1,"A new interaction did not replace the prior resize intent")
           root.firstSerial=root.previewInteractionRequest.serial
         } else if(root.phase===1) {
           check(root.created===1 && root.previewInteractionWorker,"Activation did not create one input worker")

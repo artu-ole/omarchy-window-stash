@@ -1,6 +1,6 @@
 # Window Stash
 
-![Static dock, floating dock, floating icons and window previews.](preview.png)
+![Window Stash: static dock, floating dock, floating icons and floating previews, with geometry preservation, app grouping, multi-monitor support and theme matching.](preview.png)
 
 Window minimization for **tiling layouts** in Omarchy/Hyprland. Windows stay running
 in a private workspace and restore to the original or current workspace. Floating
@@ -55,18 +55,20 @@ overrides are preserved.
 
 | Input | Action |
 |---|---|
-| Super+D | Stash focused window. |
+| Super+D | Minimize the focused window, or fold the hovered preview into an icon. |
 | Super+Z | Restore newest eligible window: last in, first out. |
 | Super+Alt+Z | Restore oldest eligible window: first in, first out. |
-| Click icon | Restore; multi-window app groups open a searchable chooser. Floating stacks unfold first. |
+| Click icon | Restore; folded previews unfold first. App groups open a chooser; floating stacks unfold. |
 | Click preview | Restore; app covers expand into individual window thumbnails. |
 | Preview Interact control | Enter interaction; optional first-click activation consumes the activating click. |
+| Super+left click preview content | Enter interaction without restoring or clicking the app; app covers open their window choices first. |
 | Interactive preview content | Application clicks, scrolling, selection and dragging; typing when click-to-focus keyboard input is enabled. |
 | Ctrl+Alt+Escape / Stop | Leave preview interaction. The shortcut is configurable; plain Escape reaches the application. |
 | Right-click icon/stack | Pointer-positioned window/app menu, Settings, recovery and Close all. |
 | Middle-click icon/view-only thumbnail | Close represented stashed window(s). Unstashed instances are unaffected. |
 | Thumbnail title × | Close the represented stashed window(s); requires a title strip. |
 | Drag | Move floating items or an unlocked static dock. Resize a floating preview from a corner. Scroll overflowing lists. |
+| Super + corner drag preview | Change width and height independently, keeping the opposite corner fixed. |
 | Arrow keys / Enter | Navigate and select in choosers, unfolded docks or preview groups. |
 | Escape / outside click | Dismiss menus, choosers, hover previews and expanded groups/stacks. |
 
@@ -143,6 +145,7 @@ hover delays or coasting momentum.
 
 Floating previews are borderless and untitled by default. Drag a side to change
 proportions and reflow the hidden app; corners scale the current proportions.
+Hold Super while dragging a corner to reshape both dimensions freely.
 Position, width and custom proportions persist separately from floating icons.
 Right-click **Reset preview proportions** to return to the original ratio. Lock
 placement prevents movement and resizing; Free sizing hides the scale dropdown.
@@ -151,16 +154,27 @@ Reshaping preserves the window's original restoration geometry and scrolling wid
 App-group covers reflow only their displayed window; expanded thumbnails keep
 automatic sizing. Stashing another window or starting live updates does not reshape
 existing sources. Interaction waits for the app's resized content and a fresh
-preview frame; use Stop/Manage before resizing an interactive miniature.
+preview frame. Enable **Resize while interacting** to keep handles available
+during interaction. App input pauses during the drag and resumes when ready.
 
 | Key | Default | Values / meaning |
 |---|---|---|
 | `floatingPreviewSizing` | `free` | `free`: resize directly; `preset`: use the scale dropdown |
 | `floatingPreviewScale` | `"100"` | Same nine percentage presets; 100% is 280 logical px wide, bounded by screen area |
 | `floatingPreviewUpdate` | `hover` | `still`: snapshot; `hover`: live on hover; `live`: always live |
+| `floatingPreviewResizeRate` | `realtime` | `realtime`: Responsive; `balanced`: fewer drag updates; `release`: reflow the app after release |
 | `floatingPreviewTitles` | `hidden` | `hidden`, `shown`; optional title strip and close button |
 | `floatingPreviewFrame` | `hidden` | `hidden`, `shown`; optional background and border |
 | `floatingPreviewLock` | `unlocked` | `unlocked`, `locked`; retain placement and dimensions |
+
+Snapshot previews temporarily update live during Responsive/Balanced side or Super-corner drags,
+then return to Snapshot on release. Ordinary corner resizing keeps its existing capture policy.
+
+Minimize while hovering a preview to fold it into a floating icon. Clicking that
+icon returns to the preview; restoring again returns the full window. Newest/FIFO
+shortcuts follow the same stages without changing stash order. Icon and preview
+positions persist separately; folded icons use the existing appearance, size and
+placement settings. App covers fold as a group; individual thumbnails fold separately.
 
 Click restores; dragging moves; middle-click closes; right-click opens the window
 menu. Grouped cards expand into a bounded grid for exact-window selection.
@@ -170,11 +184,12 @@ Optional interaction is configured under **Preview interaction**:
 | Key | Default | Values / meaning |
 |---|---|---|
 | `floatingPreviewInteraction` | `off` | `off`, `on`; floating previews only |
-| `floatingPreviewActivation` | `explicit` | `explicit`: Interact control/context action; `click`: first click enters interaction without forwarding that click |
+| `floatingPreviewActivation` | `explicit` | `explicit`: Interact control/context action; `click`: first click enters interaction without forwarding that click. Super+left click is available with either setting |
 | `floatingPreviewKeyboard` | `mouse` | `mouse`: pointer only; `click`: content click also acquires keyboard focus; hover never does |
 | `floatingPreviewFullscreen` | `preview` | `preview`: fullscreen stays inside the miniature; `desktop`: restore the window for fullscreen |
 | `floatingPreviewInteractionFps` | `"60"` | `"30"`, `"60"`; active preview rendering limit |
 | `floatingPreviewControls` | `hover` | `hover`, `always`; controls stay visible during interaction |
+| `floatingPreviewInteractionResize` | `off` | `off`, `on`; optional resize handles during interaction |
 | `floatingPreviewExitShortcut` | `CTRL + ALT + Escape` | Session-only exit chord; empty disables it. Occupied desktop shortcuts are rejected. |
 
 Interact makes one window receive normal left/right/middle clicks, wheel input and
@@ -199,7 +214,7 @@ moving or resizing becomes available. Movement/physics pauses during interaction
 the source geometry remains unchanged. Outside clicks stop interaction and reach
 their destination once; moving the pointer away alone keeps it active.
 
-Interaction loads native support automatically and uses live capture independently
+Enabling interaction prepares native support automatically and uses live capture independently
 of the ordinary snapshot/hover and Standard/Enhanced preferences. Its setup
 requirements are the same as Enhanced previews below. Pointer-locked applications,
 cross-window drag-and-drop and input-method popup positioning require the restored

@@ -68,7 +68,7 @@ def main():
     assert not command('list')['windows'], 'Interactive acceptance requires an empty disposable stash'
     with tempfile.TemporaryDirectory(prefix='stash-interactive-ui-') as temporary, NativeSession() as session:
         for key, value in dict(presentation='previews', scope='workspace', grouping='window',
-                               floatingPreviewInteraction='on', floatingPreviewActivation='explicit',
+                               floatingPreviewInteraction='on', floatingPreviewInteractionResize='on', floatingPreviewActivation='explicit',
                                floatingPreviewKeyboard='mouse', floatingPreviewInteractionFps='60', floatingPreviewControls='hover',
                                floatingPreviewUpdate='still', livePreviewCompatibility='standard', hoverPreview='off',
                                floatingPreviewSizing='free', floatingPreviewTitles='hidden', floatingPreviewFrame='hidden',
@@ -90,7 +90,7 @@ def main():
         before = len(events(log, 'press'))
         start(session, record)
         assert len(events(log, 'press')) == before, 'Interact control also clicked the hidden application'
-        assert not card(session, record)['resizable'], 'Active miniature allowed accidental content resizing'
+        assert card(session, record)['resizable'], 'Active miniature lost its management resize handles'
         for button in (272, 273, 274):
             before = len(events(log, 'press'))
             source_click(session, record, button=button)

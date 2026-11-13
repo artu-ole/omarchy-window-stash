@@ -1,5 +1,182 @@
 # Validation
 
+## v1.36.1 — optional interactive resize handles — 14 November 2026
+
+**Resize while interacting** (`floatingPreviewInteractionResize`) is now an
+Off/On setting, defaulting to Off. Disabling it hides and disables active handles
+and returns their rectangles to application input. View-only resizing remains
+available. Enabling it retains the acknowledged pause/resize/resume behavior.
+
+Full automated checks cover the setting's validation/default/reset behavior,
+all **45 preferences**, active handle visibility and input exclusions, unchanged
+view-only resizing, opt-in behavior and cancellation during pending native
+release. Native bridge version remains **1.29.8**.
+
+## v1.36.0 — resizing during interaction — 13 November 2026
+
+Active, free and unlocked previews keep eight resize handles. Handle presses
+pause input; geometry waits for acknowledged release, including a mouse-up that
+arrives before acknowledgment. The latest target wins, and the exact preview
+resumes with a fresh owner after its matching frame arrives. Stop, outside
+actions, replacement, policy/lifecycle changes and errors cancel stale intent.
+Application drags retain their implicit grab when crossing a resize handle.
+
+The complete check passes **393 Python tests**, **16 Node suites**, **seventeen
+offscreen Qt suites**, **123 Python syntax checks**, manifest validation and
+warning-free QML lint. Qt coverage includes delayed acknowledgments, early
+release, same-turn movement/release after acknowledgment, fresh-frame gating,
+initial handle exclusion before capability readiness, explicit cancellation,
+source replacement and Service intent epochs.
+
+`python3 tests/preview_interactive_resize.py` passed in the disposable compositor:
+ordinary corners, sides and Super corners; fresh-owner input mapping; same-frame
+inward movement and release; focused keyboard input with held Super cleanup;
+application drags across handles; locked/preset restrictions; release-only
+updates; Stop while an owned suspended client delays its new frame; and exact
+original restoration. No management clicks reached the application.
+
+Native **1.29.8** compiled without warnings. Production-code ASAN tests verify
+Qt management ownership across input teardown, additional physical buttons,
+reload barriers, source implicit grabs, continuing Super motion and teardown
+that would otherwise refocus and cancel the held gesture. Older bridges retain
+ordinary interaction; active resizing waits for verified support.
+
+The existing four-corner and Super-click native suites also pass, including
+public-window dragging, grouped target replacement and held-Super cleanup. The
+private session finishes with no clients, stash records, captures, owners, held
+or pending input, and a healthy lifecycle.
+
+## v1.35.0 — Super corner resizing — 13 November 2026
+
+Super + corner drag resizes both preview dimensions independently around the
+fixed opposite corner. Ordinary corner dragging retains the chosen proportions.
+Source reflow follows the existing resize-update preference and fresh-frame gate;
+original restoration geometry is unchanged. Locked and preset previews do not
+resize. No new preferences are introduced.
+
+The complete check passes **391 Python tests**, **16 Node suites**, **sixteen
+offscreen Qt suites**, **121 Python syntax checks**, manifest validation and
+warning-free QML lint. Geometry tests cover all corners, chrome, small work areas,
+extreme proportions and client-accepted constraints. Qt tests cover source reflow,
+opposite anchors, cancellation, controls, exact identity and capability readiness.
+
+`python3 tests/preview_super_corner.py` passed in the explicit disposable desktop:
+all four physical Super corner gestures, interaction off/on, a fast pointer jump
+outside the original input mask, source allocations and fresh captures, unchanged
+underlying windows and stash metadata, ordinary proportional corners, locked and
+preset restrictions, Super content activation without click leakage, and exact
+full-window restoration. The native bridge **1.29.7** compiled without warnings;
+ASAN tests cover held pairs, motion, click cancellation, layer lifetime and reload.
+
+## v1.34.0 — responsive side resizing — 13 November 2026
+
+Continuous side dragging now throttles source updates instead of restarting a
+debounce timer on every movement. Resize updates offers Responsive (default),
+Balanced and On release. Each source keeps its latest target; a final update
+flushes only that source and verifies readiness asynchronously. Snapshot previews
+temporarily update live during Responsive/Balanced side drags and retain their
+saved policy afterward. Repeated resize targets no longer rewrite unchanged
+ledger data after the initial resize marker is saved.
+
+The complete check passes **389 Python tests**, **16 Node suites**, **sixteen
+offscreen Qt suites**, **120 Python syntax checks**, manifest validation and
+warning-free QML lint. Sustained-event Qt tests verify dispatch during motion,
+bounded latest-only drafts, release-only behavior, per-source final flushing,
+continued timers for other sources, stale epochs and fresh-frame input gating.
+Defaults, validation and reset fixtures include all **44 preferences**.
+
+The private compositor's responsive GTK fixture received approximately 12 ms
+pointer events through a 1.088-second drag. The final run committed 13 app updates
+in Responsive, with the first at 81.8 ms; Balanced committed 11, first at 124.7 ms;
+On release committed none before mouse-up. Measurements describe this isolated
+fixture and remain dependent on application and machine performance. A rapid
+84 ms vertical drag retained its final target, native committed geometry and
+fresh capture. Original floating restoration geometry remained unchanged.
+
+Actual Settings dropdown interaction selected and persisted all three labels,
+hid the field under Preset sizing and restored it under Free sizing without
+losing its value. Both live presets returned to the saved Snapshot policy after
+release. The private desktop ended with no capture/input/render leases or pending
+cleanup and a healthy lifecycle.
+
+Native command: `python3 tests/preview_resize_rate.py` inside the explicit disposable
+desktop. `--cadence-only` repeats the drag proof without the Settings walkthrough.
+Native bridge version remains **1.29.6**.
+
+## v1.33.0 — staged preview minimization — 13 November 2026
+
+Floating previews fold into icons when minimized under the pointer. Icon
+activation returns to the remembered preview; newest/FIFO shortcuts unfold one
+stage before full restoration without changing record order. App covers and
+individual expanded thumbnails retain their grouping semantics. No new preference
+or native bridge version is introduced.
+
+The complete check passes **388 Python tests**, **16 Node suites**, **sixteen
+offscreen Qt suites**, **119 Python syntax checks**, manifest validation and
+warning-free QML lint. Backend coverage includes atomic exact-identity group
+updates, active-input rejection, strict folded flags, unchanged snapshots and
+positions, ordinary full restoration, staged selection and managed binding
+migration. Input/render helpers revalidate under the final acquisition lock;
+folding during a native build or before acquisition cannot revive hidden input.
+
+Qt coverage verifies separated preview/icon groups, icon appearance and physics,
+independent saved positions, exact hover and clipped-tile targeting, capture
+suspension, fold/unfold motion and settled-frame input gating. A zero-sized
+startup layer cannot clamp or overwrite saved icon positions; configured layer
+dimensions restore them exactly.
+
+The isolated compositor exercises real managed shortcuts with fresh cursor
+coordinates, preserving the focused window behind a hovered preview. It verifies
+capture/render/input shutdown, terminal-icon minimize handling, icon dragging,
+custom aspect/position preservation, private shell replacement and repeated
+preview/icon/full-window cycles. Keyboard-active contained fullscreen folds only
+after acknowledged input release; held keys are released once. Native fullscreen
+and the immutable original window geometry survive folding.
+
+The full run also passes actual newest/FIFO keybindings, app-cover and exact-tile
+folding, mixed-stage grouping, context unfolding, middle-close, hover-miss
+minimization, full restoration in another presentation mode, and narrow/wide
+scrolling columns with their original pixel widths.
+
+Run `python3 tests/preview_folding.py --restart-shell --scrolling` in the explicit
+disposable compositor. Desktop automation uses the five-second announcement and
+pauses capture before terminating owned fixtures.
+
+## v1.32.0 — Super-click preview interaction — 13 November 2026
+
+Super+left click on preview content enters interaction after release, without
+restoring the source, clicking its app or moving the window behind it. The native
+listener scopes interception to the actual focused interactive-preview layer;
+stock mouse bindings remain unchanged elsewhere. App covers expand into exact
+window choices, and selecting another preview uses acknowledged input replacement.
+
+The complete check passes **361 Python tests**, **15 Node suites**, **fifteen
+offscreen Qt suites**, **116 Python syntax checks**, manifest validation and
+warning-free QML lint. Native bridge **1.29.6** builds without warnings. Five
+AddressSanitizer checks execute production native code, including shortcut
+pairing, exact layer/modifier scope, stale focus, maximum drag excursion,
+source replacement and reload cancellation. Held shortcut input blocks reload.
+
+Offscreen checks exercise frontmost content and chrome hit testing, negative
+monitor origins, source identity and geometry changes between press/release,
+missing frames, pending geometry, lifecycle readiness, cancellation and clipped
+group tiles. Preparing support takes no rendering/input lease, preserves older
+loaded modules and never silently replaces them.
+
+The isolated compositor reproduces the original stock-binding conflict, then
+verifies the fix with that same consuming Super+left-drag binding enabled. Actual
+GTK input confirms no activating press or orphan release, correct subsequent
+clicks, unchanged private source/card/underlying-window geometry, release of Super
+before the mouse, drag-away-and-back cancellation, locked placement, existing
+explicit/first-click policies, ordinary outside window dragging, group selection
+and keyboard-focused replacement with exactly paired Super key events.
+
+Run `python3 tests/interactive_super_click.py` inside the disposable desktop.
+The `--fresh-support` variant also passes automatic native preparation with
+Standard/Still previews and no previously loaded module, followed by the same
+gesture matrix with stock bindings present after the initial load. All desktop checks use
+the five-second announcement and pause capture before closing owned fixtures.
+
 ## v1.31.0 — free preview proportions — 13 November 2026
 
 Side dragging changes preview proportions and reflows the exact hidden source;

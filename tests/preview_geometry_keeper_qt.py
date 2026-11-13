@@ -27,11 +27,22 @@ ShellRoot {
   property var previewInteractionRequest:null
   property int firstEpoch:0
   property int currentEpoch:0
+  property int moveCount:0
+  property int dispatched:0
+  property bool pointerMoving:false
   QtObject {id:worker;property bool running:false}
-  function enqueue(args) {queue=queue.concat([args])}
+  function enqueue(args) {queue=queue.concat([args]);if(args[0]==="preview-aspect") dispatched++}
   function endPreviewInteraction(reason) {throw new Error("Unexpected input owner")}
   function check(value,message) {if(!value) throw new Error(message)}
 ''' + properties + api + '''
+  Timer {
+    interval:10;repeat:true;running:root.pointerMoving
+    onTriggered: {
+      root.moveCount++
+      root.requestPreviewAspect("first",1+root.moveCount/100,"width",false)
+      root.check(root.queue.length<=1,"Continuous motion accumulated obsolete resize commands")
+    }
+  }
   Timer {
     interval:100;repeat:true;running:true
     onTriggered: {
@@ -52,7 +63,7 @@ ShellRoot {
           check(!previewGeometryState("first").ready && previewGeometryState("first").requestedAspect===3,"A stale completed resize unlocked input")
         } else if(root.phase===2) {
           requestPreviewAspect("first",3.2,"width",true)
-          check(queue.length===1 && queue[0][2]==="3.2" && queue[0].indexOf("--settle")>=0,"Release did not replace the queued draft with a final settle")
+          check(queue.length===1 && queue[0][2]==="3.2" && queue[0].indexOf("--settle")<0,"Release did not flush its latest target without blocking the action worker")
           runningArgs=queue[0];queue=[];worker.running=false
           currentEpoch=previewGeometryState("first").epoch
           previewGeometryResult({ok:true,id:"first",ready:false,aspect:3.2,size:[960,300],nativeRequired:false,reason:"Awaiting client"},runningArgs,currentEpoch)
@@ -78,6 +89,44 @@ ShellRoot {
           check(queue.length===0 && !previewGeometryState("first").ready && previewGeometryState("first").nativeRequired,"Missing native capability polled forever or enabled input")
           snapshot={windows:[]};prunePreviewGeometry()
           check(Object.keys(previewGeometryStates).length===0 && Object.keys(previewGeometryDrafts).length===0,"Removed windows retained resize ownership")
+          snapshot={windows:[{id:"first",phase:"stashed"}],settings:{floatingPreviewResizeRate:"realtime"}}
+          previewGeometryWatchers={};queue=[];dispatched=0;moveCount=0;pointerMoving=true
+        } else if(root.phase===5) {
+          if(moveCount<30) return
+          check(dispatched>=2,"Responsive resizing was postponed until pointer movement stopped")
+          pointerMoving=false
+          requestPreviewAspect("first",4.1,"width",true)
+          check(queue.length===1 && queue[0][2]==="4.1","Responsive release lost its final target")
+          dispatched=0;queue=[];snapshot.settings={floatingPreviewResizeRate:"balanced"}
+          snapshot={windows:snapshot.windows,settings:snapshot.settings}
+          check(previewResizeCadence()===60,"Balanced cadence did not retain its lower update rate")
+          moveCount=0;pointerMoving=true
+        } else if(root.phase===6) {
+          if(moveCount<30) return
+          check(dispatched>=2,"Balanced resizing still behaved like a debounce")
+          pointerMoving=false;requestPreviewAspect("first",4.2,"height",true)
+          check(queue.length===1 && queue[0][2]==="4.2","Balanced release lost its final target")
+          queue=[];dispatched=0
+          snapshot={windows:snapshot.windows,settings:{floatingPreviewResizeRate:"release"}}
+          moveCount=0;pointerMoving=true
+        } else if(root.phase===7) {
+          if(moveCount<30) return
+          check(dispatched===0 && queue.length===0,"On release resized the source during continuous movement")
+          check(Object.keys(previewGeometryDrafts).length===1,"On release did not retain exactly one latest draft")
+          pointerMoving=false
+          snapshot={windows:snapshot.windows.concat([{id:"second",phase:"stashed"}]),settings:snapshot.settings}
+          requestPreviewAspect("second",2,"width",true)
+          check(queue.length===1 && queue[0][1]==="second" && !!previewGeometryDrafts.first,"Another window's final resize prematurely dispatched a held On release draft")
+          queue=[];dispatched=0;requestPreviewAspect("first",4.3,"height",true)
+          check(dispatched===1 && queue.length===1 && queue[0][2]==="4.3","On release failed to flush exactly the final target")
+        } else if(root.phase===8) {
+          check(dispatched===1 && queue.length===1 && queue[0][2]==="4.3","A delayed timer overwrote the released target")
+          queue=[];dispatched=0;snapshot={windows:snapshot.windows,settings:{floatingPreviewResizeRate:"balanced"}}
+          requestPreviewAspect("first",2,"width",false)
+          requestPreviewAspect("second",2.5,"height",true)
+          check(queue.length===1 && queue[0][1]==="second" && !!previewGeometryDrafts.first,"Finalizing a second source did not keep the first source's latest draft")
+        } else if(root.phase===9) {
+          check(queue.length===2 && queue[1][1]==="first","Finalizing another source stopped the pending Balanced cadence timer")
           console.log("PREVIEW_GEOMETRY_KEEPER_QT_PASS");Qt.quit()
         }
         root.phase++
@@ -93,4 +142,4 @@ ShellRoot {
     output=result.stdout+result.stderr
     assert result.returncode==0 and 'PREVIEW_GEOMETRY_KEEPER_QT_PASS' in output,output
     assert not any(message in output for message in ('Binding loop','ReferenceError','TypeError','Cannot assign','Cannot read')),output
-    print('Qt preview geometry: coalesced resize, final settle, stale epochs, accepted geometry, bounded polling ownership and missing-native input gate passed')
+    print('Qt preview geometry: sustained Responsive/Balanced throttling, release-only updates, bounded latest-only drafts, immediate final target, asynchronous readiness and stale-frame input gates passed')

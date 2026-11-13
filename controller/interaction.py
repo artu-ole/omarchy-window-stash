@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Own one verified preview input lease; compositor hooks route actual events."""
+import argparse
 import contextlib
 import json
 import math
@@ -22,6 +23,8 @@ RESTART_REQUIRED = 'Reload preview support in Window Stash Settings to use inter
 FULLSCREEN_REQUIRED = 'Reload preview support in Window Stash Settings to keep fullscreen inside a preview, or choose Fullscreen: On desktop'
 GEOMETRY_REQUIRED = 'Reload preview support in Window Stash Settings to interact with a reshaped preview'
 GEOMETRY_PENDING = 'The application has not finished resizing its preview'
+SHORTCUT_REQUIRED = 'Reload preview support in Window Stash Settings to use Super+left click'
+CORNER_RESIZE_REQUIRED = 'Reload preview support in Window Stash Settings to resize preview corners with Super'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
 RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
@@ -150,6 +153,21 @@ class InteractionBridge(PreviewBridge):
         super().ensure()
         self.hypr.eval(self.interaction_probe)
 
+    def prepare_shortcut(self, resize=False):
+        # Prepare interception before the first click, including Standard/Still
+        # previews. This takes no input/rendering lease and never replaces a
+        # loaded bridge. Older bridges retain their ordinary Interact control.
+        self.ensure()
+        with self.operation():
+            supported = self.hypr.call('repl', self.interaction_probe
+                + 'return info.capabilities and info.capabilities.superClickActivation==true'
+                + (' and info.capabilities.superCornerResize==true' if resize else '')+' or false')
+            interactive_resize = resize and supported == 'true' and self.hypr.call('repl', self.interaction_probe
+                + 'return info.capabilities and info.capabilities.interactiveResize==true or false') == 'true'
+        if supported != 'true':
+            raise RuntimeError(CORNER_RESIZE_REQUIRED if resize else SHORTCUT_REQUIRED)
+        return dict(state='ready', cornerResize=True, interactiveResize=interactive_resize) if resize else dict(state='ready')
+
     def interaction_update(self, owner, source, target):
         with self.operation():
             return self._interaction_update(owner, source, target)
@@ -216,6 +234,8 @@ class InteractionKeeper:
 
     def _validated_source(self, target, settings, saved):
         if settings['presentation'] != 'previews' or settings['floatingPreviewInteraction'] != 'on':
+            return None
+        if any(record.get('id') == target['id'] and record.get('previewFolded') is True for record in saved):
             return None
         sources = preview_records(saved, self.stash.hypr.read('clients'), [target['id']])
         monitors = [monitor for monitor in self.stash.hypr.read('monitors') if monitor.get('name') == target['monitor']]
@@ -310,6 +330,7 @@ class InteractionKeeper:
                 self.terminal = dict(state='ended', id=target['id'], serial=target['serial'], reason='Preview changed while interaction was starting')
                 return self.terminal
         identity, parameters = source
+        verified_parameters = dict(parameters)
         if self.bound_source is not None and identity != self.bound_source:
             return self._finish(target, dict(active=False, reason='window-unavailable'))
         if self.acquired and self.keyboard_policy != parameters['keyboard']:
@@ -324,8 +345,18 @@ class InteractionKeeper:
         self.bound_source = dict(identity)
         self.keyboard_policy = parameters['keyboard']
         self.fullscreen_policy = parameters['fullscreen']
-        self.acquired = True  # Also release an acquisition that fails halfway.
-        status = self.bridge.interaction_update(self.owner, identity, parameters)
+        with self.bridge.operation() if isinstance(self.bridge, PreviewBridge) else contextlib.nullcontext(), self.stash.locked():
+            # Serialize the last authoritative check with fold commits. Builds
+            # remain outside the ledger lock; stale snapshots cannot reacquire
+            # input after the UI has switched this window to its folded icon.
+            fresh = self._validated_source(target, self.stash.settings(), list(self.stash.state['windows']))
+            if fresh is None or fresh[0] != identity or fresh[1] != verified_parameters:
+                self.close()
+                self.terminal = dict(state='ended', id=target['id'], serial=target['serial'],
+                                     reason='Preview changed before interaction was acquired')
+                return self.terminal
+            self.acquired = True  # Also release an acquisition that fails halfway.
+            status = self.bridge.interaction_update(self.owner, identity, parameters)
         self._verify_status(status, target)
         if not status['active']:
             return self._finish(target, status)
@@ -377,6 +408,11 @@ def run_loop(stream, keeper, emit):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--prepare', action='store_true',
+                        help='Prepare preview Super-click/resize gestures without acquiring input or rendering')
+    arguments = parser.parse_args()
+
     def emit(value):
         print(json.dumps(value), flush=True)
 
@@ -385,6 +421,21 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    if arguments.prepare:
+        try:
+            settings = Stash().settings()
+            resize = (settings.get('floatingPreviewSizing', 'free') != 'preset'
+                      and settings.get('floatingPreviewLock', 'unlocked') != 'locked')
+            if settings['presentation'] != 'previews' or (settings['floatingPreviewInteraction'] != 'on' and not resize):
+                emit(dict(state='disabled'))
+            else:
+                emit(InteractionBridge(progress=emit).prepare_shortcut(resize=resize))
+            return 0
+        except PreviewStopped:
+            return 0
+        except Exception as error:
+            emit(dict(state='unavailable', error=str(error)))
+            return 1
     disconnected = select.poll()
     disconnected.register(sys.stdin.fileno(), select.POLLHUP | select.POLLERR | select.POLLNVAL)
     bridge = InteractionBridge(progress=emit, cancelled=lambda: bool(disconnected.poll(0)))

@@ -51,6 +51,7 @@ ShellRoot {
     property var previewInteractionRequest:null
     property var previewInteractionPendingRequest:null
     property bool previewInteractionStopping:false
+    property bool previewInteractiveResizeReady:true
     property var lifecycleReady:undefined
     property bool deferStop:false
     property var previewInteractionStatus:({state:"idle"})
@@ -123,23 +124,50 @@ ShellRoot {
           fake.lifecycleReady=true
           check(interact.enabled,"Lifecycle readiness did not re-enable Interact")
           check(!one().titleVisible && !one().frameVisible,"Interaction added permanent title/frame chrome")
+          check(one().canResize && one().details().resizeRects.every(function(handle) {return handle.enabled}),
+            "Default-off interaction resizing removed ordinary view-only handles")
           one().activatePrimary()
           check(fake.restored==="first" && fake.begun===0,"Explicit default stopped ordinary click-to-restore")
           fake.restored="";setting("floatingPreviewActivation","click")
+          fake.previewInteractiveResizeReady=false
           one().activatePrimary()
           check(fake.restored==="" && fake.begun===1,"First-click activation was forwarded as restore")
+          check(!one().canResize && one().nativeExcludeRects().length===1,
+            "Missing interaction-resize preference did not preserve full application content")
+          check(one().details().resizeRects.every(function(handle) {return !handle.enabled && !handle.visible}),
+            "Default-off interaction resizing left distracting active handles")
+          var bounds=one().nativeImageRect()
+          check(one().shortcutHit(bounds.x+1,bounds.y+1),"Default-off handles kept a dead corner inside application content")
+          setting("floatingPreviewInteractionResize","on");one().syncNativeInteraction()
+          check(!one().canResize && fake.previewInteractionRequest.excludeRects.length===9,
+            "Preparing native support failed to reserve handles before enabling active resizing")
+          fake.previewInteractiveResizeReady=true
         } else if(root.phase===1) {
-          check(one().interactionActive && !one().canMove && !one().canResize,"Active application content remained a miniature drag/resize target")
+          check(one().interactionActive && !one().canMove && one().canResize,"Active preview did not retain protected resize handles")
           check(image(one()).mode==="live" && previews.config.floatingPreviewUpdate==="still","Active interaction did not force live capture independently")
           check(previews.details().world.bodies[0].frozen,"Active miniature physics was not frozen")
           var request=fake.previewInteractionRequest,details=one().details()
           near(request.rect.x,-1600+one().x+2,"Source mapping ignored negative monitor origin or actual captured inset")
           near(request.rect.y,50+one().y+3,"Source mapping ignored actual captured content origin")
           near(request.rect.width,one().width-4,"Source mapping used card width instead of actual image width")
-          check(details.interaction.controlsVisible && request.excludeRects.length===1,"Active controls were not excluded from application input")
+          check(details.interaction.controlsVisible && request.excludeRects.length===9,"Active controls and eight handles were not excluded from application input")
+          details.resizeRects.forEach(function(handle) {
+            check(handle.enabled,"An active resize handle was disabled")
+            var point={x:-1600+handle.rect.x+handle.rect.width/2,y:50+handle.rect.y+handle.rect.height/2}
+            check(request.excludeRects.some(function(rect) {return point.x>=rect.x && point.x<=rect.x+rect.width
+              && point.y>=rect.y && point.y<=rect.y+rect.height}),"An active handle would forward its press to the application")
+          })
           check(details.interaction.controlsOutside && previews.inputRegions.length===2,"Active controls did not detach into their own bounded input region")
           check(!Interaction.intersection(request.rect,request.excludeRects[0]),"Detached controls still obstruct the interactive application image")
           check(request.excludeRects[0].x>=request.rect.x && request.excludeRects[0].width>0,"Control exclusion escaped the full image transform")
+          setting("floatingPreviewInteractionResize","off");one().syncNativeInteraction()
+          check(!one().canResize && one().nativeExcludeRects().length===1,
+            "Disabling active handles retained reserved application content")
+          check(one().details().resizeRects.every(function(handle) {return !handle.enabled && !handle.visible}),
+            "Disabling active handles left a visible or enabled resize target")
+          check(!one().beginResizeGesture("right",false),"A disabled active handle accepted resizing")
+          setting("floatingPreviewInteractionResize","on");one().syncNativeInteraction()
+          check(one().canResize && one().nativeExcludeRects().length===9,"Re-enabling active handles lost their protected input bounds")
           var count=fake.begun;one().activatePrimary();check(fake.begun===count,"Clicking active content rearmed the native owner")
           image(one()).sourceSize=Qt.size(1200,600)
         } else if(root.phase===2) {

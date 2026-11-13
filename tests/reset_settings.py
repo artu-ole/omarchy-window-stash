@@ -110,9 +110,9 @@ def main():
                       dockCornerRadius=39, iconFrame='shown', dockFrame='shown', animations='off', animationSpeed='ultrafast',
                       dockOpacity=33, iconOpacity=44, hoverPreview='still', livePreviewCompatibility='enhanced', previewSize='large', previewPlacement='above',
                       previewTitles='hidden', previewDelay=75, previewHideDelay=87,
-                      floatingPreviewSizing='preset', floatingPreviewScale='150', floatingPreviewUpdate='live',
+                      floatingPreviewSizing='preset', floatingPreviewScale='150', floatingPreviewUpdate='live', floatingPreviewResizeRate='release',
                       floatingPreviewTitles='shown', floatingPreviewFrame='shown', floatingPreviewLock='locked',
-                      floatingPreviewInteraction='on', floatingPreviewActivation='click', floatingPreviewKeyboard='click',
+                      floatingPreviewInteraction='on', floatingPreviewInteractionResize='on', floatingPreviewActivation='click', floatingPreviewKeyboard='click',
                       floatingPreviewInteractionFps='30', floatingPreviewControls='always', floatingPreviewFullscreen='desktop', floatingPreviewExitShortcut=chords[3],
                       minimizeShortcut=chords[0], restoreLastShortcut=chords[1], restoreOldestShortcut=chords[2])
         assert set(custom) == set(DEFAULTS), 'Reset fixture does not exercise every current preference'

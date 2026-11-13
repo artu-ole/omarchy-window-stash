@@ -3,13 +3,13 @@
 local mode = ...
 local manager = _community_window_stash_shortcuts
 if not manager then
-  manager = { version = 2, cache = {} }
+  manager = { version = 3, cache = {} }
   _community_window_stash_shortcuts = manager
-elseif manager.version ~= 2 then
+elseif manager.version ~= 3 then
   -- Keep exact historical handles visible to conflict checking: bind JSON
   -- omits their enabled state, so discarding the cache makes them look foreign.
   for _, record in pairs(manager.cache or {}) do record.handle:set_enabled(false) end
-  manager.version = 2
+  manager.version = 3
   manager.owner = nil
 end
 
@@ -74,11 +74,12 @@ function manager.apply(values, command, owner)
       local chord = values[key]
       assert(type(chord) == 'string', 'Missing shortcut value')
       if chord ~= '' then
-        local identity = key .. '\n' .. chord .. '\n' .. executable
+        local action = actions[key]
+        local route = action[1] .. ' --shortcut'
+        local identity = key .. '\n' .. chord .. '\n' .. executable .. '\n' .. route
         local record = manager.cache[identity]
         if not record or record.handle:is_enabled() == nil then
-          local action = actions[key]
-          local handle = assert(hl.bind(chord, hl.dsp.exec_cmd(executable .. ' ' .. action[1]),
+          local handle = assert(hl.bind(chord, hl.dsp.exec_cmd(executable .. ' ' .. route),
                                         { description = action[2] }), 'Could not create shortcut')
           handle:set_enabled(false)
           record = { handle = handle }

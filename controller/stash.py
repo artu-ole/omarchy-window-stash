@@ -28,13 +28,14 @@ PREFIX = "window-stash-"
 FULLSCREEN_CLEANUP_PENDING = 'Window Stash preview fullscreen cleanup is pending'
 PREVIEW_MAX_DIMENSION = 8192
 PREVIEW_MAX_PIXELS = 16_777_216
+MAX_PREVIEW_FOLD_IDS = 256
 LOCAL_SHORTCUT_DEFAULTS = {"floatingPreviewExitShortcut": "CTRL + ALT + Escape"}
 DEFAULTS = dict(presentation="floating", scope="global", restoreDestination="current", grouping="window", iconShape="auto", sizePreset="100", floatingDirection="vertical", floatingAnimation="arc", dragMotion="physics", dockSide="bottom", staticDockLock="locked", floatingPlacement="edges", dockCorners="theme", dockCornerRadius=12, iconFrame="hidden", dockFrame="hidden", animations="full", animationSpeed="normal", dockOpacity=100, iconOpacity=100,
                 hoverPreview="off", livePreviewCompatibility="standard", previewSize="medium", previewPlacement="auto", previewTitles="shown", previewDelay=400, previewHideDelay=200,
-                floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover",
+                floatingPreviewSizing="free", floatingPreviewScale="100", floatingPreviewUpdate="hover", floatingPreviewResizeRate="realtime",
                 floatingPreviewTitles="hidden", floatingPreviewFrame="hidden", floatingPreviewLock="unlocked",
                 floatingPreviewInteraction="off", floatingPreviewActivation="explicit", floatingPreviewKeyboard="mouse",
-                floatingPreviewInteractionFps="60", floatingPreviewControls="hover", floatingPreviewFullscreen="preview")
+                floatingPreviewInteractionFps="60", floatingPreviewControls="hover", floatingPreviewFullscreen="preview", floatingPreviewInteractionResize="off")
 DEFAULTS.update(shortcuts.DEFAULT_SHORTCUTS)
 DEFAULTS.update(LOCAL_SHORTCUT_DEFAULTS)
 CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=("global", "workspace"),
@@ -48,13 +49,13 @@ CHOICES = dict(presentation=("dock", "bubbles", "floating", "previews"), scope=(
                hoverPreview=("off", "still", "live"), livePreviewCompatibility=("standard", "enhanced"), previewSize=("small", "medium", "large"),
                previewPlacement=("auto", "above", "below", "left", "right"), previewTitles=("shown", "hidden"),
                previewDelay=range(1501), previewHideDelay=range(1001),
-               floatingPreviewSizing=("free", "preset"),
+               floatingPreviewSizing=("free", "preset"), floatingPreviewResizeRate=("realtime", "balanced", "release"),
                floatingPreviewScale=("50", "75", "100", "125", "150", "175", "200", "250", "300"),
                floatingPreviewUpdate=("still", "hover", "live"), floatingPreviewTitles=("shown", "hidden"),
                floatingPreviewFrame=("shown", "hidden"), floatingPreviewLock=("locked", "unlocked"),
                floatingPreviewInteraction=("off", "on"), floatingPreviewActivation=("explicit", "click"),
                floatingPreviewKeyboard=("mouse", "click"), floatingPreviewInteractionFps=("30", "60"),
-               floatingPreviewControls=("hover", "always"), floatingPreviewFullscreen=("preview", "desktop"))
+               floatingPreviewControls=("hover", "always"), floatingPreviewFullscreen=("preview", "desktop"), floatingPreviewInteractionResize=("off", "on"))
 
 
 def lua(value):
@@ -143,6 +144,42 @@ def preview_aspect(value):
     if type(value) not in (int, float) or not math.isfinite(value) or not .02 <= value <= 50:
         raise ValueError('Preview aspect must be a finite number between 0.02 and 50')
     return float(value)
+
+
+def preview_fold_ids(value):
+    if (not isinstance(value, (list, tuple)) or not 1 <= len(value) <= MAX_PREVIEW_FOLD_IDS
+            or any(not isinstance(item, str) or not re.fullmatch(r'[0-9a-f]{32}', item) for item in value)):
+        raise ValueError('Choose between 1 and 256 exact stash record IDs')
+    return list(dict.fromkeys(value))
+
+
+def forward_shortcut(action, hypr=None):
+    """Ask the live shell to interpret one shortcut before acquiring any locks."""
+    methods = {'restore-last': 'restoreLast', 'restore-oldest': 'restoreOldest'}
+    arguments = ['omarchy-shell', 'window-stash']
+    if action == 'minimize':
+        point = (hypr or Hyprland()).read('cursorpos')
+        if (not isinstance(point, dict) or any(type(point.get(axis)) not in (int, float)
+                or not math.isfinite(point[axis]) or abs(point[axis]) > 1_000_000 for axis in ('x', 'y'))):
+            raise RuntimeError('Could not read the current pointer position')
+        arguments.extend(['minimizeAt', str(point['x']), str(point['y'])])
+    elif action in methods:
+        arguments.append(methods[action])
+    else:
+        raise ValueError('Unknown Window Stash shortcut action')
+    try:
+        result = subprocess.run(arguments, text=True, capture_output=True, timeout=8)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError('Window Stash could not reach its shell service; no window was minimized') from error
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()[-512:]
+        raise RuntimeError('Window Stash shell shortcut failed'+(': '+detail if detail else ''))
+    if result.stdout.strip():
+        value = json.loads(result.stdout)
+        if not isinstance(value, dict):
+            raise RuntimeError('Window Stash returned an invalid shortcut response')
+        return value
+    return dict(ok=True, action='shortcut', command=action)
 
 
 def preview_source_size(size, aspect, axis):
@@ -388,6 +425,24 @@ return '{"size":['..tostring(width)..','..tostring(height)..'],"ready":'..tostri
     def close_stashed(self, record):
         self.dispatch_owned("window.close", record, parked=True)
 
+    def preview_fold_ready(self, records, folding):
+        # One read-only compositor transaction validates the complete group.
+        # No client, fullscreen, focus, source geometry or workspace is changed.
+        code = 'local accepted={}\n'
+        if folding:
+            wanted = '{'+','.join('['+lua(record['id'])+']=true' for record in records)+'}'
+            code += ('local api=hl.plugin and hl.plugin.window_stash_preview\n'
+                     +'local native=api and type(api.status)=="function" and api.status() or nil\n'
+                     +'local input=native and native.interaction\n'
+                     +'assert(not (input and input.active==true and ('+wanted+')[input.id]),'
+                     +lua('Stop preview interaction before folding this window')+')\n')
+        for record in records:
+            code += ('do local valid=pcall(function()\n'+owned_window_guard(record, parked=True)
+                     +'assert(w.mapped==true,"The preview source is no longer mapped")\nend)\n'
+                     +'if valid then accepted[#accepted+1]='+lua(record['id'])+' end end\n')
+        result = self.call('repl', code+'return table.concat(accepted,",")')
+        return result.split(',') if result else []
+
     def client(self, address):
         return next((c for c in self.read("clients") if c["address"] == address), None)
 
@@ -442,6 +497,8 @@ class Stash:
         record = next((value for value in self.state['windows'] if value['id'] == ident), None)
         if record is None or record.get('phase') != 'stashed':
             raise RuntimeError('The preview window is no longer stashed')
+        if record.get('previewFolded') is True:
+            raise RuntimeError('Unfold this window before preparing its preview')
         current = self.hypr.client(record['address'])
         if (not self.matches(record, current) or record['tag'] not in current.get('tags', [])
                 or current.get('workspace', {}).get('name') != SPECIAL or current.get('mapped') is not True):
@@ -452,6 +509,56 @@ class Stash:
         if not stable:
             raise RuntimeError('The preview source has no stable window identity')
         return record, dict(record, stableId=stable)
+
+    def preview_fold(self, identifiers, folded=True):
+        identifiers = preview_fold_ids(identifiers)
+        if type(folded) is not bool:
+            raise ValueError('Preview folded state must be a boolean')
+        with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
+            with self.locked():
+                return self._preview_fold_locked(identifiers, folded)
+
+    def _preview_fold_locked(self, identifiers, folded):
+        if self.settings()['presentation'] != 'previews':
+            if folded:
+                raise RuntimeError('Folding is available only for floating previews')
+            return dict(ok=True, action='noop', ids=[], previewFolded=False)
+        live = {client['address']: client for client in self.hypr.read('clients')}
+        selected = []
+        for ident in identifiers:
+            record = next((item for item in self.state['windows'] if item['id'] == ident), None)
+            current = live.get(record['address']) if record else None
+            valid = (record and record.get('phase') == 'stashed' and self.matches(record, current)
+                     and record['tag'] in current.get('tags', []) and current.get('mapped') is True
+                     and current.get('workspace', {}).get('name') == SPECIAL)
+            if not valid:
+                if folded:
+                    raise RuntimeError('The preview window changed or left the stash')
+                continue
+            stable = record.get('stableId') or current.get('stableId')
+            if not isinstance(stable, str) or not re.fullmatch(r'(?:0x)?[0-9a-fA-F]+', stable):
+                if folded:
+                    raise RuntimeError('The preview source has no stable window identity')
+                continue
+            selected.append((record, dict(record, stableId=stable)))
+        if not selected:
+            return dict(ok=True, action='noop', ids=[], previewFolded=folded)
+        ready = set(self.hypr.preview_fold_ready([identity for _, identity in selected], folded))
+        if folded and ready != {record['id'] for record, _ in selected}:
+            raise RuntimeError('The preview window changed or left the stash')
+        changed = []
+        for record, _ in selected:
+            if record['id'] not in ready or (record.get('previewFolded') is True) == folded:
+                continue
+            record['previewFolded'] = folded
+            changed.append(record['id'])
+        if changed:
+            self.save()
+            if folded:
+                for ident in changed:
+                    self._release_preview_geometry(ident)
+        return dict(ok=True, action=('preview-fold' if folded else 'preview-unfold') if changed else 'noop',
+                    ids=changed, previewFolded=folded)
 
     def preview_geometry(self, ident):
         with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
@@ -509,9 +616,13 @@ class Stash:
         requested = preview_source_size(before['size'], aspect, axis)
         changed = requested != before['size']
         if changed:
-            record['previewResized'] = True
+            # Persist the safety marker before the first source mutation. The
+            # working viewport is not restoration metadata, so later drag
+            # targets need no ledger rewrite or filesystem refresh traffic.
+            if record.get('previewResized') is not True:
+                record['previewResized'] = True
+                self.save()
             identity['previewResized'] = True
-            self.save()
             result = self.hypr.preview_geometry(identity, requested, expected_size=before['size'])
         else:
             result = before
@@ -876,16 +987,24 @@ end''' % (lua("address:"+address), lua(destination), lua(column_width), lua(widt
                     shortcutDefaults=dict(shortcuts.DEFAULT_SHORTCUTS, **LOCAL_SHORTCUT_DEFAULTS),
                     statePath=str(self.path), positions=read_json(self.positions, {}))
 
-    def restore_last(self, to=None, monitor=None, workspace=None):
+    def restore_last(self, to=None, monitor=None, workspace=None, stage=False):
         self.reconcile(self.hypr.read("clients"))
         _, current = self.invoke_context(monitor, workspace)
         choices = eligible(self.state["windows"], current, self.settings()["scope"])
+        if stage and choices and choices[0].get('previewFolded') is True and self.settings()['presentation'] == 'previews':
+            with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
+                result = self._preview_fold_locked([choices[0]['id']], False)
+            return dict(result, id=choices[0]['id'])
         return self.restore(choices[0]["id"], to, monitor, workspace) if choices else {"ok":True,"action":"noop"}
 
-    def restore_oldest(self, to=None, monitor=None, workspace=None):
+    def restore_oldest(self, to=None, monitor=None, workspace=None, stage=False):
         self.reconcile(self.hypr.read("clients"))
         _, current = self.invoke_context(monitor, workspace)
         choices = eligible(self.state["windows"], current, self.settings()["scope"])
+        if stage and choices and choices[-1].get('previewFolded') is True and self.settings()['presentation'] == 'previews':
+            with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
+                result = self._preview_fold_locked([choices[-1]['id']], False)
+            return dict(result, id=choices[-1]['id'])
         return self.restore(choices[-1]["id"], to, monitor, workspace) if choices else {"ok":True,"action":"noop"}
 
     def recover_focused(self):
@@ -1036,12 +1155,16 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     minimize = sub.add_parser("minimize", help="Stash the focused window")
     minimize.add_argument("--address")
+    minimize.add_argument("--shortcut", action="store_true", help=argparse.SUPPRESS)
     for action in ("restore", "restore-last", "restore-oldest", "restore-all", "activate"):
         p = sub.add_parser(action)
         if action in ("restore", "activate"): p.add_argument("id")
         p.add_argument("--to", choices=("current","original"))
         p.add_argument("--monitor")
         p.add_argument("--workspace", type=int)
+        if action in ('restore-last', 'restore-oldest'):
+            p.add_argument('--stage', action='store_true', help='Unfold a folded preview before restoring its window')
+            p.add_argument('--shortcut', action='store_true', help=argparse.SUPPRESS)
     for action in ("close", "close-all"):
         p = sub.add_parser(action, help="Normally close owned stashed windows")
         if action == "close": p.add_argument("ids", nargs="+")
@@ -1077,11 +1200,22 @@ def main(argv=None):
     source_aspect.add_argument("--settle", action="store_true")
     source_geometry = sub.add_parser("preview-geometry", help="Read exact preview source resize readiness")
     source_geometry.add_argument("id")
+    for action in ('preview-fold', 'preview-unfold'):
+        p = sub.add_parser(action, help='Fold or unfold floating previews without restoring their windows')
+        p.add_argument('ids', nargs='+')
     rebase = sub.add_parser("rebase")
     rebase.add_argument("old", type=int)
     rebase.add_argument("new", type=int)
     args = parser.parse_args(argv)
     try:
+        if getattr(args, 'shortcut', False):
+            if (getattr(args, 'address', None) is not None or getattr(args, 'to', None) is not None
+                    or getattr(args, 'monitor', None) is not None or getattr(args, 'workspace', None) is not None
+                    or getattr(args, 'stage', False)):
+                raise ValueError('Shortcut routing cannot be combined with explicit window or restoration selectors')
+            result = forward_shortcut(args.command)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result.get('ok', True) else 1
         if args.command == "reset-settings":
             if not args.confirm:
                 raise ValueError("Resetting settings requires --confirm")
@@ -1102,6 +1236,10 @@ def main(argv=None):
                       if args.command == 'preview-aspect' else stash.preview_geometry(args.id))
             print(json.dumps(result))
             return 0
+        if args.command in ('preview-fold', 'preview-unfold'):
+            result = stash.preview_fold(args.ids, args.command == 'preview-fold')
+            print(json.dumps(result))
+            return 0
         with stash.locked():
             if args.command == "minimize": result=stash.minimize(args.address)
             elif args.command == "restore": result=stash.restore(args.id,args.to,args.monitor,args.workspace)
@@ -1112,8 +1250,8 @@ def main(argv=None):
                     if stash.hypr.client(address):
                         stash.hypr.dispatch("focus",window="address:"+address)
                         result=dict(ok=True,action="activated")
-            elif args.command == "restore-last": result=stash.restore_last(args.to,args.monitor,args.workspace)
-            elif args.command == "restore-oldest": result=stash.restore_oldest(args.to,args.monitor,args.workspace)
+            elif args.command == "restore-last": result=stash.restore_last(args.to,args.monitor,args.workspace,args.stage)
+            elif args.command == "restore-oldest": result=stash.restore_oldest(args.to,args.monitor,args.workspace,args.stage)
             elif args.command == "recover-focused": result=stash.recover_focused()
             elif args.command == "restore-all":
                 context, workspace=stash.invoke_context(args.monitor,args.workspace)
