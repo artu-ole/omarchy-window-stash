@@ -19,6 +19,7 @@ import uuid
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import shortcuts
+from bridge_runtime import bridge_gate
 
 PLUGIN = "community.window-stash"
 SPECIAL = "special:window-stash"
@@ -476,6 +477,12 @@ class Stash:
         return mode == "floating"
 
     def restore(self, ident, to=None, monitor=None, workspace=None, expected=None):
+        # Clearing private client fullscreen and moving the source public must
+        # remain one operation relative to an exclusive native replacement.
+        with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
+            return self._restore(ident, to, monitor, workspace, expected)
+
+    def _restore(self, ident, to=None, monitor=None, workspace=None, expected=None):
         clients = self.hypr.read("clients")
         self.reconcile(clients)
         record = next((r for r in self.state["windows"] if r["id"] == ident or r["address"] == ident), None)

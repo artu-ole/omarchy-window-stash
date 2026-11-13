@@ -1,6 +1,7 @@
 import copy
 import json
 import io
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "controller"))
 from stash import Stash, Hyprland, SPECIAL, LEGACY_SPECIAL, PREFIX, PLUGIN, DEFAULTS, LOCAL_SHORTCUT_DEFAULTS, atomic_json, eligible, lua, restored_geometry, main
 import shortcuts
+from bridge_runtime import BUSY, bridge_gate
 
 
 def monitor(name="eDP-2", ident=0, x=0, width=1920):
@@ -1549,6 +1551,39 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         self.assertEqual(self.stash.restore(ident)['action'],'noop')
         self.assertEqual(self.hypr.commands[before:],[])
         self.assertEqual(replacement,client(pid=200) | dict(stableId='0x222'))
+
+    def test_native_replacement_gate_blocks_restore_before_ipc_or_ledger_changes(self):
+        ident = self.stash.minimize()['id']
+        before = copy.deepcopy(self.stash.state)
+        before_file = self.stash.path.read_bytes()
+        self.stash.hypr = Hyprland()
+        environment = dict(XDG_RUNTIME_DIR=str(self.root/'bridge-runtime'),
+                           HYPRLAND_INSTANCE_SIGNATURE='restore-gate-test')
+        with patch.dict(os.environ,environment), patch.object(self.stash.hypr,'read') as read:
+            with bridge_gate(exclusive=True), self.assertRaisesRegex(RuntimeError,BUSY):
+                self.stash.restore(ident,'current',monitor='eDP-2',workspace=1,expected=before['windows'][0])
+            read.assert_not_called()
+        self.assertEqual(self.stash.state,before)
+        self.assertEqual(self.stash.path.read_bytes(),before_file)
+
+    def test_restore_holds_shared_native_gate_through_completion_and_releases_it_on_errors(self):
+        self.stash.hypr = Hyprland()
+        environment = dict(XDG_RUNTIME_DIR=str(self.root/'bridge-runtime'),
+                           HYPRLAND_INSTANCE_SIGNATURE='restore-gate-test')
+        def finish(*args):
+            self.assertEqual(args,('exact-id','original','eDP-2',3,{'stableId':'18000001'}))
+            with self.assertRaisesRegex(RuntimeError,BUSY), bridge_gate(exclusive=True):
+                self.fail('Native replacement entered during a restore')
+            return {'ok':True,'action':'restored'}
+        with patch.dict(os.environ,environment), patch.object(self.stash,'_restore',side_effect=finish):
+            self.assertEqual(self.stash.restore('exact-id','original','eDP-2',3,{'stableId':'18000001'})['action'],'restored')
+            with bridge_gate(exclusive=True):
+                pass
+        with patch.dict(os.environ,environment), patch.object(self.stash,'_restore',side_effect=RuntimeError('Restore failed')):
+            with self.assertRaisesRegex(RuntimeError,'Restore failed'):
+                self.stash.restore('exact-id')
+            with bridge_gate(exclusive=True):
+                pass
 
     @unittest.skipUnless(shutil.which('lua'),'Standalone Lua interpreter unavailable')
     def test_preview_fullscreen_clear_lua_checks_optional_api_and_exact_identity(self):
