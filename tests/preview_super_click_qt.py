@@ -170,8 +170,11 @@ ShellRoot {
           var tile=previews.tileList().find(function(item) {return item.record.id==="second"})
           check(press(tile) && release(),"Exact grouped tile could not use shortcut input")
           check(fake.previewInteractionRequest.id==="second" && fake.begun===3,"Grouped shortcut selected the wrong member")
-          endInput()
         } else if(root.phase===8) {
+          var replacement=previews.tileList().find(function(item) {return item.record.id==="first"})
+          check(press(replacement) && release(),"An inactive exact tile could not replace another active miniature")
+          check(fake.previewInteractionRequest.id==="first" && fake.begun===4,"Replacement shortcut selected the active or wrong source")
+          endInput()
           var tile=previews.tileList().find(function(item) {return item.record.id==="second"})
           tile.interactionClipRect={x:0,y:0,width:1,height:1}
           check(!press(tile) && !release(),"Clipped group tile accepted invisible input")

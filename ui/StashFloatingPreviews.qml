@@ -71,7 +71,7 @@ Item {
   function tileList() {var result=[];for(var i=0;i<tiles.count;i++) {var tile=tiles.itemAt(i);if(tile) result.push(tile)}return result}
   function cardForKey(key) {return cardList().find(function(card) {return card.key===key}) || null}
   function updateNativeInteractions() {cardList().concat(tileList()).forEach(function(card) {if(card.interactionBusy) card.syncNativeInteraction()})}
-  function shortcutAvailable() {return active && visible && captureAllowed && !blocked && !interacting && config.floatingPreviewInteraction==="on"}
+  function shortcutAvailable() {return active && visible && captureAllowed && !blocked && config.floatingPreviewInteraction==="on"}
   function shortcutCardAt(x,y) {
     if(!shortcutAvailable()) return null
     var candidates=cardList().filter(function(card) {return card.visible && !card.retiring})
