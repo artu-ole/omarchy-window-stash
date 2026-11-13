@@ -224,6 +224,20 @@ Management exclusions remain usable while a session is active. Stop/Restore/Mana
 controls retain their active state until release is acknowledged; a missing helper
 acknowledgement keeps management frozen until the native lease expires.
 
+Active resize handles use the same exclusions. A press on the verified preview
+layer starts a Qt management grab: native application motion, buttons and wheel
+routing stay suspended until every physical management button is released,
+including across input-owner cleanup. Source application implicit grabs retain
+precedence. An owned Super gesture likewise keeps its motion stream when it
+crosses the active image before the helper acknowledges stopping. New application
+input cannot be acquired while management buttons remain held. Reload readiness
+includes `pendingManagementButtons`; `interactiveResize` advertises this handoff
+support independently of ordinary Super corner resizing.
+
+Input-owner cleanup preserves pointer focus while a management or scoped Super
+gesture remains held. Keyboard cleanup still runs during the pause; ordinary
+stops retain pointer refocusing.
+
 Restore, close, identity loss, workspace/display changes, DPMS, screen lock,
 exclusive overlays, pointer constraints, stdin closure, expiry and unload release
 input. Held buttons/keys receive matching cleanup; stale physical releases are

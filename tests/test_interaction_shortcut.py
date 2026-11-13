@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('lua'), 'Standalone Lua interpreter unavailable')
 class ShortcutBridgeTests(unittest.TestCase):
-    def native(self, capability, version=None, resize='true'):
+    def native(self, capability, version=None, resize='true', interactive_resize='true'):
         version = version or (ROOT/'native/version.txt').read_text().strip()
         class Native:
             def eval(self, code):
@@ -30,7 +30,7 @@ class ShortcutBridgeTests(unittest.TestCase):
                     raise AssertionError('Preparing support attempted '+method)
                 prelude = ('local function forbidden() error("UNEXPECTED_INPUT_OR_RENDER_LEASE") end\n'
                     'hl={plugin={window_stash_preview={status=function() return {protocol=1,version='
-                    + lua(version)+',capabilities={superClickActivation='+capability+',superCornerResize='+resize+'}} end,'
+                    + lua(version)+',capabilities={superClickActivation='+capability+',superCornerResize='+resize+',interactiveResize='+interactive_resize+'}} end,'
                     'update=forbidden,release=forbidden,interaction_update=forbidden,'
                     'interaction_release=forbidden,interaction_status=forbidden}}}\n')
                 result = subprocess.run(['lua', '-'], input=prelude+'local value=(function()\n'+code
@@ -48,7 +48,7 @@ class ShortcutBridgeTests(unittest.TestCase):
         bridge = InteractionBridge(self.native('true'))
         self.assertEqual(bridge.prepare_shortcut(), dict(state='ready'))
         self.assertEqual(bridge.prepare_shortcut(), dict(state='ready'))
-        self.assertEqual(bridge.prepare_shortcut(resize=True), dict(state='ready', cornerResize=True))
+        self.assertEqual(bridge.prepare_shortcut(resize=True), dict(state='ready', cornerResize=True, interactiveResize=True))
 
     def test_missing_or_non_boolean_capability_does_not_claim_shortcut_support(self):
         for capability in ('nil', 'false', '1', '"true"', '{}'):
@@ -67,6 +67,15 @@ class ShortcutBridgeTests(unittest.TestCase):
                 self.assertEqual(bridge.prepare_shortcut(), dict(state='ready'))
                 with self.assertRaisesRegex(RuntimeError, re.escape(CORNER_RESIZE_REQUIRED)):
                     bridge.prepare_shortcut(resize=True)
+
+
+    def test_active_resize_capability_is_strict_and_does_not_disable_ordinary_super_corners(self):
+        for capability in ('nil', 'false', '1', '"true"', '{}', 'true'):
+            with self.subTest(capability=capability):
+                bridge = InteractionBridge(self.native('true', version='1.29.7', interactive_resize=capability))
+                self.assertEqual(bridge.prepare_shortcut(resize=True),
+                                 dict(state='ready', cornerResize=True, interactiveResize=capability == 'true'))
+                self.assertEqual(bridge.prepare_shortcut(), dict(state='ready'))
 
 
 class ShortcutPrepareCliTests(unittest.TestCase):
@@ -94,7 +103,7 @@ class ShortcutPrepareCliTests(unittest.TestCase):
                     patch('interaction.InteractionBridge') as bridge, patch('interaction.run_loop') as loop, \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 stash.return_value.settings.return_value = dict(presentation='previews', **settings)
-                ready = dict(state='ready', cornerResize=True) if resize else dict(state='ready')
+                ready = dict(state='ready', cornerResize=True, interactiveResize=True) if resize else dict(state='ready')
                 bridge.return_value.prepare_shortcut.return_value = ready
                 self.assertEqual(main(), 0)
                 self.assertEqual(json.loads(output.getvalue()), ready)
@@ -108,10 +117,10 @@ class ShortcutPrepareCliTests(unittest.TestCase):
                     patch('interaction.InteractionBridge') as bridge, patch('interaction.run_loop') as loop, \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 stash.return_value.settings.return_value = dict(presentation='previews', floatingPreviewInteraction='on')
-                bridge.return_value.prepare_shortcut.return_value = dict(state='ready', cornerResize=True)
+                bridge.return_value.prepare_shortcut.return_value = dict(state='ready', cornerResize=True, interactiveResize=True)
                 bridge.return_value.prepare_shortcut.side_effect = failure
                 self.assertEqual(main(), 1 if failure else 0)
                 self.assertEqual(json.loads(output.getvalue()),
-                                 dict(state='unavailable', error=SHORTCUT_REQUIRED) if failure else dict(state='ready', cornerResize=True))
+                                 dict(state='unavailable', error=SHORTCUT_REQUIRED) if failure else dict(state='ready', cornerResize=True, interactiveResize=True))
                 bridge.return_value.prepare_shortcut.assert_called_once_with(resize=True)
                 loop.assert_not_called()

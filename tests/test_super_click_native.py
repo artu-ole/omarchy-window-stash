@@ -59,7 +59,7 @@ struct Input {
  Vector2D getMouseCoordsInternal() const { return position; }
 };
 struct SeatGrab { bool m_pointer = true; };
-struct Seat { struct { WP<CWLSurfaceResource> pointerFocus; } m_state; SP<SeatGrab> m_seatGrab; };
+struct Seat { struct { WP<CWLSurfaceResource> pointerFocus; } m_state; SP<SeatGrab> m_seatGrab; void sendPointerFrame() {} };
 struct Lock { bool locked = false; bool isSessionLocked() const { return locked; } };
 struct Drag { bool dragging = false; void* target() const { return dragging ? (void*)this : nullptr; } };
 struct Layout { Drag drag; Drag* dragController() { return &drag; } };
@@ -77,11 +77,19 @@ auto g_pEventManager = std::make_unique<EventManager>();
 struct PressedKey { std::string keyName; };
 struct KeybindManager { std::vector<PressedKey> m_pressedKeys; };
 auto g_pKeybindManager = std::make_unique<KeybindManager>();
-struct Interaction { std::set<uint32_t> buttons; };
+struct Interaction { std::set<uint32_t> buttons; std::string owner="source"; uint64_t motionEvents=0; };
 std::optional<Interaction> interaction;
 std::set<uint32_t> releasedButtons;
-bool endingInteraction = false, reloadPending = false, activeContentHit = false;
+std::set<uint32_t> managementButtons;
+bool endingInteraction = false, reloadPending = false, activeContentHit = false, activeManagementHit = false;
 bool contentHit(const Vector2D&) { return activeContentHit; }
+bool managementHit(const Vector2D&) { return activeManagementHit; }
+bool validateInteraction() { return interaction.has_value(); }
+bool currentOwner(const std::string& owner) { return interaction && interaction->owner==owner; }
+int routedMotion=0;
+bool focusPoint(const Vector2D&,uint32_t) {++routedMotion;return true;}
+uint32_t eventTime() {return 0;}
+void endInteraction(const std::string&) {interaction.reset();}
 constexpr uint32_t WL_POINTER_BUTTON_STATE_RELEASED = 0, WL_POINTER_BUTTON_STATE_PRESSED = 1;
 struct IPointer { struct SButtonEvent { uint32_t button, state; }; };
 namespace Event { struct SCallbackInfo { bool cancelled = false; }; }
@@ -174,6 +182,12 @@ int main() {
  assert(release() && lastPhase() == "release" && interaction);
  interaction->buttons.insert(272); assert(!press()); interaction->buttons.clear();
  activeContentHit = true; assert(!press()); activeContentHit = false;
+ // An already scoped Super corner may cross active content before the helper
+ // acknowledges stopping, without cancelling or routing motion to the app.
+ assert(press()); activeContentHit = true;
+ Event::SCallbackInfo superMotion; mouseMove({350,250},superMotion);
+ assert(lastPhase()=="move" && !superClickGesture->cancelled && routedMotion==0 && !superMotion.cancelled);
+ assert(release() && lastPhase()=="drag-release");activeContentHit=false;
  interaction.reset();
  g_pKeybindManager->m_pressedKeys.push_back({"mouse:274"}); assert(!press());
  g_pKeybindManager->m_pressedKeys.clear();
@@ -206,6 +220,32 @@ int main() {
  assert(press()); g_pEventManager->onPost = [] { superClickGesture.reset(); };
  assert(release() && !superClickGesture && lastPhase() == "release");
  g_pEventManager->onPost = {};
+ // Qt owns excluded management buttons across the asynchronous source-input
+ // stop. Motion entering the old image must not steal that implicit grab.
+ g_pInputManager->modifiers=0;interaction.emplace();activeManagementHit=true;
+ Event::SCallbackInfo management;
+ assert(managementButton({272,1},management) && !management.cancelled && managementButtons.size()==1);
+ assert(pointerReleasePending());activeContentHit=true;
+ Event::SCallbackInfo move;mouseMove({330,230},move);
+ assert(routedMotion==0 && !move.cancelled);
+ assert(managementButton({273,1},management) && managementButtons.size()==2);
+ interaction.reset(); // Acknowledged stop does not release physical buttons.
+ assert(pointerReleasePending() && managementButton({272,0},management));
+ assert(pointerReleasePending() && managementButtons.size()==1 && !management.cancelled);
+ assert(managementButton({273,0},management) && !pointerReleasePending());
+ assert(!managementButton({272,0},management));
+ // Existing source grabs, foreign layers, cancelled events, and reload never
+ // become a new management grab; application drags still route normally.
+ interaction.emplace();interaction->buttons.insert(272);
+ assert(!managementButton({273,1},management));
+ mouseMove({330,230},move);assert(routedMotion==1 && move.cancelled);
+ interaction->buttons.clear();
+ Event::SCallbackInfo suppressed{true};assert(!managementButton({272,1},suppressed));
+ g_pSeatManager->m_state.pointerFocus=alternate;assert(!managementButton({272,1},management));
+ g_pSeatManager->m_state.pointerFocus=source;
+ reloadPending=true;assert(!managementButton({272,1},management));reloadPending=false;
+ releasedButtons.insert(274);assert(pointerReleasePending() && !managementButton({272,1},management));releasedButtons.clear();
+ assert(!pointerReleasePending());interaction.reset();
  layer->root.reset(); wrapper->owner.reset(); CWLSurface::current.reset();
 }
 '''
@@ -218,9 +258,10 @@ class SuperClickNativeTests(unittest.TestCase):
         structure = re.search(r'^struct SuperClickGesture \{.*?^\};', source, re.M | re.S)[0]
         state = '\nstd::optional<SuperClickGesture> superClickGesture;\nuint32_t superClickSerial = 0;\n'
         functions = ''.join(production_function(result, name)+'\n' for result, name in (
-            ('bool', 'superClickBlocked'), ('bool', 'superClickSurfaceValid'),
+            ('bool', 'pointerReleasePending'), ('bool', 'superClickBlocked'), ('bool', 'superClickSurfaceValid'),
             ('SP<CWLSurfaceResource>', 'superClickSurface'), ('void', 'emitSuperClick'),
-            ('void', 'cancelSuperClick'), ('void', 'superClickMotion'), ('bool', 'superClickButton')))
+            ('void', 'cancelSuperClick'), ('void', 'superClickMotion'), ('bool', 'superClickButton'),
+            ('bool', 'managementButton'), ('void', 'mouseMove')))
         with tempfile.TemporaryDirectory(prefix='stash-super-click-native-') as temporary:
             test_source, binary = Path(temporary)/'test.cpp', Path(temporary)/'test'
             test_source.write_text(PRELUDE+structure+state+functions+CALLER)
@@ -231,6 +272,59 @@ class SuperClickNativeTests(unittest.TestCase):
             result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10,
                                     env=dict(os.environ, ASAN_OPTIONS='detect_leaks=0:halt_on_error=1'))
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_cleanup_preserves_owned_management_and_super_pointer_focus(self):
+        source = (ROOT/'native/preview.cpp').read_text()
+        structure = re.search(r'^struct SuperClickGesture \{.*?^\};', source, re.M | re.S)[0]
+        state = '\nstd::optional<SuperClickGesture> superClickGesture;\nuint32_t superClickSerial = 0;\n'
+        prelude = PRELUDE.replace('struct Input {', 'struct Input { int refocusCalls=0; std::function<void()> onRefocus; void refocus() {++refocusCalls;if(onRefocus) onRefocus();}')
+        prelude = prelude.replace('struct Vector2D {', 'template<class T> bool operator==(const WP<T>& first,const SP<T>& second) {return first.lock()==second;}\nstruct Vector2D {')
+        prelude = prelude.replace('void sendPointerFrame() {}', 'void sendPointerFrame() {} void setPointerFocus(SP<CWLSurfaceResource> surface,const Vector2D&) {m_state.pointerFocus=surface;} void sendPointerButton(uint32_t,uint32_t,uint32_t) {}')
+        prelude = prelude.replace('struct Layout { Drag drag;', 'struct Layout { void endDragTarget() {} Drag drag;')
+        prelude = prelude.replace('struct Interaction {', 'struct Window {void* layoutTarget() {return this;}};\nstruct Identity {std::string id="source";WP<Window> window;};\nstruct Interaction {Identity identity;WP<CWLSurfaceResource> grab;Vector2D lastLocal;')
+        prelude = prelude.replace('void endInteraction(const std::string&) {interaction.reset();}', 'void endInteraction(const std::string&,bool refocus=true);\nbool changingKeyboardFocus=false;int keyboardRestores=0;\nvoid dismissPopups(const Identity&) {}\nvoid clearConstrainedFullscreen(const std::string&) {}\nvoid rememberEnd(const std::string&,const std::string&,const std::string&,Interaction*) {}\nvoid restoreKeyboard(Interaction&,bool) {++keyboardRestores;}')
+        functions = ''.join(production_function(result, name)+'\n' for result, name in (
+            ('bool', 'pointerReleasePending'), ('bool', 'superClickBlocked'), ('bool', 'superClickSurfaceValid'),
+            ('SP<CWLSurfaceResource>', 'superClickSurface'), ('void', 'emitSuperClick'),
+            ('void', 'cancelSuperClick'), ('void', 'superClickMotion'), ('bool', 'superClickButton'),
+            ('bool', 'managementButton'), ('void', 'mouseMove'), ('void', 'endInteraction')))
+        caller = r"""
+int main() {
+ using namespace Desktop::View;
+ auto source=std::make_shared<CWLSurfaceResource>();auto wrapper=std::make_shared<CWLSurface>();
+ auto layer=std::make_shared<CLayerSurface>();wrapper->root=source;wrapper->owner=layer;layer->root=wrapper;
+ CWLSurface::current=wrapper;g_pSeatManager->m_state.pointerFocus=source;
+ g_pInputManager->onRefocus=[] {Event::SCallbackInfo info;mouseMove({340,240},info);};
+ interaction.emplace();Event::SCallbackInfo press;
+ assert(superClickButton({272,1},press));assert(superClickGesture);
+ endInteraction("preview-resize",true);
+ assert(!interaction && !endingInteraction && !changingKeyboardFocus && keyboardRestores==1);
+ assert(g_pInputManager->refocusCalls==0 && superClickGesture && !superClickGesture->cancelled);
+ Event::SCallbackInfo release;assert(superClickButton({272,0},release));
+ g_pInputManager->modifiers=0;interaction.emplace();activeManagementHit=true;
+ Event::SCallbackInfo management;assert(managementButton({272,1},management));
+ endInteraction("preview-resize",true);
+ assert(g_pInputManager->refocusCalls==0 && keyboardRestores==2 && managementButtons.size()==1);
+ assert(g_pSeatManager->m_state.pointerFocus.lock()==source);
+ activeContentHit=true;Event::SCallbackInfo move;mouseMove({340,240},move);
+ assert(!move.cancelled && routedMotion==0);
+ assert(managementButton({272,0},management) && !pointerReleasePending());
+ interaction.emplace();endInteraction("stopped",true);
+ assert(g_pInputManager->refocusCalls==1 && keyboardRestores==3);
+ layer->root.reset();wrapper->owner.reset();CWLSurface::current.reset();
+}
+"""
+        with tempfile.TemporaryDirectory(prefix='stash-management-cleanup-native-') as temporary:
+            test_source,binary=Path(temporary)/'test.cpp',Path(temporary)/'test'
+            test_source.write_text(prelude+structure+state+functions+caller)
+            compiled=subprocess.run(['c++','-std=c++20','-O1','-g','-fsanitize=address','-fno-omit-frame-pointer',
+                                     '-Wall','-Wextra','-Werror',str(test_source),'-o',str(binary)],
+                                    capture_output=True,text=True,timeout=30)
+            self.assertEqual(compiled.returncode,0,compiled.stderr)
+            result=subprocess.run([str(binary)],capture_output=True,text=True,timeout=10,
+                                  env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0:halt_on_error=1'))
+            self.assertEqual(result.returncode,0,result.stderr)
+
 
 
 if __name__ == '__main__':

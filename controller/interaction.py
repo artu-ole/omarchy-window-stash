@@ -162,9 +162,11 @@ class InteractionBridge(PreviewBridge):
             supported = self.hypr.call('repl', self.interaction_probe
                 + 'return info.capabilities and info.capabilities.superClickActivation==true'
                 + (' and info.capabilities.superCornerResize==true' if resize else '')+' or false')
+            interactive_resize = resize and supported == 'true' and self.hypr.call('repl', self.interaction_probe
+                + 'return info.capabilities and info.capabilities.interactiveResize==true or false') == 'true'
         if supported != 'true':
             raise RuntimeError(CORNER_RESIZE_REQUIRED if resize else SHORTCUT_REQUIRED)
-        return dict(state='ready', cornerResize=True) if resize else dict(state='ready')
+        return dict(state='ready', cornerResize=True, interactiveResize=interactive_resize) if resize else dict(state='ready')
 
     def interaction_update(self, owner, source, target):
         with self.operation():
