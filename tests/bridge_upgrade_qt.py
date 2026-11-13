@@ -58,7 +58,8 @@ ShellRoot {
     function signal(value) {running=false;exited(value)}
     onRunningChanged:if(running) {
       if(command[0]==="notify-send") root.notifications++
-      else if(command[command.length-1]==="reload") {
+      else if(command.indexOf("reload")>=0) {
+        check(command.indexOf("--watch-stdin")>=0,"Reload did not request stdin-owned cancellation")
         check(!root.previewInteractionRequest && !root.previewInteractionStopping,"Reload began before acknowledged interaction release")
         check(root.bridgeReloadBusy,"Reload began without blocking reacquisition")
         root.reloads++
@@ -132,6 +133,18 @@ ShellRoot {
           check(!root.bridgeSupportVisible && !root.bridgeUpdateDeferred,"Verified current bridge retained stale update state")
           root.bridgeSupportMessage({state:"absent",ok:true,expectedVersion:"1.29.1"})
           check(!root.bridgeUpdateRequired,"Fresh installation incorrectly required an update")
+          root.bridgeSupportMessage({state:"update-required",ok:true,canReload:false,loadedVersion:"1.29.1",expectedVersion:"1.30.0",
+            error:"This older extension needs a one-time logout because held input cannot be drained safely"})
+          check(root.bridgeReloadBlocked && root.bridgeSupportText.indexOf("This older extension")===0,"Unsupported bridge did not expose its actual fallback reason")
+          check(!root.reloadPreviewSupport() && !root.bridgeReloadBusy,"Unsupported legacy interaction bridge was offered reload")
+          check(!bridgeNotification.running,"An already open reload notification was not withdrawn after support became unavailable")
+          root.beginBridgeNotification()
+          check(!bridgeNotification.supportsReload && bridgeNotification.command.indexOf("--action=reload=Reload preview support")<0,
+            "Unsupported legacy bridge notification promised a safe reload")
+          check(bridgeNotification.command.indexOf("Preview support update requires session restart")>=0,
+            "Unsupported legacy bridge notification hid its restart requirement")
+          root.deferBridgeUpdate()
+          check(root.bridgeUpdateDeferred && root.bridgeSupportVisible,"Deferring a legacy update removed the fallback explanation")
           root.stopping=true
           bridgeProbe.running=false
           root.checkBridgeSupport()

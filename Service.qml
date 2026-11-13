@@ -44,8 +44,10 @@ Item {
   property bool bridgeReloadFailed:false
   property bool bridgeUpdateDeferred:false
   property string bridgeUpdateNotified:""
+  property bool bridgeNotificationPending:false
   property int bridgeSupportGeneration:0
   readonly property bool bridgeUpdateRequired:bridgeSupportStatus.state==="update-required"
+  readonly property bool bridgeReloadBlocked:bridgeUpdateRequired && bridgeSupportStatus.canReload===false
   readonly property bool bridgeSupportVisible:bridgeUpdateRequired || bridgeReloadBusy || bridgeSupportError!==""
   readonly property string bridgeSupportText:bridgeSupportError || (bridgeReloadBusy
     ? bridgeReloadStage==="building" ? "Building updated preview support…"
@@ -488,23 +490,38 @@ Item {
     if(value.state==="current" || value.state==="absent") {
       bridgeUpdateDeferred=false
       bridgeUpdateNotified=""
+      bridgeNotificationPending=false
       if(value.state==="current") bridgeReloadFailed=false
       if(!bridgeReloadBusy && !bridgeReloadFailed) bridgeSupportError=""
     }
     if(value.state==="update-required") {
-      var key=String(value.loadedVersion || "unknown")+":"+String(value.expectedVersion || "unknown")
+      if(value.canReload===false) bridgeSupportError=String(value.error || "This preview extension requires a one-time logout and login to apply the update. Running applications will close.")
+      else if(!bridgeReloadFailed && !bridgeReloadBusy) bridgeSupportError=""
+      var key=String(value.loadedVersion || "unknown")+":"+String(value.expectedVersion || "unknown")+":"+String(value.canReload!==false)
       if(key!==bridgeUpdateNotified && !bridgeUpdateDeferred) {
         bridgeUpdateNotified=key
-        bridgeNotification.running=true
+        bridgeNotificationPending=true
+        beginBridgeNotification()
       }
     }
   }
-  function deferBridgeUpdate() { bridgeUpdateDeferred=true }
+  function beginBridgeNotification() {
+    if(!bridgeNotificationPending || stopping || bridgeReloadBusy || !bridgeUpdateRequired || bridgeUpdateDeferred) return
+    if(bridgeNotification.running) {
+      if(bridgeNotification.supportsReload===bridgeReloadBlocked) bridgeNotification.signal(15)
+      return
+    }
+    bridgeNotification.supportsReload=!bridgeReloadBlocked
+    bridgeNotificationPending=false
+    bridgeNotification.running=true
+  }
+  function deferBridgeUpdate() {bridgeUpdateDeferred=true;bridgeNotificationPending=false}
   function reloadPreviewSupport() {
-    if(stopping || bridgeReloadBusy || !lifecycleReady || resetBusy || shortcutsBusy) return false
+    if(stopping || bridgeReloadBusy || bridgeReloadBlocked || !lifecycleReady || resetBusy || shortcutsBusy) return false
     bridgeSupportError="";bridgeReloadComplete=false;bridgeReloadFailed=false;bridgeReloadStage="stopping"
     bridgeSupportGeneration++
     bridgeReloadBusy=true;bridgeUpdateDeferred=false
+    bridgeNotificationPending=false
     previewInteractionPendingRequest=null
     endPreviewInteraction("bridge-update")
     bridgeReloadWait.restart()
@@ -577,7 +594,7 @@ Item {
   }
   Process {
     id:bridgeReload
-    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/bridge.py").toString().replace(/^file:\/\//,"")),"reload"]
+    command:["python3",decodeURIComponent(Qt.resolvedUrl("controller/bridge.py").toString().replace(/^file:\/\//,"")),"reload","--watch-stdin"]
     stdinEnabled:true
     stdout:SplitParser {
       onRead:function(line) {
@@ -590,18 +607,22 @@ Item {
   }
   Process {
     id:bridgeNotification
-    command:["notify-send","--app-name=Window Stash","--wait","--expire-time=30000",
-      "--action=reload=Reload preview support","--action=later=Later",
+    property bool supportsReload:true
+    command:["notify-send","--app-name=Window Stash","--wait","--expire-time=30000"]
+      .concat(supportsReload ? ["--action=reload=Reload preview support","--action=later=Later",
       "Window Stash update ready","Reload preview support to apply the update without closing applications."]
+      : ["--action=later=Later","Preview support update requires session restart",
+        "Log out and back in when convenient to activate updated preview support. Running applications will close."])
     stdout:StdioCollector {
       onStreamFinished: {
         if(root.stopping) return
         if(!root.bridgeUpdateRequired) return
-        if(text.trim()==="reload") root.reloadPreviewSupport()
+        if(text.trim()==="reload" && !root.bridgeReloadBlocked) root.reloadPreviewSupport()
         else if(text.trim()==="later") root.deferBridgeUpdate()
       }
     }
     stderr:StdioCollector {}
+    onExited:Qt.callLater(root.beginBridgeNotification)
   }
   function screenMonitor(name) {
     for (var i = 0; i < snapshot.monitors.length; i++)

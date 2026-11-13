@@ -561,7 +561,7 @@ PanelWindow {
         scrollbarRect:itemRect(settingsScrollbar),thumbRect:itemRect(settingsScrollbar.contentItem)},shortcutControls:shortcutControls,
       settingsError:{visible:settingsErrorText.visible,rect:itemRect(settingsErrorText),text:settingsErrorText.text,lineCount:settingsErrorText.lineCount},
       bridgeSupport:{visible:bridgeUpdatePane.visible,rect:itemRect(bridgeUpdatePane),text:bridgeStatusText.text,
-        textRect:itemRect(bridgeStatusText),reloadRect:itemRect(bridgeReloadButton),reloadEnabled:bridgeReloadButton.enabled,
+        textRect:itemRect(bridgeStatusText),reloadRect:itemRect(bridgeReloadButton),reloadVisible:bridgeReloadButton.visible,reloadEnabled:bridgeReloadButton.enabled,
         laterRect:itemRect(bridgeLaterButton),laterVisible:bridgeLaterButton.visible,busy:stash.bridgeReloadBusy},
       reset:{confirming:stash.resetConfirmation,busy:stash.resetBusy,serial:stash.resetSerial,
         requestEnabled:resetRequest.enabled,confirmEnabled:resetConfirm.enabled,
@@ -1128,6 +1128,7 @@ PanelWindow {
               columnSpacing:surface.metrics.sm;rowSpacing:surface.metrics.sm
               StashButton {
                 id:bridgeReloadButton
+                visible:!surface.stash.bridgeReloadBlocked
                 text:surface.stash.bridgeReloadBusy ? "Reloading…" : "Reload preview support"
                 tooltipText:"Reload preview support without closing applications"
                 enabled:!surface.stash.settingsBusy && surface.stash.lifecycleReady
