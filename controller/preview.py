@@ -81,7 +81,8 @@ class PreviewBridge:
         # desktop fullscreen. Unknown future implementations remain exact-only.
         compatible = {'1.29.2': ('1.29.1',), '1.29.3': ('1.29.1', '1.29.2'),
                       '1.29.4': ('1.29.1', '1.29.2', '1.29.3'),
-                      '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4')}
+                      '1.29.5': ('1.29.1', '1.29.2', '1.29.3', '1.29.4'),
+                      '1.29.6': ('1.29.1', '1.29.2', '1.29.3', '1.29.4', '1.29.5')}
         versions.extend(compatible.get(self.version, ()))
         self.probe = PROBE + 'if not (' + ' or '.join('info.version == '+lua(value) for value in versions) + ") then error('" + RESTART_REQUIRED + "') end\n"
         self.ready = False

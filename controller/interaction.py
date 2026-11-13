@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Own one verified preview input lease; compositor hooks route actual events."""
+import argparse
 import contextlib
 import json
 import math
@@ -22,6 +23,7 @@ RESTART_REQUIRED = 'Reload preview support in Window Stash Settings to use inter
 FULLSCREEN_REQUIRED = 'Reload preview support in Window Stash Settings to keep fullscreen inside a preview, or choose Fullscreen: On desktop'
 GEOMETRY_REQUIRED = 'Reload preview support in Window Stash Settings to interact with a reshaped preview'
 GEOMETRY_PENDING = 'The application has not finished resizing its preview'
+SHORTCUT_REQUIRED = 'Reload preview support in Window Stash Settings to use Super+left click'
 EXIT_SHORTCUT_KEY = 'floatingPreviewExitShortcut'
 RESTORE_REASONS = frozenset(('modal-dialog', 'source-fullscreen', 'popup-outside', 'source-activation', 'window-management'))
 
@@ -149,6 +151,18 @@ class InteractionBridge(PreviewBridge):
     def ensure(self):
         super().ensure()
         self.hypr.eval(self.interaction_probe)
+
+    def prepare_shortcut(self):
+        # Prepare interception before the first click, including Standard/Still
+        # previews. This takes no input/rendering lease and never replaces a
+        # loaded bridge. Older bridges retain their ordinary Interact control.
+        self.ensure()
+        with self.operation():
+            supported = self.hypr.call('repl', self.interaction_probe
+                + 'return info.capabilities and info.capabilities.superClickActivation==true or false')
+        if supported != 'true':
+            raise RuntimeError(SHORTCUT_REQUIRED)
+        return dict(state='ready')
 
     def interaction_update(self, owner, source, target):
         with self.operation():
@@ -377,6 +391,11 @@ def run_loop(stream, keeper, emit):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--prepare', action='store_true',
+                        help='Prepare Super-click activation without acquiring input or rendering')
+    arguments = parser.parse_args()
+
     def emit(value):
         print(json.dumps(value), flush=True)
 
@@ -385,6 +404,19 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    if arguments.prepare:
+        try:
+            settings = Stash().settings()
+            if settings['presentation'] != 'previews' or settings['floatingPreviewInteraction'] != 'on':
+                emit(dict(state='disabled'))
+            else:
+                emit(InteractionBridge(progress=emit).prepare_shortcut())
+            return 0
+        except PreviewStopped:
+            return 0
+        except Exception as error:
+            emit(dict(state='unavailable', error=str(error)))
+            return 1
     disconnected = select.poll()
     disconnected.register(sys.stdin.fileno(), select.POLLHUP | select.POLLERR | select.POLLNVAL)
     bridge = InteractionBridge(progress=emit, cancelled=lambda: bool(disconnected.poll(0)))

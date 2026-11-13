@@ -202,6 +202,14 @@ Item {
   }
   function resetPointerHold() { root.pressedPointerButtons={}; clickObserver.resetHeld() }
 
+  StashPreviewShortcut {
+    id:previewShortcut
+    stash:root
+    onGesture:function(serial,phase,x,y) {
+      root.surfaces.forEach(function(surface) {surface.handlePreviewShortcut(serial,phase,x,y)})
+    }
+  }
+
   function refresh() { refreshDelay.restart() }
   function previewCompatibilityRequest(key,id) {
     var requests=Object.assign({},previewCompatibilityRequests)
@@ -1092,6 +1100,7 @@ Item {
         windowIds:root.snapshot.windows.map(function(w) { return w.id }),settings: root.snapshot.settings,
         reset:{confirming:root.resetConfirmation,busy:root.resetBusy,serial:root.resetSerial},
         previewCompatibility:{status:root.previewCompatibilityStatus,error:root.previewCompatibilityError,requestedIds:root.previewCompatibilityIds,running:!!root.previewCompatibilityWorker && root.previewCompatibilityWorker.running},
+        previewShortcut:{status:previewShortcut.status,error:previewShortcut.error},
         bridgeSupport:{status:root.bridgeSupportStatus,error:root.bridgeSupportError,busy:root.bridgeReloadBusy,stage:root.bridgeReloadStage,
           deferred:root.bridgeUpdateDeferred,checking:bridgeProbe.running},
         previewInteraction:{request:root.previewInteractionRequest,pendingRequest:root.previewInteractionPendingRequest,stopping:root.previewInteractionStopping,
