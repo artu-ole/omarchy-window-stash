@@ -122,6 +122,7 @@ struct ConstrainedFullscreen {
     Fullscreen::eFullscreenMode client = Fullscreen::FSMODE_NONE;
     Clock::time_point restoreRequested{};
 };
+enum class FullscreenResize { None, Exit, Nudge, Restore };
 struct FullscreenTransition {
     Identity identity;
     Fullscreen::eFullscreenMode client = Fullscreen::FSMODE_NONE;
@@ -132,6 +133,9 @@ struct FullscreenTransition {
     uint32_t configureSerial = 0;
     bool maximizeFollowupHandled = false;
     CHyprSignalListener ackListener{};
+    FullscreenResize resize = FullscreenResize::None;
+    Vector2D clientSize{};
+    Vector2D windowSize{};
 };
 struct EndedInteraction {
     std::string owner;
@@ -283,9 +287,79 @@ bool fullscreenTarget(const PHLWINDOW& window) {
     });
 }
 
+void trackFullscreenConfigure(const std::string& id, const PHLWINDOW& window) {
+    const auto found = fullscreenTransitions.find(id);
+    if (found == fullscreenTransitions.end() || !window->m_xdgSurface)
+        return;
+    const auto identity = found->second.identity;
+    const auto serial = window->m_xdgSurface->scheduleConfigure();
+    found->second.waitingAck = true;
+    found->second.configureSerial = serial;
+    found->second.ackListener = window->m_xdgSurface->m_events.ack.listen([id, identity, serial](uint32_t acknowledged) {
+        const auto current = fullscreenTransitions.find(id);
+        if (current == fullscreenTransitions.end() || !current->second.waitingAck || current->second.configureSerial != serial
+            || current->second.identity.stable != identity.stable || current->second.identity.address != identity.address
+            || static_cast<int32_t>(acknowledged - serial) < 0)
+            return;
+        current->second.waitingAck = false;
+        current->second.expires = Clock::now() + std::chrono::seconds(1);
+    });
+}
+
+void cancelFullscreenResize(const PHLWINDOW& window) {
+    const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
+        return item.second.resize != FullscreenResize::None && sameWindow(item.second.identity, window.get(), false);
+    });
+    if (found == fullscreenTransitions.end())
+        return;
+    const auto id = found->first;
+    found->second.resize = FullscreenResize::None;
+    // Public workspace moves or a new fullscreen request own the next size.
+    // Reassert the compositor's ordinary size before relinquishing our nudge.
+    window->sendWindowSize(true);
+    trackFullscreenConfigure(id, window);
+}
+
+void synchronizeFullscreenResizes() {
+    std::vector<std::string> ids;
+    for (const auto& [id, value] : fullscreenTransitions)
+        if (value.resize != FullscreenResize::None && !value.waitingAck)
+            ids.push_back(id);
+    for (const auto& id : ids) {
+        const auto found = fullscreenTransitions.find(id);
+        if (found == fullscreenTransitions.end())
+            continue;
+        const auto identity = found->second.identity;
+        const auto windowSize = found->second.windowSize;
+        const auto clientSize = found->second.clientSize;
+        const auto phase = found->second.resize;
+        const auto window = identity.window.lock();
+        if (!window || !sameWindow(identity, window.get(), true) || !window->m_xdgSurface || !window->m_xdgSurface->m_toplevel)
+            continue;
+        if (window->sizeAnimation()->goal() != windowSize) {
+            cancelFullscreenResize(window);
+            continue;
+        }
+        if (phase == FullscreenResize::Restore) {
+            found->second.resize = FullscreenResize::None;
+            continue;
+        }
+        const bool nudge = phase == FullscreenResize::Exit;
+        found->second.resize = nudge ? FullscreenResize::Nudge : FullscreenResize::Restore;
+        // Chromium expects a content resize when leaving tab fullscreen and
+        // otherwise defers its renderer's exit indefinitely at identical bounds.
+        // A single acknowledged client-only height step supplies that resize;
+        // compositor geometry, source width and the miniature remain unchanged.
+        window->m_xdgSurface->m_toplevel->setSize(clientSize + Vector2D{0.0, nudge ? 1.0 : 0.0});
+        trackFullscreenConfigure(id, window);
+    }
+}
+
 void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mode) {
     using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, Fullscreen::eFullscreenMode, bool);
     const auto previous = Fullscreen::controller()->getFullscreenModes(window).client;
+    if (mode == Fullscreen::FSMODE_FULLSCREEN)
+        cancelFullscreenResize(window);
     if (previous != mode && previous != Fullscreen::FSMODE_FULLSCREEN && mode == Fullscreen::FSMODE_MAXIMIZED) {
         const auto found = std::find_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [&](const auto& item) {
             return item.second.client != Fullscreen::FSMODE_FULLSCREEN && !item.second.maximizeFollowupHandled
@@ -308,7 +382,9 @@ void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mo
         // Browser fullscreen entry/exit can issue a new xdg-activation token.
         // Attribute one acknowledgement to this exact, recent input transition;
         // never grant a lasting activation exemption to a passive miniature.
-        std::erase_if(fullscreenTransitions, [](const auto& item) { return !item.second.waitingAck && item.second.expires <= Clock::now(); });
+        std::erase_if(fullscreenTransitions, [](const auto& item) {
+            return !item.second.waitingAck && item.second.resize == FullscreenResize::None && item.second.expires <= Clock::now();
+        });
         if (fullscreenTransitions.size() < MAX_WINDOWS || fullscreenTransitions.contains(interaction->identity.id))
             fullscreenTransitions[interaction->identity.id] = {interaction->identity, mode, Clock::now() + std::chrono::seconds(1), {}, 1};
     }
@@ -326,19 +402,16 @@ void setClientFullscreen(const PHLWINDOW& window, Fullscreen::eFullscreenMode mo
         });
         if (found != fullscreenTransitions.end()) {
             const auto id = found->first;
-            const auto identity = found->second.identity;
-            const auto serial = window->m_xdgSurface->scheduleConfigure();
-            found->second.waitingAck = true;
-            found->second.configureSerial = serial;
-            found->second.ackListener = window->m_xdgSurface->m_events.ack.listen([id, identity, serial](uint32_t acknowledged) {
-                const auto current = fullscreenTransitions.find(id);
-                if (current == fullscreenTransitions.end() || !current->second.waitingAck || current->second.configureSerial != serial
-                    || current->second.identity.stable != identity.stable || current->second.identity.address != identity.address
-                    || static_cast<int32_t>(acknowledged - serial) < 0)
-                    return;
-                current->second.waitingAck = false;
-                current->second.expires = Clock::now() + std::chrono::seconds(1);
-            });
+            if (previous == Fullscreen::FSMODE_FULLSCREEN && mode != Fullscreen::FSMODE_FULLSCREEN
+                && window->m_xdgSurface->m_toplevel) {
+                const auto size = window->m_xdgSurface->m_toplevel->m_pendingApply.size;
+                if (size.x >= 1 && size.y >= 1 && size.y < 32768) {
+                    found->second.resize = FullscreenResize::Exit;
+                    found->second.clientSize = size;
+                    found->second.windowSize = window->sizeAnimation()->goal();
+                }
+            }
+            trackFullscreenConfigure(id, window);
         }
     }
     g_pHyprRenderer->damageWindow(window, true);
@@ -355,7 +428,9 @@ bool clearConstrainedFullscreen(std::string id) {
         const auto modes = Fullscreen::controller()->getFullscreenModes(window);
         if (modes.internal == Fullscreen::FSMODE_NONE && modes.client == previous.client) {
             if (previous.client == Fullscreen::FSMODE_FULLSCREEN && sameWindow(previous.identity, window.get(), true)) {
-                std::erase_if(fullscreenTransitions, [](const auto& item) { return !item.second.waitingAck && item.second.expires <= Clock::now(); });
+                std::erase_if(fullscreenTransitions, [](const auto& item) {
+                    return !item.second.waitingAck && item.second.resize == FullscreenResize::None && item.second.expires <= Clock::now();
+                });
                 if (fullscreenTransitions.size() < MAX_WINDOWS)
                     fullscreenTransitions[id] = {previous.identity, previous.originalClient, Clock::now() + std::chrono::seconds(1), {}, 1};
             } else if (const auto transition = fullscreenTransitions.find(id); transition != fullscreenTransitions.end()
@@ -387,9 +462,10 @@ void synchronizeConstrainedFullscreen() {
     }
     for (const auto& id : stale)
         clearConstrainedFullscreen(id);
+    synchronizeFullscreenResizes();
     std::erase_if(fullscreenTransitions, [](const auto& item) {
         const auto window = item.second.identity.window.lock();
-        return (!item.second.waitingAck && item.second.expires <= Clock::now())
+        return (!item.second.waitingAck && item.second.resize == FullscreenResize::None && item.second.expires <= Clock::now())
             || !window || !sameWindow(item.second.identity, window.get(), true);
     });
 }
@@ -459,6 +535,8 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
     }
     using Original = void (*)(Fullscreen::CFullscreenController*, PHLWINDOW, std::optional<Fullscreen::eFullscreenMode>,
                               std::optional<Fullscreen::eFullscreenMode>, std::optional<bool>);
+    if (window)
+        cancelFullscreenResize(window);
     reinterpret_cast<Original>(fullscreenModeHook->m_original)(controller, window, internal, client, layoutAware);
 }
 
@@ -478,11 +556,13 @@ Config::Actions::ActionResult fullscreenWindow(Fullscreen::eFullscreenMode mode,
 
 void moveWindowToWorkspace(const Desktop::CGlobalWindowController* controller, PHLWINDOW window, PHLWORKSPACE workspace) {
     if (window && workspace && workspace->m_name != WORKSPACE) {
+        cancelFullscreenResize(window);
         const auto found = std::find_if(fullscreenWindows.begin(), fullscreenWindows.end(), [&](const auto& item) {
             return sameWindow(item.second.identity, window.get(), false);
         });
         if (found != fullscreenWindows.end())
             clearConstrainedFullscreen(found->first);
+        cancelFullscreenResize(window);
     }
     using Original = void (*)(const Desktop::CGlobalWindowController*, PHLWINDOW, PHLWORKSPACE);
     reinterpret_cast<Original>(moveWorkspaceHook->m_original)(controller, window, workspace);
@@ -1822,6 +1902,25 @@ int clearFullscreen(lua_State* state) {
     }
 }
 
+int fullscreenCleanupPending(lua_State* state) {
+    try {
+        const auto identity = readIdentity(state, 1);
+        const auto found = fullscreenTransitions.find(identity.id);
+        if (found != fullscreenTransitions.end() && (found->second.identity.address != identity.address
+            || found->second.identity.pid != identity.pid || found->second.identity.stable != identity.stable
+            || found->second.identity.tag != identity.tag))
+            throw std::invalid_argument("The fullscreen preview identity changed");
+        synchronize();
+        const auto current = fullscreenTransitions.find(identity.id);
+        lua_pushboolean(state, current != fullscreenTransitions.end() && current->second.resize != FullscreenResize::None);
+        return 1;
+    } catch (const std::exception& error) {
+        lua_pushnil(state);
+        lua_pushstring(state, error.what());
+        return 2;
+    }
+}
+
 int interactionHandoff(lua_State* state) {
     try {
         if (reloadPending)
@@ -1894,6 +1993,19 @@ int status(lua_State* state) {
                  && owners.empty() && active.empty() && releasedButtons.empty() && releasedKeys.empty()
                  && fullscreenTransitions.empty());
     field(state, "pendingFullscreen", fullscreenTransitions.size());
+    const auto pendingResizes = std::count_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [](const auto& item) {
+        return item.second.resize != FullscreenResize::None;
+    });
+    field(state, "pendingFullscreenResizes", pendingResizes);
+    lua_newtable(state);
+    int cleanupOrdinal = 1;
+    for (const auto& [id, value] : fullscreenTransitions) {
+        if (value.resize == FullscreenResize::None)
+            continue;
+        lua_pushlstring(state, id.data(), id.size());
+        lua_rawseti(state, -2, cleanupOrdinal++);
+    }
+    lua_setfield(state, -2, "fullscreenCleanups");
     field(state, "owners", owners.size());
     field(state, "windows", active.size());
     field(state, "leaseTimeout", LEASE_TIME.count());
@@ -2221,6 +2333,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE plugin) {
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_update", interactionUpdate)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_release", interactionRelease)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "clear_fullscreen", clearFullscreen)
+        || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "fullscreen_cleanup_pending", fullscreenCleanupPending)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_status", interactionStatus)
         || !HyprlandAPI::addLuaFunction(handle, LUA_NAMESPACE, "interaction_handoff", interactionHandoff))
         throw std::runtime_error("Could not register the preview lease API");
@@ -2248,6 +2361,13 @@ APICALL EXPORT void PLUGIN_EXIT() {
     reloadPending = true;
     endInteraction("unloaded");
     clearAllConstrainedFullscreen();
+    std::vector<PHLWINDOW> resizing;
+    for (const auto& [id, value] : fullscreenTransitions)
+        if (const auto window = value.identity.window.lock(); window && value.resize != FullscreenResize::None)
+            resizing.push_back(window);
+    for (const auto& window : resizing)
+        cancelFullscreenResize(window);
+    fullscreenTransitions.clear();
     mouseMoveListener.reset();
     mouseButtonListener.reset();
     mouseAxisListener.reset();
