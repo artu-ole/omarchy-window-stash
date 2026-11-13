@@ -135,6 +135,12 @@ requests fail with the native setup reason.
 Interaction rejects `no_screen_share` sources; keyboard routing also respects
 `no_focus`. Enabling either applicable rule during a session ends its input lease.
 
+Non-forced activation of the exact source that already owns keyboard focus is
+acknowledged in place, including browser tab creation. This grants no new focus.
+Explicit desktop focus and forced activation still restore the source; once seat
+focus leaves the miniature, ordinary external activation can restore it as well.
+Pointer-only activation retains its existing bounded input acknowledgements.
+
 ## Contained fullscreen
 
 The `preview` policy intercepts fullscreen requests for the exact owned source

@@ -178,6 +178,7 @@ Interact makes one window receive normal left/right/middle clicks, wheel input a
 content dragging. App groups require choosing an individual window. Keyboard mode
 supports typing, selection, native copy/paste and application shortcuts. In-bounds
 application popups are rendered and receive input at the miniature's scale.
+Opening or switching browser tabs keeps the window inside the preview.
 
 **Fullscreen → Inside preview** is the default. A video's fullscreen button fills
 the miniature with the player; F11 or Super+F uses application fullscreen while
@@ -204,8 +205,8 @@ window. Interaction respects `no_screen_share`; keyboard input also respects
 
 Modal dialogs, desktop fullscreen requests and out-of-bounds popups restore the full
 window using the configured destination. New dialogs follow their parent; pre-existing
-windows remain in place. Application activation and window-management requests also
-leave miniature interaction. See [VALIDATION.md](VALIDATION.md) for acceptance checks.
+windows remain in place. External application activation and window-management
+requests also leave miniature interaction. See [VALIDATION.md](VALIDATION.md) for acceptance checks.
 
 Hover previews for the other three display modes:
 

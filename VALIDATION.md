@@ -1,5 +1,29 @@
 # Validation
 
+## v1.30.1 — browser tabs stay inside interactive previews — 13 November 2026
+
+A normal tabbed Brave window reproduced an unintended restoration on Ctrl+T:
+its activation request arrived while the exact source already owned keyboard
+focus. Native bridge **1.29.4** acknowledges this redundant request in place,
+matching ordinary already-focused activation. Explicit window selection, forced
+activation and genuine activation after keyboard focus leaves the source still
+restore normally. Pointer-only interaction retains its bounded activation policy.
+
+The regression uses normal browser windows and disposable profiles rather than
+the earlier app-mode fixtures. Brave and Chromium pass real mouse-plus, Ctrl+T,
+Ctrl+W, tab switching, target-blank and middle-click background-tab checks, with
+unchanged source geometry and unrelated stashes hidden. GTK verifies both redundant
+self-focus and genuine activation after focus moves to a public control. Existing
+modal, fullscreen, window-management, keyboard and same-client focus regressions pass.
+
+The complete check passes **327 Python tests**, **15 Node suites**, **eleven
+offscreen Qt suites**, **105 Python syntax checks**, manifest validation and
+warning-free QML lint. Four AddressSanitizer checks execute production native
+functions, including focused activation, forced activation, focus loss, unchanged
+pointer-only credits and replacement identity. The native build is warning-free.
+Run `python3 tests/interactive_browser_tabs.py` in the isolated test desktop for
+the tab regression.
+
 ## v1.30.0 — fullscreen inside previews — 13 November 2026
 
 Interactive floating previews default to **Fullscreen → Inside preview**. Client
