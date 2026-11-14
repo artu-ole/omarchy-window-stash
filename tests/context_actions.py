@@ -141,7 +141,11 @@ def main():
         configure('grouping','window');h.dispatch('focus',workspace=str(t.workspace))
         a,_=t.spawn();ra=t.park(a)
         h.dispatch('focus',workspace=str(t.workspace+1));b,_=t.spawn();rb=t.park(b)
-        h.dispatch('focus',workspace=str(t.workspace));t.resting();m=open_menu(t.icon())
+        h.dispatch('focus',workspace=str(t.workspace))
+        own_key='window:'+str(ra.get('stableId') or ra['id'])
+        wait(lambda:t.surface()['workspaceId']==t.workspace and t.icon(own_key),
+             'Workspace-scoped close-all fixture did not reach its invoking workspace')
+        t.resting();m=open_menu(t.icon(own_key))
         assert 'workspace' in t.action('closeAll')['text'].lower()
         t.click(t.action('closeAll')['rect'])
         wait(lambda:not h.client(a),'Workspace close-all did not close target')
