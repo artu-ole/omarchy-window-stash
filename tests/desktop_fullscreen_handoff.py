@@ -20,9 +20,10 @@ def pending(session, directory, ordinal, maximized=False):
     if maximized:
         h.dispatch('window.fullscreen_state',window='address:'+address,internal=1,client=1,action='set')
         wait(lambda:modes(address)==(1,1),'Original GTK maximize did not settle')
+    original=h.client(address)
     record=session.park(address)
     if maximized:assert (record['fullscreen'],record['fullscreenClient'])==(1,1)
-    original=h.client(address)
+    parked=h.client(address)
     owner=uuid.uuid4().hex
     identity=preview_records([record],h.read('clients'),[record['id']])[0]
     payload='{'+','.join(key+'='+lua(value) for key,value in identity.items())+'}'
@@ -30,8 +31,8 @@ def pending(session, directory, ordinal, maximized=False):
     box='{'+','.join(key+'='+lua(value) for key,value in rect.items())+'}'
     h.eval('local r,e='+API+'.interaction_update({owner='+lua(owner)+',window='+payload
            +',monitor='+lua(session.monitor['name'])+',rect='+box+',keyboard=false,fps=60,fullscreen="desktop"});assert(r,e);assert(r.active,r.reason)')
-    x=rect['x']-session.monitor['x']+rect['width']*900/original['size'][0]
-    y=rect['y']-session.monitor['y']+rect['height']*46/original['size'][1]
+    x=rect['x']-session.monitor['x']+rect['width']*900/parked['size'][0]
+    y=rect['y']-session.monitor['y']+rect['height']*46/parked['size'][1]
     session.move(x-1,y)
     session.pointer.click(*session.point(x,y))
     wait(lambda:events(log,'fullscreen-request'),'Owned GTK client did not request fullscreen')
@@ -51,8 +52,8 @@ def ordinary_restore(session,record,original,log):
     wait(lambda:(values:=events(log,'fullscreen-state')) and not values[-1]['active'],
          'Manual restore did not tell the application that fullscreen ended')
     client=h.client(record['address'])
-    assert client['floating'] and client['size']==original['size'] and client['at']==original['at'], \
-        'Pending fullscreen changed ordinary restoration geometry'
+    assert client['floating']==original['floating'] and client['size']==original['size'] and client['at']==original['at'], \
+        ('Pending fullscreen changed ordinary restoration geometry',original,client)
 
 
 @desktop_test('Pending Desktop fullscreen cancellation and expiry')
@@ -86,6 +87,9 @@ def main():
         wait(lambda:not native_status(owner)['desktopFullscreenPending'] and modes(record['address'])==(0,0),
              'Abandoned Desktop fullscreen request did not expire to the original client state',timeout=15)
         assert h.client(record['address'])['workspace']['name']==SPECIAL
+        h.eval('local r,e='+API+'.clear_fullscreen('+payload+','+lua(owner)+');assert(r==nil and e)')
+        assert h.client(record['address'])['workspace']['name']==SPECIAL and modes(record['address'])==(0,0), \
+            'An expired handoff owner changed the source'
         ordinary_restore(session,record,original,log)
         print('PASS abandoned handoff expires without restoring/exposing its source; later ordinary restore remains normal',flush=True)
 

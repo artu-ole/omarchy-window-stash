@@ -2298,11 +2298,11 @@ int clearFullscreen(lua_State* state) {
             return pendingDesktopFullscreen(ended) && ended.id == identity.id
                 && sameWindow(ended.source, identity.window.lock().get(), true);
         });
+        const auto owner = lua_isnoneornil(state, 2) ? std::string{} : stringAt(state, 2);
+        if (!owner.empty() && (pending == endedInteractions.end() || owner != pending->owner))
+            throw std::invalid_argument("The Desktop fullscreen handoff owner changed or expired");
         if (pending != endedInteractions.end()) {
-            const auto owner = lua_isnoneornil(state, 2) ? std::string{} : stringAt(state, 2);
             if (!owner.empty()) {
-                if (owner != pending->owner)
-                    throw std::invalid_argument("The Desktop fullscreen handoff owner changed");
                 lua_pushboolean(state, false);
                 return 1;
             }
