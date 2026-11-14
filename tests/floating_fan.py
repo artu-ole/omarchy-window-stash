@@ -72,6 +72,11 @@ def main():
         key=('Right' if delta*sign>0 else 'Left') if d['orientation']=='horizontal' else ('Down' if delta*sign>0 else 'Up')
         subprocess.run(['wtype','-k',key],check=True)
 
+    def settings_keys(*args):
+        # A new virtual keyboard supplies a keymap; let Qt consume that map
+        # and the final selection before removing the device again.
+        subprocess.run(['wtype','-s','100','-d','30',*args,'-s','100'],check=True)
+
     try:
         fixture_settings()
         wait(lambda:monitor['name'] in shell('status')['screens'],'Snapshot missing')
@@ -90,7 +95,7 @@ def main():
             def control():return next(c for c in surface()['settingControls'] if c['key']=='floatingAnimation')
             wait(lambda:surface()['dialog']['visible'],'Style settings missing')
             click(control()['rect']);wait(lambda:control()['open'],'Unfold animation dropdown did not open')
-            subprocess.run(['wtype',*(['-k','Up']*len(styles)),*(['-k','Down']*index),'-k','Return'],check=True)
+            settings_keys(*(['-k','Up']*len(styles)),*(['-k','Down']*index),'-k','Return')
             wait(lambda:shell('status')['settings']['floatingAnimation']==style,'Native style selector did not save '+style)
             shell('dismiss');settle(False)
             for direction in ('vertical','horizontal'):
