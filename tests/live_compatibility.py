@@ -68,7 +68,7 @@ def spawn(session, executable, directory):
                 '--disable-sync', '--disable-features=MediaRouter', '--ozone-platform=wayland',
                 '--app='+page.as_uri(), '--class=org.windowstash.LiveBrowser']
         # Only the disposable, network-isolated compositor needs this fallback.
-        if Path('/mnt/ready').exists() and Path('/mnt/source.txt').exists():
+        if os.environ.get('WINDOW_STASH_ISOLATED_TEST') == '1' and (Path.home()/'.window-stash-isolated').is_file():
             args.append('--no-sandbox')
     process = subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     session.processes.append(process)
