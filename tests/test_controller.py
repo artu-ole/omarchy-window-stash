@@ -540,11 +540,12 @@ assert(not w.floating)
         self.assertEqual(len(calls),1,"Parking must be one compositor transaction")
         code = calls[0]
         prelude = '''local events={}
-local original={pid=100,stable_id=1,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750},suspended=false}
+local original={address="0x1",pid=100,stable_id=1,mapped=true,tags={"window-stash-test"},workspace={name="1"},floating=false,size={x=1251,y=750},suspended=false}
 local current=original
 local neighbor={workspace={name="special:window-stash"},floating=true,size={x=1256,y=750},suspended=true}
 local replacement={pid=200,stable_id=2,tags={},workspace={name="7"},floating=false,size={x=333,y=222}}
 hl={get_window=function(selector) assert(selector=="address:0x1");return current end,dsp={window={}},dispatch=function(action) action() end}
+hl.on=function() return {remove=function() end} end
 hl.dsp.window.float=function(args) return function() table.insert(events,"float");args.window.floating=true end end
 hl.dsp.window.resize=function(args) return function()
   table.insert(events,"resize");assert(args.window.floating,"Resize was applied to a tiled window")

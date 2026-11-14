@@ -87,6 +87,38 @@ class LifecycleTests(unittest.TestCase):
         with self.keeper.locked():
             return self.keeper._cleanup_locked()
 
+    def test_focus_guard_resyncs_owned_records_and_only_current_removal_releases_it(self):
+        synced, cleared = [], []
+        self.hypr.sync_focus_guard = lambda records: synced.append(copy.deepcopy(records))
+        self.hypr.clear_focus_guard = lambda: cleared.append(copy.deepcopy(self.stash.state["windows"]))
+        self.keeper.start()
+        self.assertEqual([r["id"] for r in synced[-1]], [self.ident])
+        self.keeper.update({"action": "sync"})
+        self.assertEqual(len(synced), 2)
+        successor = self.make_keeper("generation-two")
+        successor.start()
+        self.assertEqual(len(synced), 3)
+        self.assertEqual(cleared, [])
+        self.disable_config()
+        self.assertEqual(self.cleanup()["state"], "superseded")
+        self.assertEqual(cleared, [])
+        with successor.locked():
+            self.assertEqual(successor._cleanup_locked()["state"], "cleaned")
+        self.assertEqual(cleared, [[]], "The focus guard was released before window recovery completed")
+
+    def test_focus_guard_cleanup_failure_reports_error_after_restoring_owned_windows(self):
+        self.hypr.sync_focus_guard = lambda records: None
+        def refuse():
+            raise RuntimeError("Owned focus observer could not be released")
+        self.hypr.clear_focus_guard = refuse
+        self.keeper.start()
+        self.disable_config()
+        result = self.cleanup()
+        self.assertEqual(result["state"], "error")
+        self.assertEqual(result["remaining"], 0)
+        self.assertIn("Owned focus observer could not be released", result["error"])
+        self.assertNotEqual(self.hypr.client("0x1")["workspace"]["name"], SPECIAL)
+
     def test_enabled_start_claims_runtime_without_touching_hypr_config(self):
         before = self.config.read_bytes()
         result = self.keeper.start()

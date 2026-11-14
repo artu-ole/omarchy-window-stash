@@ -167,6 +167,10 @@ class LifecycleKeeper:
     def _sync_locked(self):
         shortcuts.claim(self.owner, self.stash.config, self._runner)
         result = shortcuts.sync(self.stash.config, self._runner, owner=self.owner)
+        sync_focus = getattr(self.stash.hypr, "sync_focus_guard", None)
+        if callable(sync_focus):
+            with self.stash.locked():
+                sync_focus(self.stash.state["windows"])
         self.last_shortcuts = shortcuts.settings(self.configuration()[1])
         self.last_result = result
         return result
@@ -357,6 +361,12 @@ class LifecycleKeeper:
         except (OSError, RuntimeError, ValueError, KeyError) as error:
             errors.append(str(error))
         finally:
+            try:
+                clear_focus = getattr(self.stash.hypr, "clear_focus_guard", None)
+                if callable(clear_focus):
+                    clear_focus()
+            except (OSError, RuntimeError, ValueError) as error:
+                errors.append("Could not release window focus cleanup: " + str(error))
             try:
                 current = {m["name"]: m for m in self.stash.hypr.read("monitors")}
                 for monitor in monitors:

@@ -21,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import shortcuts
 from bridge_runtime import bridge_gate
 
+FOCUS_GUARD_SOURCE = Path(__file__).with_name("focus.lua").read_text()
+FOCUS_GUARD = "_community_window_stash_focus"
+
 PLUGIN = "community.window-stash"
 SPECIAL = "special:window-stash"
 LEGACY_SPECIAL = "special:minimized"
@@ -92,6 +95,19 @@ def owned_window_guard(record, parked=False):
             + "local owned = false; for _, tag in ipairs(w.tags) do if tag == " + lua(record["tag"])
             + " then owned = true; break end end\n"
             + "if not owned then error('Window is no longer owned by the stash') end\n")
+
+
+def focus_record_lua(record, stable_fallback="nil"):
+    stable = record.get("stableId")
+    if isinstance(stable, str):
+        stable = int(stable, 16)
+    fields = [key+"="+lua(record[key]) for key in ("address", "pid", "tag")]
+    fields.append("stable_id="+(lua(stable) if stable is not None else stable_fallback))
+    return "{"+",".join(fields)+"}"
+
+
+def focus_guard_lua():
+    return "(function()\n"+FOCUS_GUARD_SOURCE+"\nend)()"
 
 
 def atomic_json(path, value):
@@ -240,8 +256,22 @@ class Hyprland:
 
     def dispatch_owned(self, dispatcher, record, parked=False, **args):
         fields = ["window = w"] + [k + " = " + lua(v) for k, v in args.items() if k != "window"]
-        self.eval(owned_window_guard(record, parked)
-                  + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
+        code = (owned_window_guard(record, parked)
+                + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
+        if dispatcher == "window.tag" and args.get("tag") == "-"+record["tag"]:
+            code += "\nlocal g="+FOCUS_GUARD+"; if g then g.unregister("+focus_record_lua(record, "w.stable_id")+") end\n"
+        self.eval(code)
+
+    def sync_focus_guard(self, records):
+        payload = "{"+",".join(focus_record_lua(record) for record in records)+"}"
+        self.eval("local g="+focus_guard_lua()+"; g.sync("+payload+")")
+
+    def register_focus_guard(self, record):
+        self.eval("local g="+focus_guard_lua()+"; assert(g.register("+focus_record_lua(record)
+                  +"), 'Could not register owned window focus cleanup')")
+
+    def clear_focus_guard(self):
+        self.eval("local g="+FOCUS_GUARD+"; if g then g.stop() end")
 
     def clear_preview_fullscreen(self, record, handoff_owner=None):
         """Clear an exact override and await its client configure acknowledgements."""
@@ -396,7 +426,9 @@ return '{"size":['..tostring(width)..','..tostring(height)..'],"ready":'..tostri
                   + "hl.dispatch(hl.dsp.window.move({window = w, workspace = " + lua(SPECIAL) + ", follow = false}))\n"
                   + owned_window_guard(record, parked=True)
                   + 'if not w.floating then error("The private workspace refused floating parking") end\n'
-                  + resize)
+                  + resize
+                  + "local g="+focus_guard_lua()+"; assert(g.register("+focus_record_lua(record, "w.stable_id")
+                  +"), 'Could not register owned window focus cleanup')")
 
     def scrolling_width(self, record):
         output = self.call("repl", owned_window_guard(record)
@@ -421,7 +453,8 @@ return '{"size":['..tostring(width)..','..tostring(height)..'],"ready":'..tostri
                      + lua("on" if native_floating else "off") + '})) end\n'
                      + guard
                      + 'if w.floating ~= ' + desired + ' then error("A window rule prevented release of parking state") end\n')
-        self.eval(code + 'hl.dispatch(hl.dsp.window.tag({window=w, tag=' + lua("-"+record["tag"]) + '}))')
+        self.eval(code + 'hl.dispatch(hl.dsp.window.tag({window=w, tag=' + lua("-"+record["tag"]) + '}))'
+                  + "\nlocal g="+FOCUS_GUARD+"; if g then g.unregister("+focus_record_lua(record, "w.stable_id")+") end\n")
 
     def close_stashed(self, record):
         self.dispatch_owned("window.close", record, parked=True)
@@ -657,6 +690,9 @@ class Stash:
                         raise RuntimeError("Legacy stashed window did not reach the private workspace")
                     c = migrated
                     r["phase"] = "stashed"
+                    register_focus = getattr(self.hypr, "register_focus_guard", None)
+                    if callable(register_focus):
+                        register_focus(r)
                 except Exception as error:
                     r["phase"] = "restoring"
                     r["lastError"] = str(error)
