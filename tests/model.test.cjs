@@ -3,6 +3,15 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 const code = fs.readFileSync(__dirname + '/../ui/Model.js', 'utf8').replace(/^\.pragma library\s*/, '')
 const ctx = vm.createContext({}); vm.runInContext(code, ctx)
+const publicClient={address:'0x00ab12',mapped:true,hidden:false,workspace:{id:1,name:'1'},tags:[]}
+assert.equal(ctx.publicFocusClient(publicClient,[]),true)
+assert.equal(ctx.publicFocusClient({...publicClient,workspace:{id:-1337,name:'named'}},[]),true)
+for(const patch of [{mapped:false},{hidden:true},{workspace:{id:-98,name:'special:window-stash'}},{workspace:{id:-99,name:'special'}},
+  {tags:{0:'window-stash-owned',length:1}},{address:''}])
+  assert.equal(ctx.publicFocusClient({...publicClient,...patch},[]),false)
+assert.equal(ctx.publicFocusClient(publicClient,[{address:'AB12',phase:'preparing'}]),false,
+  'A parked transition must not retain stale public-focus status before native metadata refresh')
+assert.equal(ctx.publicFocusClient(null,[]),false)
 const windows = [
   {id:'a',app:'Browser',title:'A',order:1,origin:{id:1}},
   {id:'b',app:'Browser',title:'B',order:3,origin:{id:2}},

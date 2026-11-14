@@ -58,7 +58,7 @@ const focusModes={None:0,OnDemand:1,Exclusive:2}
 for (const initiallyOpen of [true,false]) {
   const surface={stash:state,keyboardOpen:initiallyOpen,pointerFocusHeld:false,focusPrimed:true,
     get retainingPointerFocus(){return this.pointerFocusHeld && state.pointerButtonHeld}}
-  const scope=vm.createContext({surface,WlrKeyboardFocus:focusModes})
+  const scope=vm.createContext({surface,previewInteractionOwnsScreen:false,publicWindowFocused:true,WlrKeyboardFocus:focusModes})
   for (const key of ['keyboardOpen','pointerFocusHeld','focusPrimed','retainingPointerFocus'])
     Object.defineProperty(scope,key,{get:()=>surface[key],set:value=>{surface[key]=value}})
   surface.beginPointerFocusHold=vm.runInContext('(function(){'+holdBody[1]+'})',scope)

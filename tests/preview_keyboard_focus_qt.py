@@ -32,6 +32,7 @@ ShellRoot {
   property bool floatingPreviewsExpanded:false
   property bool contextMenuOpen:false
   property bool retainingPointerFocus:false
+  property bool publicWindowFocused:true
   property bool focusPrimed:false
   property QtObject screen:QtObject {property string name:"test"}
   QtObject {id:floatingDock;property bool open:false}
@@ -93,6 +94,10 @@ ShellRoot {
           check(surface.requestedKeyboardFocus===WlrKeyboardFocus.Exclusive,"Ordinary dock keyboard priming regressed")
           floatingDock.open=false
           check(surface.requestedKeyboardFocus===WlrKeyboardFocus.None,"Closing the dock retained keyboard demand")
+          surface.publicWindowFocused=false
+          check(surface.requestedKeyboardFocus===WlrKeyboardFocus.OnDemand,"Idle icon layers became nonfocusable compositor fallback targets")
+          stash.previewInteractionRequest={id:"first",monitor:"test"}
+          check(surface.requestedKeyboardFocus===WlrKeyboardFocus.None,"An input-owned preview retained layer keyboard focus")
           console.log("PREVIEW_KEYBOARD_FOCUS_QT_PASS");Qt.quit()
         }
         surface.phase++

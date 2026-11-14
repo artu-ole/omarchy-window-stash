@@ -1,5 +1,17 @@
 .pragma library
 
+function publicFocusClient(client, records) {
+  if(!client || client.mapped!==true || client.hidden===true || !client.workspace
+      || typeof client.workspace.name!=="string" || !client.workspace.name
+      || client.workspace.name==="special" || client.workspace.name.indexOf("special:")===0) return false
+  function address(value) {return String(value || "").replace(/^0x/i,"").replace(/^0+/,"").toLowerCase()}
+  var wanted=address(client.address)
+  if(!wanted || (records || []).some(function(record) {return address(record.address)===wanted})) return false
+  var tags=client.tags || []
+  for(var i=0;i<tags.length;i++) if(String(tags[i]).indexOf("window-stash-")===0) return false
+  return true
+}
+
 function sizeScale(preset) {
   return ["50","75","100","125","150","175","200","250","300"].indexOf(preset)>=0 ? Number(preset)/100 : 1
 }

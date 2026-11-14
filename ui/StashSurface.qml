@@ -116,6 +116,7 @@ PanelWindow {
   readonly property bool keyboardOpen: dialogOpen || floatingDock.open || contextMenuOpen || (floatingPreviewsExpanded && !previewInteractionOwnsScreen)
   property bool pointerFocusHeld:false
   readonly property bool retainingPointerFocus:pointerFocusHeld && stash.pointerButtonHeld
+  readonly property bool publicWindowFocused:Model.publicFocusClient(Hyprland.activeToplevel ? Hyprland.activeToplevel.lastIpcObject : null,stash.snapshot.windows)
   function beginPointerFocusHold() { if (keyboardOpen) pointerFocusHeld=true }
   Connections {
     target:surface.stash
@@ -708,9 +709,12 @@ PanelWindow {
     || (config.floatingPreviewSizing!=="preset" && config.floatingPreviewLock!=="locked")) && !dialogOpen && !contextMenuOpen
     ? "omarchy-window-stash-interactive-previews" : "omarchy-window-stash"
   WlrLayershell.layer: WlrLayer.Top
+  // A nonfocusable icon layer can make Hyprland's popup/close fallback focus
+  // its last hidden window. Stay on-demand only when no public window can
+  // receive that fallback; public apps and native preview input keep focus.
   WlrLayershell.keyboardFocus: keyboardOpen
     ? (focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
-    : retainingPointerFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    : retainingPointerFocus || (!previewInteractionOwnsScreen && !publicWindowFocused) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
   visible: retainingPointerFocus || shelfModel.count>0 || shelf.reveal>0 || bubblesModel.count>0 || dialogReveal>0 || dialogOpen || floatingDock.present || floatingPreviews.present || contextMenu.visible || windowPreview.visible
   mask: Region {
     id: inputMask
