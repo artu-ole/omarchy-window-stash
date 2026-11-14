@@ -12,7 +12,7 @@ import time
 
 from desktop_test import desktop_test
 from live import command, configure, h, shell, wait
-from native_session import NativeSession
+from native_session import KEYBOARD_SETTLE_SECONDS, NativeSession
 
 
 STYLES = ('matryoshka', 'matryoshka-hop')
@@ -211,7 +211,11 @@ def interruption(session):
     session.keys('-k', 'Escape')
     after = cycle.inspect(session.dock())
     elapsed = time.monotonic()-started
-    assert elapsed < .2, ('IPC was too slow to inspect an interrupted frame', elapsed)
+    # The shared keyboard driver deliberately waits before and after injection.
+    # Keep the IPC budget separate from those fixed waits; pose continuity below
+    # still uses the full wall time during which the animation really advanced.
+    ipc_elapsed = elapsed-2*KEYBOARD_SETTLE_SECONDS
+    assert ipc_elapsed < .2, ('IPC was too slow to inspect an interrupted frame', ipc_elapsed, elapsed)
     assert after['chain']['progress'] > .1, 'Escape reset the shared clock instead of reversing it'
     assert after['chain']['progress'] <= before['chain']['progress']+.12, 'Escape advanced or reset the fold phase'
     for old, new in zip(ordered(before), ordered(after)):

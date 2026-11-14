@@ -11,6 +11,9 @@ from bridge import BridgeManager
 from stash import Stash,atomic_json,read_json,monitor_identity
 
 
+KEYBOARD_SETTLE_SECONDS = .1
+
+
 class NativeSession:
     def __enter__(self):
         self.original=h.read('activewindow');self.original_ws=h.read('activeworkspace')['id']
@@ -41,7 +44,8 @@ class NativeSession:
     def keys(self,*args):
         # A virtual keyboard brings its own keymap. Allow the seat and Qt to
         # consume it before input, and consume the keys before its removal.
-        subprocess.run(['wtype','-s','100','-d','30',*args,'-s','100'],check=True)
+        settle=str(round(KEYBOARD_SETTLE_SECONDS*1000))
+        subprocess.run(['wtype','-s',settle,'-d','30',*args,'-s',settle],check=True)
     def spawn(self,mode=None,app='org.windowstash.NativeTest',delay=500,workspace=None):
         wanted=h.read('activeworkspace')['id'] if workspace is None else workspace
         if wanted<=0:wanted=self.workspace
