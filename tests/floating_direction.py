@@ -30,7 +30,12 @@ def main():
         bottom=max(m['y']+round(m['height']/m['scale']) for m in monitors)
         return monitor['x']+x-left,monitor['y']+y-top,right-left,bottom-top
     def click(rect):pointer.click(*point(rect['x']+rect['width']/2,rect['y']+rect['height']/2))
+    def keys(*args):
+        # Let Qt consume the virtual device's keymap and final release before
+        # removing it again, as in NativeSession.keys.
+        subprocess.run(['wtype','-s','100','-d','30',*args,'-s','100'],check=True)
     def expand():
+        wait(lambda:not dock()['animating'] and not dock()['snapping'],'Dock did not settle before unfolding')
         click(dock()['handle'])
         return wait(lambda:dock() if dock()['expanded'] and dock()['icons'] and not dock()['animating'] else None,'Dock did not settle open')
     def spawn(title):
@@ -57,7 +62,7 @@ def main():
             return c if c['value']=='vertical' and d['visible'] and d['y']<r['y'] and r['y']+r['height']<d['y']+d['height'] else None
         c=wait(ready,'Direction selector missing');click(c['rect'])
         wait(lambda:control()['open'],'Direction dropdown did not open')
-        subprocess.run(['wtype','-k','Down','-k','Return'],check=True)
+        keys('-k','Down','-k','Return')
         wait(lambda:shell('status')['settings']['floatingDirection']=='horizontal','Direction selection did not save')
         shell('dismiss');h.dispatch('focus',workspace=str(workspace))
         windows=[spawn('Stash direction %s %s'%(os.getpid(),i)) for i in range(3)]
@@ -72,11 +77,11 @@ def main():
                         '/tmp/stash-horizontal-dock.png'],check=True)
         back='Left' if d['fan']['sign']>0 else 'Right'
         forward='Right' if d['fan']['sign']>0 else 'Left'
-        subprocess.run(['wtype',*(['-k',back]*len(windows))],check=True)
+        keys(*(['-k',back]*len(windows)))
         wait(lambda:dock()['currentIndex']==0,'Left arrow did not select first icon')
-        subprocess.run(['wtype','-k',forward],check=True)
+        keys('-k',forward)
         wait(lambda:dock()['currentIndex']==1,'Right arrow did not select next icon')
-        subprocess.run(['wtype','-k','Return'],check=True)
+        keys('-k','Return')
         wait(lambda:all(w['address']!=windows[1] for w in command('list')['windows']),'Horizontal keyboard restore failed')
         print('PASS native direction dropdown, horizontal centering, unclipped borders, and keyboard restore',flush=True)
 
@@ -85,7 +90,9 @@ def main():
         d=expand();click(d['icons'][0])
         wait(lambda:shell('status')['dialog']=='picker','Horizontal app icon did not open chooser')
         shell('dismiss');configure('grouping','window')
-        wait(lambda:dock()['active'] and not dock()['animating'],'Dock did not settle collapsed')
+        wait(lambda:dock()['active'] and dock()['groups']==len(windows)
+             and not dock()['expanded'] and not dock()['animating'],
+             'Ungrouped dock did not settle collapsed')
         touched.add(monitor_identity(monitor))
         handle=dock()['handle']
         command('position',monitor_identity(monitor),'dock:floating',12,handle['y'])
