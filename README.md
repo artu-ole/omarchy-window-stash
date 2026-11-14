@@ -30,7 +30,7 @@ Actual application captures with offline example files. [Capture details](docs/m
 ## Installation
 
 Works on **Omarchy 4 and 4.5**. Requires Python 3, Git, Hyprland Lua IPC
-(`hyprctl eval`/`repl`) with runtime `hl.bind` handles, and the shell modules
+(`hyprctl eval`/`repl`) with runtime `hl.bind`/`hl.on` support, and the shell modules
 `qs.Commons`, `qs.Ui`, `Quickshell.Widgets`, `QtQuick.Effects` and `Quickshell.Wayland`.
 Install as your desktop user:
 
@@ -345,7 +345,7 @@ python3 tools/check.py
 ```
 
 Checks require Python, Node.js, `qs`, Qt6 `qmllint` and Omarchy's validator with `jq`;
-standalone Lua enables handle tests. Native suites additionally use GTK4
+standalone Lua enables binding and focus tests. Native suites additionally use GTK4
 introspection, `wtype`, `notify-send` and `grim`. See [tests/](tests/) and
 [VALIDATION.md](VALIDATION.md), including `tests/live_compatibility.py` for actual
 Ghostty/btop and browser pixels. Follow [AGENTS.md](AGENTS.md): announce input

@@ -1,5 +1,48 @@
 # Validation
 
+## v1.36.2 — release sweep — 14 November 2026
+
+Validated on Omarchy 4.5, Hyprland 0.56.2 (`efb50993780079460b0cbed1363e2166a2de1d9f`),
+using independent disposable compositor sessions, private homes and virtual input.
+The documentation media branch is merged into `develop`.
+
+The sweep fixes narrow tiled windows that are below their application's floating
+minimum size, browser video fullscreen handoff, and popup focus fallback. Parking
+may use the compositor's larger working size; original tiled geometry and scrolling
+width remain unchanged. A scoped Lua observer prevents the automatic focus fallback
+following an exact owned-window unmap from restoring a neighbor. Public keyboard
+input and intentional external activation retain their behavior. Desktop fullscreen
+acknowledges the browser request before handoff and preserves it only for its exact live owner; ordinary restoration,
+expiry, cancellation and native reload clear temporary state.
+
+Automated checks pass **416 Python tests** (including production-code C++ ASAN
+and Lua observer harnesses), **16 JavaScript suites**, **18 offscreen Qt suites**,
+**130 Python syntax checks**, manifest validation and warning-free QML lint.
+Native bridge **1.29.9** compiles without warnings against the exact installed compositor headers. Its final fingerprint is
+`645f796bc9e30c07a56b1c8aea0110bf6022fa12c6dca3d478282018202cf344`.
+
+| Area | Native acceptance coverage |
+|---|---|
+| Restoration | Native Wayland/XWayland, floating size/position, tiled insertion, narrow/wide scrolling columns, original/current destinations, grouped targets and newest/FIFO shortcuts. |
+| Omarchy integration | Native floating-workspace dock coexistence, legacy ownership migration, switcher activation, global/workspace scope, independent three-output positions, unplug fallback and rotated/scaled coordinates. |
+| Presentation | All four modes, all four static edges, bar clearance, edge dragging/locking, size/shape/corner/frame presets, overflow, actual opacity blending, hover/press feedback and persistent placement. |
+| Motion | All unfold styles/directions, fixed front icon, shared nested-stack stages, jump curves, reversal, source removal, speed presets, trailing stack physics, gravity/free placement, flicks and reduced/off behavior. |
+| Settings | All 45 preferences, short scaled screens, scrolling/focus/dropdowns/sliders, shortcut conflicts/rebinding, reset cancellation/confirmation, saved geometry and preferences. |
+| Previews | Actual parked pixels, snapshots/live/hover, simultaneous grouped windows, title/middle close, delayed hover on the front floating-dock icon, capture/lease release, aspect ratios and persisted fold stages. |
+| Input | Explicit/first-click/Super activation, app buttons/wheel/drag/UTF-8/control keys/clipboard/plain Escape/configured exit, popup/modal/constraint handling, exact grouped targets, fresh-owner interactive resizing and all Super corners. |
+| Real applications | Ghostty/btop pixel updates under Enhanced rendering, Chromium/Brave tabs, video picture-in-picture, contained fullscreen, Desktop fullscreen from originally maximized windows and exact manual restoration. |
+| Lifecycle | CLI add/update/disable/enable/remove/reinstall, source-deleted removal guardian, shell/config restarts, cooperative and historical bridge upgrades, failed builds/loads/rollback, held-input barriers, DPMS and actual session lock. |
+
+The rapid-focus regression exercises ninety Settings/context/group-picker dismissals,
+intentional external activation, actual public-app key delivery after icon hover,
+dragging and popup dismissal, and interaction with only a stashed preview present.
+
+Every disposable session ends with no test clients, stash records, captures,
+render/input owners, held or pending input, pending fullscreen or Super gestures.
+The lifecycle is healthy. Production focus observers and their timers are also
+released explicitly. Installation, native refresh and final repository status
+are checked separately after the native acceptance matrix.
+
 ## v1.36.1 — optional interactive resize handles — 14 November 2026
 
 **Resize while interacting** (`floatingPreviewInteractionResize`) is now an
