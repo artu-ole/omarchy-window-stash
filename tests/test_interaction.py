@@ -356,6 +356,20 @@ class InteractionTests(unittest.TestCase):
         self.assertEqual((source['fullscreen'],source['fullscreenClient']),(2,2))
         self.assertEqual(hypr.client(control['address']),control)
 
+    def test_failed_desktop_handoff_does_not_save_temporary_client_ack_as_restore_fullscreen(self):
+        keeper,stash,hypr,bridge,wanted,saved,control = self.fallback_fixture()
+        bridge.current.update(reason='source-fullscreen',desktopFullscreenPending=True)
+        source=hypr.client(saved['address'])
+        source['fullscreenClient']=2
+        hypr.clear_preview_fullscreen=lambda record,owner:self.assertEqual(owner,keeper.owner)
+        hypr.fail='window.resize'
+        with self.assertRaisesRegex(RuntimeError,'Injected IPC failure'):keeper.sync(wanted)
+        pending=json.loads(stash.path.read_text())['windows'][0]
+        self.assertNotIn('restoreFullscreen',pending,'The temporary ACK would make a later manual retry restore unwanted video fullscreen')
+        for field in ('fullscreen','fullscreenClient','size','relativePosition','origin','floating'):
+            self.assertEqual(pending[field],saved[field])
+        self.assertFalse(any(call[0]=='handoff' for call in bridge.calls))
+
     def test_native_restore_fallback_honors_current_workspace_destination(self):
         keeper,stash,hypr,bridge,wanted,saved,control = self.fallback_fixture('current')
         self.assertTrue(keeper.sync(wanted)['restored'])
