@@ -30,6 +30,12 @@ backups/
 .DS_Store
 /assets/title-prompt.txt
 
+# Public documentation lives in the root README; keep working notes local.
+/VALIDATION.md
+/docs/media/README.md
+/docs/interactive-previews.md
+/native/README.md
+
 # Locally compiled optional compositor support
 *.so
 *.o
