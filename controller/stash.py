@@ -699,7 +699,15 @@ class Stash:
             raise RuntimeError("Window identity changed while minimizing")
         if after["workspace"]["name"] != SPECIAL:
             raise RuntimeError("The window did not reach the stash")
-        if not after["floating"] or after["size"] != record["size"]:
+        # Tilers can allocate less than a client's minimum floating size.
+        # Parking must respect that minimum without replacing the original
+        # tiled size or scrolling width used when the window is restored.
+        size = after.get("size")
+        minimum_clamped = (not record["floating"] and isinstance(size, list) and len(size) == 2
+                           and all(type(value) in (int, float) and math.isfinite(value)
+                                   and 0 < saved <= value <= 1_000_000
+                                   for value, saved in zip(size, record["size"])))
+        if not after["floating"] or (size != record["size"] and not minimum_clamped):
             raise RuntimeError("The stashed window did not retain its saved size")
         return after
 

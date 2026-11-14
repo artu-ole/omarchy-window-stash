@@ -487,6 +487,49 @@ assert(not w.floating)
                 hypr.dispatch = original_dispatch
                 self.assertEqual(stash.restore(retained["id"])["action"],"restored")
 
+    def test_tiled_parking_accepts_client_minimum_without_changing_restore_geometry(self):
+        self.hypr.clients[0].update(size=[296,190], scrollingFraction=.31)
+        original_dispatch = self.hypr.dispatch
+        def clamp_floating(name, **args):
+            result = original_dispatch(name, **args)
+            current = self.hypr.clients[0]
+            if current["floating"] and name in ("window.float", "window.resize"):
+                current["size"] = [max(340,current["size"][0]), max(200,current["size"][1])]
+            return result
+        self.hypr.dispatch = clamp_floating
+        ident = self.stash.minimize()["id"]
+        self.assertEqual(self.hypr.clients[0]["size"], [340,200])
+        record = copy.deepcopy(self.stash.state["windows"][0])
+        self.assertEqual((record["size"],record["scrollingWidth"],record["floating"],record["phase"]),
+                         ([296,190],.31,False,"stashed"))
+        self.assertEqual(self.stash.listing()["windows"][0],record)
+        with patch.object(self.stash,"append_scrolling") as append:
+            self.assertEqual(self.stash.restore(ident,"original")["action"],"restored")
+            self.assertEqual(append.call_args.args[2],296)
+            self.assertEqual(append.call_args.args[3]["scrollingWidth"],.31)
+        self.assertFalse(self.hypr.clients[0]["floating"])
+        self.assertEqual(self.stash.state["windows"],[])
+
+    def test_parking_rejects_shrinking_invalid_and_originally_floating_size_changes(self):
+        for index,(floating,size) in enumerate(((False,[700,399]),(False,[0,400]),
+                                               (False,[float("nan"),400]),(False,[True,400]),
+                                               (False,[1_000_001,400]),(False,[700]),
+                                               (True,[700,400]))):
+            with self.subTest(floating=floating,size=size):
+                hypr,stash = self.race_fixture("parking-minimum-"+str(index))
+                hypr.clients[0]["floating"] = floating
+                original = hypr.park_owned
+                def change_size(record, parked=False):
+                    original(record,parked=parked)
+                    hypr.clients[0]["size"] = size
+                hypr.park_owned = change_size
+                with self.assertRaisesRegex(RuntimeError,"retain its saved size"):
+                    stash.minimize()
+                record = stash.state["windows"][0]
+                self.assertEqual(record["size"],[640,400])
+                self.assertEqual(record["floating"],floating)
+                self.assertEqual(record["phase"],"restoring")
+
     @unittest.skipUnless(shutil.which("lua"), "Standalone Lua interpreter unavailable")
     def test_native_parking_transaction_has_exact_guards_order_and_no_private_tiling_arrival(self):
         record = dict(address="0x1",pid=100,stableId="0x1",tag="window-stash-test",size=[1251,750])
