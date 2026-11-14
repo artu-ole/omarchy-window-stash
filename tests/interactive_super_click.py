@@ -127,11 +127,14 @@ def main(fresh_support=False):
                 if fresh_support:
                     print('PASS Standard/Still stashed source automatically loads current native support before Super-click', native['version'], native['fingerprint'], flush=True)
                 wait(lambda: shell('status')['lifecycle']['ready'], 'Lifecycle did not settle after automatic preparation')
+                proof=str(os.getpid())
+                descriptions={'Window Stash isolated stock move proof '+proof,
+                              'Window Stash isolated stock resize proof '+proof}
                 h.eval('_G.'+binding+'={hl.bind("SUPER + mouse:272",hl.dsp.window.drag(),'
-                       '{mouse=true,description="Window Stash isolated stock move proof"}),'
+                       '{mouse=true,description="Window Stash isolated stock move proof '+proof+'"}),'
                        'hl.bind("SUPER + mouse:273",hl.dsp.window.resize(),'
-                       '{mouse=true,description="Window Stash isolated stock resize proof"})}')
-                assert sum(item.get('description', '').startswith('Window Stash isolated stock ') for item in h.read('binds')) == 2, 'Owned stock mouse bindings were not registered'
+                       '{mouse=true,description="Window Stash isolated stock resize proof '+proof+'"})}')
+                assert sum(item.get('description', '') in descriptions for item in h.read('binds')) == 2, 'Owned stock mouse bindings were not registered'
                 layers = h.read('layers')
                 namespaces = [(monitor, item.get('namespace')) for monitor, detail in layers.items()
                               for level in detail.get('levels', {}).values() for item in level]
