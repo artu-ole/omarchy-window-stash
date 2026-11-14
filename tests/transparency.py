@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 import time
+from types import SimpleNamespace
 
+from hover_previews import spawn_color
 from live import ROOT,h,command,shell,configure,wait,fixture_settings
 from pointer import Pointer
 from desktop_test import desktop_test
@@ -106,6 +108,13 @@ def main():
         configure('iconOpacity',35);shell('dismiss')
         h.dispatch('focus',workspace=str(workspace));windows=[spawn(),spawn()]
         for a in windows:park(a)
+        # A theme may use the same color for the wallpaper and dock. Supply
+        # owned contrasting pixels so alpha is measured independently of it.
+        backdrop=spawn_color(SimpleNamespace(workspace=workspace,monitor=monitor,
+                                           processes=processes,addresses=addresses),'red')
+        h.dispatch('window.resize',window='address:'+backdrop,x=round(monitor['width']/monitor['scale']),
+                   y=round(monitor['height']/monitor['scale']),relative=False)
+        h.dispatch('window.move',window='address:'+backdrop,x=monitor['x'],y=monitor['y'],relative=False)
         settle_static(2);away();alpha(frame_feedback,.3)
         configure('iconOpacity',0);alpha(icon_feedback,0);r=icon();clear=capture(r,'icon-clear')
         configure('iconOpacity',100);alpha(icon_feedback,1);opaque=capture(r,'icon-opaque')
