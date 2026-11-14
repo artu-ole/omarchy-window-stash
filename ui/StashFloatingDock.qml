@@ -107,12 +107,18 @@ Item {
   visible:present
   focus:open
   HoverHandler { id:fanHover; onHoveredChanged:dock.updateLeaveTimer() }
+  // Qt can retain layer hover while another surface receives pointer input.
+  // The compositor observer remains authoritative outside our input region.
+  readonly property bool pointerInside:stash.pointerKnown && monitor
+    ? panelContains(stash.pointerPosition.x-monitor.x,stash.pointerPosition.y-monitor.y)
+    : fanHover.hovered || !!(preview && preview.fromFloating && preview.hovered)
+  onPointerInsideChanged:updateLeaveTimer()
   readonly property int leaveTimeout:800
   function updateLeaveTimer() {
-    if (!open || openingMotion || fanHover.hovered || pan.active || (preview && preview.fromFloating && preview.hovered)) leaveDelay.stop()
+    if (!open || openingMotion || pointerInside || pan.active) leaveDelay.stop()
     else if (!leaveDelay.running) leaveDelay.start()
   }
-  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !dock.openingMotion && !fanHover.hovered && !pan.active && !(dock.preview && dock.preview.fromFloating && dock.preview.hovered)) dock.close("pointer-leave") }
+  Timer { id:leaveDelay; interval:dock.leaveTimeout; onTriggered:if (dock.open && !dock.openingMotion && !dock.pointerInside && !pan.active) dock.close("pointer-leave") }
   onOpeningMotionChanged:updateLeaveTimer()
   Connections {
     target:dock.preview
@@ -255,7 +261,7 @@ Item {
     if (index<firstIndex) requestPage(index)
     else if (index>=firstIndex+geometry.capacity) requestPage(Math.min(maxFirst,index-geometry.capacity+1))
   }
-  function navigate(delta) { if (open) { selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))); if (!fanHover.hovered && !openingMotion) leaveDelay.restart(); else updateLeaveTimer() } }
+  function navigate(delta) { if (open) { selectIndex(Math.max(0,Math.min(groupCount-1,currentIndex+delta))); if (!pointerInside && !openingMotion) leaveDelay.restart(); else updateLeaveTimer() } }
   function requestPage(index) {
     if (chainStyle && chainAnimation.running) pendingPage=Math.max(0,Math.min(maxFirst,index))
     else firstIndex=Math.max(0,Math.min(maxFirst,index))
@@ -354,7 +360,7 @@ Item {
       size:{preset:String(config.sizePreset || "100"),requested:requestedTileSize,active:tileSize,pending:sizePending,tailStep:tailStep,gap:gap},
       createdIcons:createdIcons,currentIndex:currentIndex,currentKey:selectedKey,actors:states,firstIndex:firstIndex,capacity:geometry.capacity,
       chain:{progress:chainProgress,count:chainCount,moving:chainAnimation.running,stage:Math.min(Math.max(0,chainCount-1),Math.floor(chainProgress*Math.max(0,chainCount-1)))},
-      dismissal:{hovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
+      dismissal:{hovered:pointerInside,qtHovered:fanHover.hovered,pending:leaveDelay.running,timeout:leaveTimeout},
       pointer:{x:pivotX,y:pivotY},fan:{sign:geometry.sign,curveSign:geometry.curveSign},lastDismissal:lastDismissal,
       animation:{speed:animationSpeed,duration:revealAnimation.duration,openingFrames:openingFrames,closingFrames:closingFrames},grabActive:open && windowActive,snapping:bodyMoving,windows:windows.length,groups:groups.length,
       followers:stackFollow.details(),
@@ -447,7 +453,7 @@ Item {
     onWidthChanged:dock.inputChanged()
     onHeightChanged:dock.inputChanged()
     onRadiusChanged:dock.inputChanged()
-    StashFeedback { id:panelFeedback; animations:dock.animations; animationSpeed:dock.animationSpeed; idleOpacity:(dock.config.dockOpacity===undefined ? 100 : dock.config.dockOpacity)/100; hot:dock.open && fanHover.hovered }
+    StashFeedback { id:panelFeedback; animations:dock.animations; animationSpeed:dock.animationSpeed; idleOpacity:(dock.config.dockOpacity===undefined ? 100 : dock.config.dockOpacity)/100; hot:dock.open && dock.pointerInside }
   }
   WheelHandler {
     enabled:dock.open && dock.overflow
