@@ -265,5 +265,12 @@ leave a dialog on its current workspace without reacquiring input. Pending priva
 focus/warp suppression expires after five seconds independently of owner tombstones.
 Every path releases its input lease.
 
+Desktop fullscreen acknowledges client state immediately while keeping layout
+fullscreen disabled until the verified public handoff. `desktopFullscreenPending`
+identifies this temporary acknowledgment. Only its exact owner may preserve it
+through `clear_fullscreen(identity, owner)`; ordinary restore, expiry, lock and
+bridge preparation cancel it through the acknowledged cleanup path. Temporary
+client state never replaces saved restoration metadata.
+
 See [../VALIDATION.md](../VALIDATION.md) for final native acceptance and the supported
 boundaries around dialogs, fullscreen and popup overflow.

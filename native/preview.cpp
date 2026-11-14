@@ -91,6 +91,7 @@ struct DesktopFullscreenRequest {
     std::optional<Fullscreen::eFullscreenMode> internal;
     std::optional<Fullscreen::eFullscreenMode> client;
     std::optional<bool> layoutAware;
+    Fullscreen::eFullscreenMode originalClient = Fullscreen::FSMODE_NONE;
 };
 struct Interaction {
     std::string owner;
@@ -487,6 +488,44 @@ bool clearConstrainedFullscreen(std::string id) {
     return true;
 }
 
+bool pendingDesktopFullscreen(const EndedInteraction& ended) {
+    return ended.restoreRequested && !ended.handedOff && ended.desktopFullscreen && ended.handoffDeadline > Clock::now();
+}
+
+void clearDesktopFullscreen(EndedInteraction& ended) {
+    if (!ended.desktopFullscreen)
+        return;
+    const auto request = *ended.desktopFullscreen;
+    const auto identity = ended.source;
+    ended.desktopFullscreen.reset();
+    ended.restoreRequested = false;
+    ended.handedOff = true;
+    const auto window = identity.window.lock();
+    if (!window || !sameWindow(identity, window.get(), false))
+        return;
+    const auto modes = Fullscreen::controller()->getFullscreenModes(window);
+    if (modes.internal != Fullscreen::FSMODE_NONE || modes.client != request.client.value_or(request.internal.value_or(Fullscreen::FSMODE_NONE)))
+        return; // A later public fullscreen change owns this window now.
+    const auto found = fullscreenWindows.find(identity.id);
+    if (found != fullscreenWindows.end() && !sameWindow(found->second.identity, window.get(), false))
+        return;
+    fullscreenWindows.try_emplace(identity.id, ConstrainedFullscreen{identity, request.originalClient, modes.client});
+    clearConstrainedFullscreen(identity.id); // Reuse the acknowledged private-client cleanup barrier.
+}
+
+void clearPendingDesktopFullscreen(bool force = false) {
+    std::vector<std::string> owners;
+    for (const auto& ended : endedInteractions)
+        if (ended.desktopFullscreen && (force || !pendingDesktopFullscreen(ended) || reloadPending
+            || (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked())))
+            owners.push_back(ended.owner);
+    for (const auto& owner : owners) {
+        const auto found = std::find_if(endedInteractions.begin(), endedInteractions.end(), [&](const auto& ended) { return ended.owner == owner; });
+        if (found != endedInteractions.end())
+            clearDesktopFullscreen(*found);
+    }
+}
+
 void clearAllConstrainedFullscreen() {
     std::vector<std::string> ids;
     ids.reserve(fullscreenWindows.size());
@@ -573,8 +612,14 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
         // fullscreen=false for geometry, which cancels video DOM fullscreen.
         // Restore its ordinary window first, then apply this exact request once
         // the existing controller handoff verifies a public destination.
-        interaction->desktopFullscreen = DesktopFullscreenRequest{internal, client, layoutAware};
+        const auto identity = interaction->identity;
+        interaction->desktopFullscreen = DesktopFullscreenRequest{internal, client, layoutAware, controller->getFullscreenModes(window).client};
         requestRestore("source-fullscreen");
+        // Geometry/focus changes can configure the client before Python finishes
+        // the handoff. Acknowledge its request now, without layout fullscreen, so
+        // that intermediate configure cannot cancel browser DOM/video fullscreen.
+        if (sameWindow(identity, window.get(), true))
+            setClientFullscreen(window, client.value_or(internal.value_or(Fullscreen::FSMODE_NONE)));
         return;
     }
     if (window) {
@@ -587,9 +632,14 @@ void setFullscreenMode(Fullscreen::CFullscreenController* controller, PHLWINDOW 
             // request) without exposing or resizing the private source. Explicit
             // internal/client pairs belong to restoration/layout maintenance;
             // they must not replace the app's saved fullscreen intent.
-            if (!internal.has_value() && client.has_value())
-                pending->desktopFullscreen = DesktopFullscreenRequest{internal, client, layoutAware};
-            return;
+            if (!internal.has_value() && client.has_value()) {
+                const auto originalClient = pending->desktopFullscreen->originalClient;
+                pending->desktopFullscreen = DesktopFullscreenRequest{internal, client, layoutAware, originalClient};
+                setClientFullscreen(window, *client);
+                return;
+            }
+            if (pending->desktopFullscreen->client.value_or(pending->desktopFullscreen->internal.value_or(Fullscreen::FSMODE_NONE)) != Fullscreen::FSMODE_NONE)
+                return;
         }
     }
     if (window && !internal.has_value() && client == Fullscreen::FSMODE_MAXIMIZED && window->m_xdgSurface
@@ -918,8 +968,11 @@ void rememberEnd(const std::string& owner, const std::string& id, const std::str
         ended.handoffDeadline = Clock::now() + HANDOFF_TIME;
     }
     endedInteractions.push_back(std::move(ended));
-    while (endedInteractions.size() > 64)
+    while (endedInteractions.size() > 64) {
+        auto expired = std::move(endedInteractions.front());
         endedInteractions.pop_front();
+        clearDesktopFullscreen(expired);
+    }
 }
 
 void endInteraction(const std::string& reason, bool refocus) {
@@ -1719,6 +1772,7 @@ void naturalSuspension(const Identity& identity) {
 }
 
 void synchronize() {
+    clearPendingDesktopFullscreen();
     synchronizeConstrainedFullscreen();
     auto previous = std::move(active);
     active.clear();
@@ -1743,6 +1797,11 @@ void synchronize() {
         if (transition.waitingAck && window && sameWindow(transition.identity, window.get(), true))
             active.emplace(window.get(), transition.identity);
     }
+    for (const auto& ended : endedInteractions) {
+        const auto window = ended.source.window.lock();
+        if (pendingDesktopFullscreen(ended) && window && sameWindow(ended.source, window.get(), true))
+            active.emplace(window.get(), ended.source);
+    }
     if (validateInteraction()) {
         const auto window = interaction->identity.window.lock();
         active.emplace(window.get(), interaction->identity);
@@ -1754,9 +1813,10 @@ void synchronize() {
     for (const auto& [window, identity] : active)
         window->setSuspended(false);
     if (frameTimer) {
+        const bool pendingDesktop = std::any_of(endedInteractions.begin(), endedInteractions.end(), pendingDesktopFullscreen);
         const auto desired = interaction ? std::chrono::milliseconds((1000 + interaction->fps - 1) / interaction->fps)
             : active.empty() && (!fullscreenWindows.empty() || !fullscreenTransitions.empty()) ? std::chrono::milliseconds(500) : FRAME_TIME;
-        if (owners.empty() && !interaction && fullscreenWindows.empty() && fullscreenTransitions.empty())
+        if (owners.empty() && !interaction && fullscreenWindows.empty() && fullscreenTransitions.empty() && !pendingDesktop)
             frameTimer->updateTimeout(std::nullopt);
         else if (!frameTimer->armed() || frameTimer->passed() || desired != frameInterval)
             frameTimer->updateTimeout(desired);
@@ -1991,6 +2051,7 @@ void interactionDetails(lua_State* state, const std::string& owner) {
     booleanField(state, "keyboard", matches && interaction->keyboard);
     booleanField(state, "keyboardFocused", matches && interaction->keyboardFocused);
     booleanField(state, "restoreRequested", false);
+    booleanField(state, "desktopFullscreenPending", false);
     field(state, "fullscreen", matches ? interaction->constrainFullscreen ? "preview" : "desktop" : "");
     booleanField(state, "previewFullscreen", matches && fullscreenWindows.contains(interaction->identity.id)
                  && fullscreenWindows.at(interaction->identity.id).client == Fullscreen::FSMODE_FULLSCREEN);
@@ -2041,6 +2102,7 @@ void interactionDetails(lua_State* state, const std::string& owner) {
                 field(state, "id", it->id);
                 field(state, "reason", it->reason);
                 booleanField(state, "restoreRequested", it->restoreRequested && !it->handedOff);
+                booleanField(state, "desktopFullscreenPending", pendingDesktopFullscreen(*it));
                 field(state, "fullscreen", it->constrainFullscreen ? "preview" : "desktop");
                 booleanField(state, "previewFullscreen", fullscreenWindows.contains(it->id)
                              && fullscreenWindows.at(it->id).client == Fullscreen::FSMODE_FULLSCREEN);
@@ -2232,6 +2294,20 @@ int interactionRelease(lua_State* state) {
 int clearFullscreen(lua_State* state) {
     try {
         const auto identity = readIdentity(state, 1);
+        const auto pending = std::find_if(endedInteractions.begin(), endedInteractions.end(), [&](const auto& ended) {
+            return pendingDesktopFullscreen(ended) && ended.id == identity.id
+                && sameWindow(ended.source, identity.window.lock().get(), true);
+        });
+        if (pending != endedInteractions.end()) {
+            const auto owner = lua_isnoneornil(state, 2) ? std::string{} : stringAt(state, 2);
+            if (!owner.empty()) {
+                if (owner != pending->owner)
+                    throw std::invalid_argument("The Desktop fullscreen handoff owner changed");
+                lua_pushboolean(state, false);
+                return 1;
+            }
+            clearDesktopFullscreen(*pending); // A normal Restore cancels the deferred desktop request.
+        }
         const auto found = fullscreenWindows.find(identity.id);
         if (found != fullscreenWindows.end() && (found->second.identity.address != identity.address
             || found->second.identity.pid != identity.pid || found->second.identity.stable != identity.stable
@@ -2349,7 +2425,7 @@ int status(lua_State* state) {
     booleanField(state, "reloadReady", reloadPending && !interaction && !endingInteraction
                  && owners.empty() && active.empty() && !pointerReleasePending() && releasedKeys.empty()
                  && fullscreenTransitions.empty());
-    field(state, "pendingFullscreen", fullscreenTransitions.size());
+    field(state, "pendingFullscreen", fullscreenTransitions.size() + std::count_if(endedInteractions.begin(), endedInteractions.end(), pendingDesktopFullscreen));
     const auto pendingResizes = std::count_if(fullscreenTransitions.begin(), fullscreenTransitions.end(), [](const auto& item) {
         return item.second.resize != FullscreenResize::None;
     });
@@ -2415,6 +2491,7 @@ int prepareReload(lua_State* state) {
     endInteraction("bridge-reload");
     clearAllConstrainedFullscreen();
     owners.clear();
+    clearPendingDesktopFullscreen(true);
     for (auto& ended : endedInteractions) {
         ended.restoreRequested = false;
         ended.handedOff = true;

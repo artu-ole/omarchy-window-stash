@@ -17,7 +17,7 @@ def production_clear():
 
 def production_function(result, name):
     source = (ROOT/'native/preview.cpp').read_text()
-    match = re.search(r'^'+result+' '+name+r'\([^;\n]*\) \{', source, re.M)
+    match = re.search(r'^'+result+' '+name+r'\([^;{]*\)\s*\{', source, re.M)
     if match is None:
         raise AssertionError('Production fullscreen cleanup function was not found')
     level = 1

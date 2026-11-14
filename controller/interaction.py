@@ -127,7 +127,7 @@ def status_json(expression):
         + ',string.byte(c)) end)..\'"\' end\n'
         + 'local function count(value) return type(value)=="table" and #value or tonumber(value) or 0 end\n')
     fields = []
-    for field in ('active', 'keyboard', 'keyboardFocused', 'restoreRequested', 'previewFullscreen'):
+    for field in ('active', 'keyboard', 'keyboardFocused', 'restoreRequested', 'previewFullscreen', 'desktopFullscreenPending'):
         fields.append(lua(json.dumps(field)+':')+'..tostring(result.'+field+'==true)')
     for field in ('owner', 'id', 'reason', 'fullscreen', 'activationOrigin'):
         fields.append(lua(json.dumps(field)+':')+'..quote(result.'+field+')')
@@ -255,11 +255,11 @@ class InteractionKeeper:
                           requireSourceGeometry=any(record.get('previewResized') is True for record in saved if record.get('id') == target['id']))
         return sources[0], parameters
 
-    def _restore_handoff(self, target):
+    def _restore_handoff(self, target, handoff_owner=None):
         with self.bridge.operation() if isinstance(self.bridge, PreviewBridge) else contextlib.nullcontext():
-            return self._guarded_restore_handoff(target)
+            return self._guarded_restore_handoff(target, handoff_owner)
 
-    def _guarded_restore_handoff(self, target):
+    def _guarded_restore_handoff(self, target, handoff_owner=None):
         # Native detection is a request, not authority to mutate a client. Hold
         # the ledger lock and recheck the exact initially accepted identity,
         # ownership, phase, monitor and visibility policy before restoration.
@@ -272,7 +272,7 @@ class InteractionKeeper:
             record = next(record for record in saved if record['id'] == target['id'])
             result = self.stash.restore(record['id'], to=settings['restoreDestination'],
                                         monitor=target['monitor'],
-                                        expected=dict(record, stableId=self.bound_source['stable_id']))
+                                        expected=dict(record, stableId=self.bound_source['stable_id']), handoff_owner=handoff_owner)
             if result.get('action') != 'restored':
                 return dict(restored=False)
         # The native owner tombstone retains weak exact transient identities;
@@ -288,7 +288,7 @@ class InteractionKeeper:
             if status.get('restoreRequested') is True and status.get('reason') in RESTORE_REASONS:
                 if status.get('owner') != self.owner or status.get('id') != target['id']:
                     raise RuntimeError('Native restore request does not match the active window and owner')
-                result.update(self._restore_handoff(target))
+                result.update(self._restore_handoff(target, self.owner if status.get('desktopFullscreenPending') is True else None))
         finally:
             self.close()
         self.terminal = result

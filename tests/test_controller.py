@@ -1650,7 +1650,7 @@ assert(neighbor.size.x==1256 and neighbor.size.y==750)
         environment = dict(XDG_RUNTIME_DIR=str(self.root/'bridge-runtime'),
                            HYPRLAND_INSTANCE_SIGNATURE='restore-gate-test')
         def finish(*args):
-            self.assertEqual(args,('exact-id','original','eDP-2',3,{'stableId':'18000001'}))
+            self.assertEqual(args,('exact-id','original','eDP-2',3,{'stableId':'18000001'},None))
             with self.assertRaisesRegex(RuntimeError,BUSY), bridge_gate(exclusive=True):
                 self.fail('Native replacement entered during a restore')
             return {'ok':True,'action':'restored'}

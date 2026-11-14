@@ -335,6 +335,27 @@ class InteractionTests(unittest.TestCase):
                 self.assertEqual(keeper.sync(wanted),value)
                 self.assertEqual(bridge.calls,calls,'A stale fallback request repeated its restoration or handoff')
 
+    def test_pending_desktop_fullscreen_ack_uses_exact_owner_without_changing_saved_restore_policy(self):
+        keeper,stash,hypr,bridge,wanted,saved,control = self.fallback_fixture()
+        bridge.current.update(reason='source-fullscreen',desktopFullscreenPending=True)
+        source=hypr.client(saved['address'])
+        source['fullscreenClient']=2
+        owners=[]
+        def preserve_ack(record, owner):
+            self.assertEqual(record['id'],saved['id'])
+            owners.append(owner)
+        hypr.clear_preview_fullscreen=preserve_ack
+        def complete_handoff():
+            self.assertEqual(source['workspace']['id'],saved['origin']['id'])
+            self.assertEqual(source['fullscreenClient'],2,'Restore cancelled the browser video request before public handoff')
+            self.assertEqual((saved['fullscreen'],saved['fullscreenClient']),(0,0))
+            source['fullscreen']=2
+        bridge.on_handoff=complete_handoff
+        self.assertTrue(keeper.sync(wanted)['restored'])
+        self.assertEqual(owners,[keeper.owner])
+        self.assertEqual((source['fullscreen'],source['fullscreenClient']),(2,2))
+        self.assertEqual(hypr.client(control['address']),control)
+
     def test_native_restore_fallback_honors_current_workspace_destination(self):
         keeper,stash,hypr,bridge,wanted,saved,control = self.fallback_fixture('current')
         self.assertTrue(keeper.sync(wanted)['restored'])

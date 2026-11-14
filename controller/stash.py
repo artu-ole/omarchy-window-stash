@@ -243,7 +243,7 @@ class Hyprland:
         self.eval(owned_window_guard(record, parked)
                   + "hl.dispatch(hl.dsp." + dispatcher + "({" + ", ".join(fields) + "}))")
 
-    def clear_preview_fullscreen(self, record):
+    def clear_preview_fullscreen(self, record, handoff_owner=None):
         """Clear an exact override and await its client configure acknowledgements."""
         api = 'hl.plugin.window_stash_preview'
         identity = dict(id=record['id'], address=record['address'], pid=record['pid'],
@@ -256,7 +256,8 @@ class Hyprland:
                             +'and info.capabilities.constrainedFullscreen==true then\n'
                             +'assert(type(api.fullscreen_cleanup_pending)=="function",'
                             +lua('Reload preview support in Window Stash Settings before restoring fullscreen previews')+')\nend\n')
-        self.eval(prefix+capability_guard+'local cleared,err=api.clear_fullscreen('+payload+'); assert(cleared~=nil,err)')
+        owner = ','+lua(handoff_owner) if handoff_owner else ''
+        self.eval(prefix+capability_guard+'local cleared,err=api.clear_fullscreen('+payload+owner+'); assert(cleared~=nil,err)')
         Hyprland.wait_preview_fullscreen(self, record)
 
     def wait_preview_fullscreen(self, record):
@@ -842,13 +843,13 @@ class Stash:
             mode = read_mode(directory / "default.lua", r'default\s*=\s*')
         return mode == "floating"
 
-    def restore(self, ident, to=None, monitor=None, workspace=None, expected=None):
+    def restore(self, ident, to=None, monitor=None, workspace=None, expected=None, handoff_owner=None):
         # Clearing private client fullscreen and moving the source public must
         # remain one operation relative to an exclusive native replacement.
         with bridge_gate() if isinstance(self.hypr, Hyprland) else contextlib.nullcontext():
-            return self._restore(ident, to, monitor, workspace, expected)
+            return self._restore(ident, to, monitor, workspace, expected, handoff_owner)
 
-    def _restore(self, ident, to=None, monitor=None, workspace=None, expected=None):
+    def _restore(self, ident, to=None, monitor=None, workspace=None, expected=None, handoff_owner=None):
         clients = self.hypr.read("clients")
         self.reconcile(clients)
         record = next((r for r in self.state["windows"] if r["id"] == ident or r["address"] == ident), None)
@@ -864,7 +865,8 @@ class Stash:
         # current fullscreen state as a real desktop restoration request.
         identity = dict(expected, stableId=expected.get('stableId') or current.get('stableId'))
         if current['workspace']['name'] == SPECIAL and identity.get('stableId'):
-            self.hypr.clear_preview_fullscreen(identity)
+            if handoff_owner:self.hypr.clear_preview_fullscreen(identity, handoff_owner)
+            else:self.hypr.clear_preview_fullscreen(identity)
             current = self.hypr.client(record['address'])
             if not self.matches(expected, current):
                 self.reconcile(self.hypr.read('clients'))
@@ -877,7 +879,10 @@ class Stash:
         native_floating = self.native_floating_workspace(destination)
         floating = record["floating"] or native_floating
         target = "address:"+record["address"]
-        fullscreen = [current.get("fullscreen", 0), current.get("fullscreenClient", 0)]
+        # The exact native owner will apply its deferred Desktop fullscreen
+        # request after this public restore. Its temporary client-only ACK is
+        # not a change to the saved window's restoration policy.
+        fullscreen = [0, 0] if handoff_owner else [current.get("fullscreen", 0), current.get("fullscreenClient", 0)]
         if any(fullscreen):
             # An interactive source can request fullscreen while hidden. Clear
             # it before float/resize/layout dispatchers, then honor that newer

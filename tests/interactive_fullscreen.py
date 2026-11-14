@@ -357,12 +357,15 @@ def browser(session, directory, executable, witness, observer, pointer_only=True
     state = wait(lambda: (value := page_state(address, title)) and value['ready'] >= 2
                  and value['width'] == h.client(address)['size'][0] and value,
                  'Local video did not start at its configured size in '+executable)
-    if original_maximized:
-        h.dispatch('window.fullscreen_state', window='address:'+address, internal=1, client=1, action='set')
-        wait(lambda: modes(address) == (1, 1), 'Original browser maximize did not settle')
     if desktop_only:
         control, _ = session.spawn(app='org.windowstash.ContainedBrowserControl')
-        desktop_browser(session, address, title, control, executable, witness, observer)
+        if original_maximized:
+            # Adding a tiled control can leave the old maximized layout. Apply
+            # the precondition only after every visible fixture is mapped.
+            h.dispatch('window.fullscreen_state', window='address:'+address, internal=1, client=1, action='set')
+            wait(lambda: modes(address) == (1, 1), 'Original browser maximize did not settle')
+        desktop_browser(session, address, title, control, executable, witness, observer,
+                        expected_original=(1,1) if original_maximized else None)
         return
     record = park(session, address)
     seed(session, record, 180, 150, 440)
@@ -521,10 +524,13 @@ def browser(session, directory, executable, witness, observer, pointer_only=True
     desktop_browser(session, address, title, control, executable, witness, observer)
 
 
-def desktop_browser(session, address, title, control, executable, witness, observer):
+def desktop_browser(session, address, title, control, executable, witness, observer, expected_original=None):
     configure('floatingPreviewFullscreen', 'desktop')
     configure('floatingPreviewKeyboard', 'mouse')
     record = park(session, address)
+    if expected_original is not None:
+        assert (record['fullscreen'],record['fullscreenClient']) == expected_original, \
+            ('Desktop fullscreen fixture lost its original-mode precondition',expected_original,record)
     seed(session, record, 180, 150, 440)
     before = original(record)
     h.dispatch('focus', window='address:'+control)
