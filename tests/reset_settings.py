@@ -50,6 +50,8 @@ def snapshot():
 def unchanged(expected, preferences=True):
     actual = snapshot()
     for key in ('windows', 'positions', 'clients', 'state', 'positionBytes', 'foreign'):
+        if key=='windows' and actual[key]!=expected[key]:
+            print('Reset window diagnostics:',{'before':expected[key],'after':actual[key]},flush=True)
         assert actual[key] == expected[key], 'Reset interaction changed '+key
     if preferences:
         assert actual['settings'] == expected['settings'], 'Unconfirmed reset changed preferences'

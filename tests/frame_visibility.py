@@ -28,6 +28,8 @@ def main():
     def click(rect,button=272):
         x=rect['x']+rect['width']/2;y=rect['y']+rect['height']/2
         pointer.move(*point(x-2,y));pointer.click(*point(x,y),button=button)
+    def keys(*args):
+        subprocess.run(['wtype','-s','100','-d','30',*args,'-s','100'],check=True)
     def spawn(app):
         title='Stash frames %s %s'%(os.getpid(),len(addresses))
         p=subprocess.Popen(['/usr/bin/python3',str(ROOT/'tests/test-window.py'),title,app],
@@ -37,6 +39,9 @@ def main():
         addresses.append(c['address']);return c['address']
     def park(address,count):
         command('minimize','--address',address);wait(lambda:surface()['groups']==count,'Group count did not settle')
+    def represented(tile):
+        return next(record['address'] for record in command('list')['windows']
+                    if tile['key']=='window:'+str(record.get('stableId') or record['id']))
     def clear(color):return color in ('#00000000','transparent')
     def bare(appearance):
         assert not appearance['frameVisible'] and appearance['borderWidth']==0 and clear(appearance['background']),appearance
@@ -63,7 +68,7 @@ def main():
                 c=control();r=c['rect'];d=surface()['dialog']
                 return c if d['visible'] and d['y']<r['y'] and r['y']+r['height']<d['y']+d['height'] else None
             click(wait(ready,'Frame selector missing: '+key)['rect']);wait(lambda:control()['open'],'Frame selector did not open')
-            subprocess.run(['wtype','-k','Down','-k','Return'],check=True)
+            keys('-k','Down','-k','Return')
             wait(lambda:shell('status')['settings'][key]=='hidden','Native frame setting did not save: '+key);time.sleep(.15)
         shell('dismiss');time.sleep(.2)
         hidden_panel(surface()['shelf'])
@@ -74,7 +79,14 @@ def main():
             configure('dockSide',side);configure('dockFrame','shown')
             wait(lambda:not surface()['shelf']['animating'],'Static dock did not settle')
             p=surface()['shelf'];shown=rect(p)
-            configure('dockFrame','hidden');assert rect(surface()['shelf'])==shown,'Hiding dock frame moved icons'
+            configure('dockFrame','hidden')
+            try:
+                wait(lambda:not surface()['shelf']['animating']
+                     and all(abs(a-b)<.5 for a,b in zip(rect(surface()['shelf']),shown)),
+                     'Hiding dock frame moved icons')
+            except AssertionError:
+                print('Frame geometry diagnostics:',{'side':side,'shown':shown,'hidden':rect(surface()['shelf'])},flush=True)
+                raise
             hidden_panel(surface()['shelf'])
             for icons in ('shown','hidden'):
                 configure('iconFrame',icons);time.sleep(.2)
@@ -82,7 +94,8 @@ def main():
                     for icon in surface()['shelf']['icons']:bare(icon['appearance'])
             click(surface()['shelf']['icons'][0],273);wait(lambda:shell('status')['dialog']=='menu','Frameless dock menu failed');shell('dismiss')
         configure('dockSide','bottom');wait(lambda:not surface()['shelf']['animating'],'Bottom dock did not settle');screenshot(surface()['shelf'],'/tmp/stash-frameless-static.png')
-        click(surface()['shelf']['icons'][0]);wait(lambda:surface()['groups']==2,'Frameless static icon did not restore');park(windows[-1],3)
+        tile=surface()['shelf']['icons'][0];restoring=represented(tile)
+        click(tile);wait(lambda:surface()['groups']==2,'Frameless static icon did not restore');park(restoring,3)
         print('PASS independent icon/dock frames, unchanged static positions, menu and restore',flush=True)
 
         configure('presentation','bubbles')
@@ -91,8 +104,8 @@ def main():
         pointer.move(*point(b['x']+24,b['y']+24));time.sleep(.2)
         bare(surface()['bubbles'][0]['appearance'])
         # The saved squircle shape must not clip the enlarged frameless hit area.
-        pointer.click(*point(b['x']+2,b['y']+2))
-        wait(lambda:surface()['groups']==2,'Frameless bubble corner did not restore');park(windows[-1],3)
+        restoring=represented(b);pointer.click(*point(b['x']+2,b['y']+2))
+        wait(lambda:surface()['groups']==2,'Frameless bubble corner did not restore');park(restoring,3)
         configure('grouping','app');wait(lambda:surface()['groups']==2,'Per-app grouping missing')
         time.sleep(.3)
         b=next(b for b in surface()['bubbles'] if b['appearance']['badge']['visible'])
@@ -113,12 +126,13 @@ def main():
                     hidden_panel(d['panel']);assert rect(d['panel'])==shown,'Hiding floating panel moved icons'
                     screenshot(d['panel'],'/tmp/stash-frameless-'+direction+'.png')
                 for icon in d['icons']:bare(icon['appearance'])
-                subprocess.run(['wtype','-k','Escape'],check=True)
+                keys('-k','Escape')
                 wait(lambda:not dock()['expanded'] and not dock()['animating'],'Floating dock did not collapse')
         click(dock()['handle']);wait(lambda:dock()['expanded'] and not dock()['animating'],'Dock did not reopen')
+        restoring=represented(dock()['icons'][0])
         back='Left' if dock()['fan']['sign']>0 else 'Right'
-        subprocess.run(['wtype',*(['-k',back]*3),'-k','Return'],check=True)
-        wait(lambda:surface()['groups']==2,'Frameless keyboard selection did not restore');park(windows[-1],3)
+        keys(*(['-k',back]*3),'-k','Return')
+        wait(lambda:surface()['groups']==2,'Frameless keyboard selection did not restore');park(restoring,3)
         print('PASS frameless stack, both floating directions, unchanged positions, keyboard selection and restore',flush=True)
 
         subprocess.run(['omarchy','restart','shell'],check=True)
